@@ -5,6 +5,7 @@ import Crypto
 public struct DiscoveredDevice: Identifiable, Equatable {
     public let id: String // deviceId
     public var name: String
+    public var serviceName: String?
     public var endpoint: NWEndpoint?
     public var isPaired: Bool
     public var isOnline: Bool
@@ -16,6 +17,7 @@ public struct DiscoveredDevice: Identifiable, Equatable {
     public init(
         id: String,
         name: String,
+        serviceName: String? = nil,
         endpoint: NWEndpoint?,
         isPaired: Bool,
         isOnline: Bool = true,
@@ -26,6 +28,7 @@ public struct DiscoveredDevice: Identifiable, Equatable {
     ) {
         self.id = id
         self.name = name
+        self.serviceName = serviceName
         self.endpoint = endpoint
         self.isPaired = isPaired
         self.isOnline = isOnline
@@ -191,9 +194,10 @@ public class DiscoveryService {
                 let isPaired = TrustStore.shared.isTrusted(deviceId: deviceId) ||
                                TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == deviceName })
                 
-                if let index = self.discoveredDevices.firstIndex(where: { $0.id == deviceId || $0.name == deviceName }) {
+                if let index = self.discoveredDevices.firstIndex(where: { $0.id == deviceId || $0.name == deviceName || ($0.serviceName != nil && $0.serviceName == name) }) {
                     var existing = self.discoveredDevices[index]
                     existing.name = deviceName
+                    existing.serviceName = name
                     existing.endpoint = result.endpoint
                     existing.isPaired = isPaired
                     existing.isOnline = true
@@ -204,6 +208,7 @@ public class DiscoveryService {
                     let newDevice = DiscoveredDevice(
                         id: deviceId,
                         name: deviceName,
+                        serviceName: name,
                         endpoint: result.endpoint,
                         isPaired: isPaired,
                         isOnline: true,
@@ -259,6 +264,7 @@ public class DiscoveryService {
             let dev = DiscoveredDevice(
                 id: c.id,
                 name: c.name,
+                serviceName: c.serviceName,
                 endpoint: endpoint,
                 isPaired: isPaired,
                 isOnline: false,

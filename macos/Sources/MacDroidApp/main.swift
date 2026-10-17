@@ -202,7 +202,8 @@ class AppState: ObservableObject {
         } else if let host = device.host, let port = device.port {
             connectDirect(host: host, port: port)
         } else {
-            let ep = NWEndpoint.service(name: device.name, type: "_macdroid._tcp", domain: "local.", interface: nil)
+            let sName = device.serviceName ?? device.name
+            let ep = NWEndpoint.service(name: sName, type: "_macdroid._tcp", domain: "local.", interface: nil)
             connectionManager.connect(to: ep)
         }
     }
