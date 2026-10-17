@@ -81,6 +81,8 @@ class AppState: ObservableObject {
     @Published var statusMessage: String = "Ready to connect"
     @Published var localIP: String = "10.7.196.204"
     @Published var lastSyncedClipboardSnippet: String? = nil
+    @Published var activeTransfer: TransferItem? = nil
+    @Published var recentTransfers: [TransferItem] = []
 
     private var pingStartTime: Date?
 
@@ -96,6 +98,7 @@ class AppState: ObservableObject {
         connectionManager.delegate = self
         clipboardManager.setConnectionManager(connectionManager)
         clipboardManager.delegate = self
+        transferManager.delegate = self
 
         // Start discovering right away
         discoveryService.startBrowsing()
@@ -169,6 +172,20 @@ class AppState: ObservableObject {
         connectionManager.send(message: .clipboardPush(sequenceNumber: seq, content: text))
         statusMessage = "Clipboard sent to \(connectedDeviceName ?? "Android")"
         print("📋 Clipboard pushed: \(text.prefix(30))...")
+    }
+
+    func connectDirect(host: String, port: Int) {
+        print("🔗 Connecting directly to \(host):\(port)...")
+        statusMessage = "Connecting to \(host):\(port)..."
+        connectionManager.connect(to: .hostPort(host: .init(host), port: .init(integerLiteral: UInt16(port))))
+    }
+
+    func sendFile(url: URL) {
+        transferManager.sendFile(url: url)
+    }
+
+    func cancelTransfer(id: String) {
+        transferManager.cancelTransfer(id: id)
     }
 }
 
@@ -392,6 +409,30 @@ extension AppState: ClipboardManagerDelegate {
             self.lastSyncedClipboardSnippet = text
             self.statusMessage = "Synced to \(self.connectedDeviceName ?? "Android")"
             print("📋 Auto-synced clipboard to Android: \"\(text.prefix(35))...\"")
+        }
+    }
+}
+
+extension AppState: TransferManagerDelegate {
+    func transferManager(_ manager: TransferManager, didUpdateItem item: TransferItem) {
+        DispatchQueue.main.async {
+            self.activeTransfer = item
+        }
+    }
+
+    func transferManager(_ manager: TransferManager, didCompleteItem item: TransferItem) {
+        DispatchQueue.main.async {
+            self.activeTransfer = nil
+            self.recentTransfers.insert(item, at: 0)
+            self.statusMessage = item.isOutgoing ? "Sent: \(item.name)" : "Received: \(item.name)"
+        }
+    }
+
+    func transferManager(_ manager: TransferManager, didFailItem item: TransferItem, error: String) {
+        DispatchQueue.main.async {
+            self.activeTransfer = nil
+            self.recentTransfers.insert(item, at: 0)
+            self.statusMessage = "Transfer failed: \(error)"
         }
     }
 }

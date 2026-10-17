@@ -9,7 +9,7 @@ public enum ProtocolMessage: Codable, Equatable {
     case transferRequest(transferId: String, totalFiles: Int, totalSize: Int64)
     case transferResponse(transferId: String, accepted: Bool)
     case fileMeta(transferId: String, fileId: String, name: String, size: Int64, mimeType: String)
-    case fileChunk(fileId: String, offset: Int64)
+    case fileChunk(fileId: String, offset: Int64, data: String)
     case fileComplete(fileId: String, sha256: String)
     case fileAck(fileId: String, verified: Bool)
     case progress(transferId: String, fileId: String, bytesReceived: Int64)
@@ -24,7 +24,7 @@ public enum ProtocolMessage: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case type, version, deviceId, deviceName, paired, publicKey, accepted, reason
         case transferId, totalFiles, totalSize, fileId, name, size, mimeType
-        case offset, sha256, verified, bytesReceived, code, message
+        case offset, data, sha256, verified, bytesReceived, code, message
         case sequenceNumber, content, mode
     }
 
@@ -100,7 +100,8 @@ public enum ProtocolMessage: Codable, Equatable {
         case .fileChunk:
             self = .fileChunk(
                 fileId: try container.decode(String.self, forKey: .fileId),
-                offset: try container.decode(Int64.self, forKey: .offset)
+                offset: try container.decode(Int64.self, forKey: .offset),
+                data: try container.decodeIfPresent(String.self, forKey: .data) ?? ""
             )
         case .fileComplete:
             self = .fileComplete(
@@ -181,10 +182,11 @@ public enum ProtocolMessage: Codable, Equatable {
             try container.encode(name, forKey: .name)
             try container.encode(size, forKey: .size)
             try container.encode(mimeType, forKey: .mimeType)
-        case let .fileChunk(fileId, offset):
+        case let .fileChunk(fileId, offset, data):
             try container.encode(MessageType.fileChunk, forKey: .type)
             try container.encode(fileId, forKey: .fileId)
             try container.encode(offset, forKey: .offset)
+            try container.encode(data, forKey: .data)
         case let .fileComplete(fileId, sha256):
             try container.encode(MessageType.fileComplete, forKey: .type)
             try container.encode(fileId, forKey: .fileId)

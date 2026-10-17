@@ -20,10 +20,19 @@ public class TrustStore {
     public static let shared = TrustStore()
     private let queue = DispatchQueue(label: "com.macdroid.truststore")
     private let defaultsKey = "com.macdroid.trustedDevices"
+    private let keychainService = "com.macdroid.pairing"
+    private let keychainAccount = "paired_device"
     
     public init() {}
     
     private func loadDeviceInternal() -> TrustedDevice? {
+        // First try loading from macOS Keychain
+        if let data = loadFromKeychain(),
+           let devices = try? JSONDecoder().decode([TrustedDevice].self, from: data) {
+            return devices.first
+        }
+        
+        // Fallback to defaults
         guard let data = UserDefaults.standard.data(forKey: defaultsKey),
               let devices = try? JSONDecoder().decode([TrustedDevice].self, from: data) else {
             return nil
@@ -52,9 +61,10 @@ public class TrustStore {
 
     public func setPairedDevice(_ device: TrustedDevice) {
         queue.sync {
-            // Strictly enforce one paired device at a time
+            // Strictly enforce one paired device at a time, protected in macOS Keychain
             let devices = [device]
             if let data = try? JSONEncoder().encode(devices) {
+                saveToKeychain(data: data)
                 UserDefaults.standard.set(data, forKey: defaultsKey)
             }
         }
@@ -62,6 +72,7 @@ public class TrustStore {
 
     public func unpairDevice() {
         queue.sync {
+            deleteFromKeychain()
             UserDefaults.standard.removeObject(forKey: defaultsKey)
         }
     }
@@ -85,10 +96,43 @@ public class TrustStore {
     }
     
     public func removeTrustedDevice(deviceId: String) {
-        queue.sync {
-            if let paired = loadDeviceInternal(), paired.deviceId == deviceId {
-                UserDefaults.standard.removeObject(forKey: defaultsKey)
-            }
+        unpairDevice()
+    }
+    
+    // MARK: - Keychain Operations
+    
+    private func saveToKeychain(data: Data) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecValueData as String: data
+        ]
+        SecItemDelete(query as CFDictionary)
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    private func loadFromKeychain() -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecSuccess, let data = item as? Data {
+            return data
         }
+        return nil
+    }
+
+    private func deleteFromKeychain() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }

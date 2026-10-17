@@ -80,7 +80,8 @@ sealed class ProtocolMessage {
                 )
                 MessageType.FILE_CHUNK -> FileChunkMessage(
                     fileId = json.optString("fileId", ""),
-                    offset = json.optLong("offset", 0L)
+                    offset = json.optLong("offset", 0L),
+                    data = json.optString("data", "")
                 )
                 MessageType.FILE_COMPLETE -> FileCompleteMessage(
                     fileId = json.optString("fileId", ""),
@@ -202,12 +203,13 @@ data class FileMetaMessage(val transferId: String, val fileId: String, val name:
     }
 }
 
-data class FileChunkMessage(val fileId: String, val offset: Long) : ProtocolMessage() {
+data class FileChunkMessage(val fileId: String, val offset: Long, val data: String = "") : ProtocolMessage() {
     override val type = MessageType.FILE_CHUNK
     override fun toJson() = JSONObject().apply {
         put("type", type.value)
         put("fileId", fileId)
         put("offset", offset)
+        put("data", data)
     }
 }
 

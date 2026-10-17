@@ -2,6 +2,7 @@ package com.macdroid.storage
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.macdroid.security.KeystoreHelper
 import org.json.JSONObject
 
 data class TrustedDevice(
@@ -47,11 +48,16 @@ class TrustStore(context: Context) {
 
     @Synchronized
     fun getPairedDevice(): TrustedDevice? {
-        val jsonStr = prefs.getString(KEY_PAIRED_DEVICE, null) ?: return null
+        val raw = prefs.getString(KEY_PAIRED_DEVICE, null) ?: return null
+        val decrypted = KeystoreHelper.decrypt(raw) ?: raw
         return try {
-            TrustedDevice.fromJson(JSONObject(jsonStr))
+            TrustedDevice.fromJson(JSONObject(decrypted))
         } catch (e: Exception) {
-            null
+            try {
+                TrustedDevice.fromJson(JSONObject(raw))
+            } catch (ex: Exception) {
+                null
+            }
         }
     }
 
@@ -69,8 +75,10 @@ class TrustStore(context: Context) {
 
     @Synchronized
     fun setPairedDevice(device: TrustedDevice) {
-        // Enforce strictly one paired device at a time
-        prefs.edit().putString(KEY_PAIRED_DEVICE, device.toJson().toString()).apply()
+        // Enforce strictly one paired device at a time, encrypted with Android Keystore
+        val jsonStr = device.toJson().toString()
+        val encrypted = KeystoreHelper.encrypt(jsonStr)
+        prefs.edit().putString(KEY_PAIRED_DEVICE, encrypted).apply()
     }
 
     @Synchronized

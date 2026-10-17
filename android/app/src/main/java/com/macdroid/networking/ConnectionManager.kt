@@ -6,8 +6,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.net.Uri
 import com.macdroid.core.ClipboardSyncMode
 import com.macdroid.core.MacDroidClipboardManager
+import com.macdroid.core.TransferManager
 import com.macdroid.security.CryptoService
 import com.macdroid.security.PairingManager
 import com.macdroid.storage.TrustStore
@@ -50,6 +52,7 @@ class ConnectionManager(private val context: Context) {
     val cryptoService = CryptoService.getInstance(context)
     val trustStore = TrustStore.getInstance(context)
     val pairingManager = PairingManager.getInstance(context)
+    val transferManager = TransferManager(context, trustStore) { sendMessage(it) }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -66,7 +69,17 @@ class ConnectionManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     val deviceId: String get() = cryptoService.deviceId
-    val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}"
+    var deviceName: String = prefs.getString("custom_device_name", null) ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+        private set
+
+    fun setDeviceName(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isNotEmpty()) {
+            deviceName = trimmed
+            prefs.edit().putString("custom_device_name", trimmed).apply()
+            log("Updated local device name to: $trimmed")
+        }
+    }
 
     private val listeners = CopyOnWriteArrayList<ConnectionEventListener>()
 
@@ -168,7 +181,7 @@ class ConnectionManager(private val context: Context) {
 
         // Send HELLO handshake
         val hello = HelloMessage(
-            version = 1,
+            version = 2,
             deviceId = deviceId,
             deviceName = deviceName
         )
@@ -429,6 +442,12 @@ class ConnectionManager(private val context: Context) {
                 log("Peer error [${message.code}]: ${message.message}")
             }
 
+            is TransferRequestMessage, is TransferResponseMessage, is FileMetaMessage,
+            is FileChunkMessage, is FileCompleteMessage, is FileAckMessage,
+            is CancelMessage, is ProgressMessage -> {
+                transferManager.handleIncomingMessage(message)
+            }
+
             else -> {
                 log("Handled message type: ${message.type}")
             }
@@ -511,6 +530,14 @@ class ConnectionManager(private val context: Context) {
         log("[Clipboard Transmit] Sending to Mac: \"${text.take(30)}...\" (${text.length} chars) [Mode: ${clipboardManager.syncMode.title}]")
         val seq = (System.currentTimeMillis() % 100000).toInt()
         sendMessage(ClipboardPushMessage(seq, text))
+    }
+
+    fun sendFile(uri: Uri) {
+        transferManager.sendFile(uri)
+    }
+
+    fun cancelTransfer(transferId: String) {
+        transferManager.cancelTransfer(transferId)
     }
 
     fun isConnected(): Boolean {
