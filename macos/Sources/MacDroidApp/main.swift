@@ -81,7 +81,7 @@ class AppState: ObservableObject {
     @Published var pairingPin: String? = nil
     @Published var lastPingLatencyMs: Int? = nil
     @Published var statusMessage: String = "Ready to connect"
-    @Published var localIP: String = "10.7.196.204"
+    @Published var localIP: String = "Detecting..."
     @Published var lastSyncedClipboardSnippet: String? = nil
     @Published var activeTransfer: TransferItem? = nil
     @Published var recentTransfers: [TransferItem] = []
@@ -92,10 +92,7 @@ class AppState: ObservableObject {
 
     init() {
         self.transferManager = TransferManager(connectionManager: connectionManager)
-
-        if let ip = Self.getLocalIP() {
-            self.localIP = ip
-        }
+        self.localIP = AppState.getLocalIP() ?? "Unavailable"
 
         // Wire up delegates
         discoveryService.delegate = self
@@ -180,14 +177,25 @@ class AppState: ObservableObject {
             let interface = ptr.pointee
             let addrFamily = interface.ifa_addr.pointee.sa_family
             if addrFamily == UInt8(AF_INET) {
-                let name = String(cString: interface.ifa_name)
-                if name == "en0" || name == "en1" {
+                let flags = Int32(interface.ifa_flags)
+                let isUp = (flags & IFF_UP) == IFF_UP
+                let isLoopback = (flags & IFF_LOOPBACK) == IFF_LOOPBACK
+                if isUp && !isLoopback {
+                    let name = String(cString: interface.ifa_name)
                     var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
-                                &hostname, socklen_t(hostname.count),
-                                nil, socklen_t(0), NI_NUMERICHOST)
-                    address = String(cString: hostname)
-                    break
+                    if getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                                   &hostname, socklen_t(hostname.count),
+                                   nil, socklen_t(0), NI_NUMERICHOST) == 0 {
+                        let ip = String(cString: hostname)
+                        if !ip.isEmpty && ip != "127.0.0.1" {
+                            if name.hasPrefix("en") {
+                                return ip // Prefer active Wi-Fi or Ethernet
+                            }
+                            if address == nil {
+                                address = ip
+                            }
+                        }
+                    }
                 }
             }
         }

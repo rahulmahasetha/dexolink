@@ -104,8 +104,10 @@ class DiscoveryService(private val context: Context) {
             serviceName = DEFAULT_SERVICE_NAME
             serviceType = SERVICE_TYPE
             this.port = port
+            val connPrefs = context.getSharedPreferences("macdroid_connection_prefs", Context.MODE_PRIVATE)
+            val currentDeviceName = connPrefs.getString("custom_device_name", null) ?: "${Build.MANUFACTURER} ${Build.MODEL}"
             setAttribute("deviceId", cryptoService.deviceId)
-            setAttribute("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}")
+            setAttribute("deviceName", currentDeviceName)
         }
 
         registrationListener = object : NsdManager.RegistrationListener {

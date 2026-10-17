@@ -6,7 +6,7 @@ import Core
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @State private var showManualIPSheet = false
-    @State private var manualIP = "10.7.163.192"
+    @State private var manualIP = ""
     @State private var manualPort = "52840"
     @State private var isTargetedForDrop = false
 
@@ -286,11 +286,17 @@ struct MenuBarView: View {
                             Button(action: {
                                 appState.sendPing()
                             }) {
-                                Image(systemName: "bolt.fill")
+                                HStack(spacing: 3) {
+                                    Image(systemName: "bolt.fill")
+                                    if let latency = appState.lastPingLatencyMs {
+                                        Text("\(latency)ms")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .help("Test Ping Latency")
+                            .help(appState.lastPingLatencyMs != nil ? "Ping Latency: \(appState.lastPingLatencyMs!)ms • Click to test again" : "Test Ping Latency")
                         }
                         .padding(10)
                         .background(Color.green.opacity(0.10))
@@ -582,10 +588,12 @@ struct DeviceRow: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.mini)
             } else if anotherDevicePaired {
-                Button("Unpair First") {}
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(true)
+                Button("Unpair Current") {
+                    appState.statusMessage = "Strict 1-Device Policy: Unpair '\(pairedDevice!.deviceName)' first to pair with '\(device.name)'."
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("Unpair '\(pairedDevice!.deviceName)' above first to connect this device")
             } else {
                 Button("Pair Device") {
                     appState.connect(to: device)

@@ -78,6 +78,8 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val pairedDevice = mutableStateOf<TrustedDevice?>(null)
     private val logs = mutableStateListOf<String>()
     private val lastSyncedSnippet = mutableStateOf<String?>(null)
+    private val lastPingLatency = mutableStateOf<Long?>(null)
+    private val localDeviceName = mutableStateOf("")
 
     // File Sharing state
     private val activeTransfers = mutableStateListOf<TransferItem>()
@@ -121,6 +123,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         currentSyncMode.value = connectionManager.clipboardManager.syncMode
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
+        localDeviceName.value = connectionManager.deviceName
         for (device in discoveryService.discoveredDevices.values) {
             if (discoveredDevices.none { it.host == device.host && it.port == device.port }) {
                 discoveredDevices.add(device)
@@ -138,6 +141,8 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     syncMode = currentSyncMode.value,
                     devices = discoveredDevices,
                     pairedDevice = pairedDevice.value,
+                    localDeviceName = localDeviceName.value,
+                    lastPingLatency = lastPingLatency.value,
                     logs = logs,
                     lastSyncedSnippet = lastSyncedSnippet.value,
                     activeTransfers = activeTransfers,
@@ -149,6 +154,21 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     },
                     onConnect = { device ->
                         connectionManager.connect(device.host, device.port)
+                    },
+                    onConnectPaired = {
+                        val paired = pairedDevice.value
+                        if (paired != null) {
+                            val host = connectionManager.lastConnectedHost ?: ""
+                            val port = if (connectionManager.lastConnectedPort > 0) connectionManager.lastConnectedPort else 52840
+                            if (host.isNotBlank()) {
+                                connectionManager.connect(host, port)
+                            } else {
+                                discoveredDevices.clear()
+                                discoveryService.stopBrowsing()
+                                discoveryService.startBrowsing()
+                                Toast.makeText(this, "Searching for ${paired.deviceName} on Wi-Fi...", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     },
                     onConnectManual = { host, port ->
                         connectionManager.connect(host, port)
@@ -170,6 +190,9 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     },
                     onSendPing = {
                         connectionManager.sendPing()
+                    },
+                    onCheckClipboard = {
+                        checkAndSyncClipboard("QuickAction")
                     },
                     onRefreshDiscovery = {
                         discoveredDevices.clear()
@@ -198,6 +221,21 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     },
                     onUpdateDeviceName = { newName ->
                         connectionManager.setDeviceName(newName)
+                        localDeviceName.value = newName
+                        discoveryService.stopAdvertising()
+                        discoveryService.startAdvertising(connectionManager.lastConnectedPort.takeIf { it > 0 } ?: 52840)
+                        log("Device renamed to $newName")
+                        Toast.makeText(this, "Device renamed to $newName", Toast.LENGTH_SHORT).show()
+                    },
+                    onRenamePaired = { newName ->
+                        val current = pairedDevice.value
+                        if (current != null) {
+                            val updated = current.copy(deviceName = newName)
+                            TrustStore.getInstance(this).setPairedDevice(updated)
+                            pairedDevice.value = updated
+                            log("Renamed paired Mac to $newName")
+                            Toast.makeText(this, "Paired device renamed to $newName", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             }
@@ -339,7 +377,11 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
 
     override fun onMessageReceived(message: ProtocolMessage) {
         if (message is PongMessage) {
-            Toast.makeText(this, "Pong received from Mac! 🚀", Toast.LENGTH_SHORT).show()
+            val latency = connectionManager.lastPingLatency
+            runOnUiThread {
+                lastPingLatency.value = latency
+                Toast.makeText(this, "Pong reply: ${latency ?: 0}ms 🚀", Toast.LENGTH_SHORT).show()
+            }
         } else if (message is ClipboardPushMessage) {
             lastSyncedSnippet.value = message.content
         } else if (message is ClipboardAckMessage) {
@@ -584,6 +626,8 @@ fun MainScreenRoot(
     syncMode: ClipboardSyncMode,
     devices: List<DiscoveredDevice>,
     pairedDevice: TrustedDevice?,
+    localDeviceName: String,
+    lastPingLatency: Long?,
     logs: List<String>,
     lastSyncedSnippet: String?,
     activeTransfers: List<TransferItem>,
@@ -591,23 +635,27 @@ fun MainScreenRoot(
     receivedFiles: List<File>,
     onModeSelected: (ClipboardSyncMode) -> Unit,
     onConnect: (DiscoveredDevice) -> Unit,
+    onConnectPaired: () -> Unit,
     onConnectManual: (String, Int) -> Unit,
     onDisconnect: () -> Unit,
     onUnpair: () -> Unit,
     onConfirmPairing: () -> Unit,
     onRejectPairing: () -> Unit,
     onSendPing: () -> Unit,
+    onCheckClipboard: () -> Unit,
     onRefreshDiscovery: () -> Unit,
     onSendFiles: (List<Uri>) -> Unit,
     onCancelTransfer: (String) -> Unit,
     onOpenFile: (File) -> Unit,
     onShareFile: (File) -> Unit,
     onClearLogs: () -> Unit,
-    onUpdateDeviceName: (String) -> Unit
+    onUpdateDeviceName: (String) -> Unit,
+    onRenamePaired: (String) -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(NavTab.HOME) }
     var showManualIPDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf("local") } // "local" or "paired"
     var showSecurityDialog by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
 
@@ -688,10 +736,84 @@ fun MainScreenRoot(
         )
     }
 
+    // Modal: Rename Device Dialog (Local Phone or Paired Mac)
+    if (showRenameDialog) {
+        val initialName = if (renameTarget == "paired") {
+            pairedDevice?.deviceName ?: "MacBook"
+        } else {
+            localDeviceName
+        }
+        var nameInput by remember(showRenameDialog, renameTarget) { mutableStateOf(initialName) }
+
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            containerColor = Color(0xFF131A2B),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("✏️", fontSize = 20.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        if (renameTarget == "paired") "Rename Paired Mac" else "Rename My Device",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color.White
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (renameTarget == "paired")
+                            "Customize the display name for your paired Mac:"
+                        else
+                            "Set the name broadcasted to your Mac and local Wi-Fi devices:",
+                        fontSize = 12.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text("Device Name") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF388AF6),
+                            unfocusedBorderColor = Color(0xFF334155)
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = nameInput.trim()
+                        if (trimmed.isNotBlank()) {
+                            if (renameTarget == "paired") {
+                                onRenamePaired(trimmed)
+                            } else {
+                                onUpdateDeviceName(trimmed)
+                            }
+                            showRenameDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                ) {
+                    Text("Save", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel", color = Color.Gray)
+                }
+            }
+        )
+    }
+
     // Modal: Manual IP Entry Fallback
     if (showManualIPDialog) {
         var ipInput by remember { mutableStateOf("") }
-        var portInput by remember { mutableStateOf("8765") }
+        var portInput by remember { mutableStateOf("52840") }
 
         AlertDialog(
             onDismissRequest = { showManualIPDialog = false },
@@ -725,7 +847,7 @@ fun MainScreenRoot(
                     OutlinedTextField(
                         value = portInput,
                         onValueChange = { portInput = it },
-                        label = { Text("Port (default: 8765)") },
+                        label = { Text("Port (default: 52840)") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
@@ -739,7 +861,7 @@ fun MainScreenRoot(
             confirmButton = {
                 Button(
                     onClick = {
-                        val port = portInput.toIntOrNull() ?: 8765
+                        val port = portInput.toIntOrNull() ?: 52840
                         if (ipInput.isNotBlank()) {
                             onConnectManual(ipInput.trim(), port)
                             showManualIPDialog = false
@@ -865,6 +987,24 @@ fun MainScreenRoot(
                                 }
                             )
                             DropdownMenuItem(
+                                text = { Text("Rename My Device", color = Color.White) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    renameTarget = "local"
+                                    showRenameDialog = true
+                                }
+                            )
+                            if (pairedDevice != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Rename Paired Mac", color = Color.White) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        renameTarget = "paired"
+                                        showRenameDialog = true
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
                                 text = { Text("Clear Activity Log", color = Color.White) },
                                 onClick = {
                                     showOverflowMenu = false
@@ -914,9 +1054,15 @@ fun MainScreenRoot(
                         activeTransfers = activeTransfers,
                         onModeSelected = onModeSelected,
                         onConnect = onConnect,
+                        onConnectPaired = onConnectPaired,
                         onDisconnect = onDisconnect,
                         onUnpair = onUnpair,
                         onSendPing = onSendPing,
+                        onCheckClipboard = onCheckClipboard,
+                        onOpenRenamePaired = {
+                            renameTarget = "paired"
+                            showRenameDialog = true
+                        },
                         onRefreshDiscovery = onRefreshDiscovery,
                         onOpenFilePicker = { filePickerLauncher.launch(arrayOf("*/*")) },
                         onOpenManualIP = { showManualIPDialog = true },
@@ -945,9 +1091,15 @@ fun MainScreenRoot(
                 NavTab.SETTINGS -> {
                     SettingsTabContent(
                         pairedDevice = pairedDevice,
+                        localDeviceName = localDeviceName,
+                        lastPingLatency = lastPingLatency,
                         onUnpair = onUnpair,
                         onShowSecurity = { showSecurityDialog = true },
-                        onSendPing = onSendPing
+                        onSendPing = onSendPing,
+                        onOpenRenameLocal = {
+                            renameTarget = "local"
+                            showRenameDialog = true
+                        }
                     )
                 }
             }
@@ -970,9 +1122,12 @@ fun HomeScreenContent(
     activeTransfers: List<TransferItem>,
     onModeSelected: (ClipboardSyncMode) -> Unit,
     onConnect: (DiscoveredDevice) -> Unit,
+    onConnectPaired: () -> Unit,
     onDisconnect: () -> Unit,
     onUnpair: () -> Unit,
     onSendPing: () -> Unit,
+    onCheckClipboard: () -> Unit,
+    onOpenRenamePaired: () -> Unit,
     onRefreshDiscovery: () -> Unit,
     onOpenFilePicker: () -> Unit,
     onOpenManualIP: () -> Unit,
@@ -996,20 +1151,24 @@ fun HomeScreenContent(
             )
         }
 
-        // 2. Paired Device Card (MacBook mockup, Disconnect, etc.)
+        // 2. Paired Device Card (MacBook mockup, Disconnect / Connect, etc.)
         item {
             PairedMacDeviceCard(
                 pairedDevice = pairedDevice,
                 connectionState = connectionState,
+                onConnectPaired = onConnectPaired,
                 onDisconnect = onDisconnect,
-                onUnpair = onUnpair
+                onUnpair = onUnpair,
+                onOpenRename = onOpenRenamePaired,
+                onSendPing = onSendPing,
+                onScan = onRefreshDiscovery
             )
         }
 
         // 3. Quick Action Cards (Row of 3: Clipboard Sync, Quick File Sharing, Device Pairing)
         item {
             QuickActionCardsRow(
-                onClipboardClick = { /* Focus sync mode */ },
+                onClipboardClick = onCheckClipboard,
                 onFileShareClick = onOpenFilePicker,
                 onPairingClick = onRefreshDiscovery
             )
@@ -1161,105 +1320,257 @@ fun StatusBannerGradient(
 fun PairedMacDeviceCard(
     pairedDevice: TrustedDevice?,
     connectionState: ConnectionState,
+    onConnectPaired: () -> Unit,
     onDisconnect: () -> Unit,
-    onUnpair: () -> Unit
+    onUnpair: () -> Unit,
+    onOpenRename: () -> Unit,
+    onSendPing: () -> Unit,
+    onScan: () -> Unit
 ) {
     val isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated
-    val deviceName = pairedDevice?.deviceName ?: "Rahul's MacBook"
+    val isConnecting = connectionState is ConnectionState.Connecting
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
-        border = BorderStroke(1.dp, Color(0xFF1E293B)),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // MacBook Vector Graphic
-                MacBookGraphic(modifier = Modifier.size(width = 64.dp, height = 44.dp))
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+    if (pairedDevice == null) {
+        // Real Empty State: No device paired yet
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
+            border = BorderStroke(1.dp, Color(0xFF1E293B)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    MacBookGraphic(modifier = Modifier.size(width = 54.dp, height = 38.dp))
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "No Paired Device",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1E293B))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "Strict 1-Device Policy",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF94A3B8)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            "Paired Device",
+                            "Discover your Mac on Wi-Fi below and tap 'Pair' to connect.",
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                    Button(
+                        onClick = onScan,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Scan Wi-Fi", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    } else {
+        var showCardMenu by remember { mutableStateOf(false) }
+        val dateFormat = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
+            border = BorderStroke(1.dp, if (isConnected) Color(0xFF065F46) else Color(0xFF1E293B)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // MacBook Vector Graphic
+                    MacBookGraphic(modifier = Modifier.size(width = 64.dp, height = 44.dp))
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Paired Mac",
+                                fontSize = 12.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        when {
+                                            isConnected -> Color(0xFF064E3B)
+                                            isConnecting -> Color(0xFF451A03)
+                                            else -> Color(0xFF14243B)
+                                        }
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    when {
+                                        isConnected -> "Connected"
+                                        isConnecting -> "Connecting..."
+                                        else -> "★ Paired"
+                                    },
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when {
+                                        isConnected -> Color(0xFF34D399)
+                                        isConnecting -> Color(0xFFFBBF24)
+                                        else -> Color(0xFF38BDF8)
+                                    }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { onOpenRename() }
+                        ) {
+                            Text(
+                                pairedDevice.deviceName,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("✏️", fontSize = 12.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        Text(
+                            if (isConnected) " macOS • Link Active" else " macOS • Saved in TrustStore",
                             fontSize = 12.sp,
                             color = Color(0xFF94A3B8)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isConnected) Color(0xFF064E3B) else Color(0xFF1F2937))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                if (isConnected) "Connected" else "Saved",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isConnected) Color(0xFF34D399) else Color(0xFF9CA3AF)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            deviceName,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = Color.White
+                            if (isConnected)
+                                "Status: Bidirectional sync online"
+                            else
+                                "Paired on: ${dateFormat.format(Date(pairedDevice.pairedAt))}",
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("✏️", fontSize = 12.sp)
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Text(
-                        " macOS Sonoma",
-                        fontSize = 12.sp,
-                        color = Color(0xFF94A3B8)
-                    )
-                    Text(
-                        if (isConnected) "Last seen: Just now" else "Last seen: Recently",
-                        fontSize = 11.sp,
-                        color = Color(0xFF64748B)
-                    )
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.height(68.dp)
-                ) {
-                    Text("⋮", fontSize = 18.sp, color = Color(0xFF94A3B8))
-
-                    // Disconnect Button
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF361013))
-                            .border(1.dp, Color(0xFF7F1D1D), RoundedCornerShape(16.dp))
-                            .clickable {
-                                if (isConnected) onDisconnect() else onUnpair()
-                            }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.height(68.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("⟲", fontSize = 12.sp, color = Color(0xFFF87171))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                if (isConnected) "Disconnect" else "Unpair",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFF87171)
-                            )
+                        Box {
+                            IconButton(
+                                onClick = { showCardMenu = true },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Text("⋮", fontSize = 18.sp, color = Color(0xFF94A3B8))
+                            }
+                            DropdownMenu(
+                                expanded = showCardMenu,
+                                onDismissRequest = { showCardMenu = false },
+                                modifier = Modifier.background(Color(0xFF1E293B))
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Rename Paired Mac", color = Color.White) },
+                                    onClick = {
+                                        showCardMenu = false
+                                        onOpenRename()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Test Ping Latency", color = Color.White) },
+                                    onClick = {
+                                        showCardMenu = false
+                                        onSendPing()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Unpair Device", color = Color(0xFFEF4444)) },
+                                    onClick = {
+                                        showCardMenu = false
+                                        onUnpair()
+                                    }
+                                )
+                            }
+                        }
+
+                        // Connect / Disconnect Action Button
+                        if (isConnected || isConnecting) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xFF361013))
+                                    .border(1.dp, Color(0xFF7F1D1D), RoundedCornerShape(16.dp))
+                                    .clickable { onDisconnect() }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("⟲", fontSize = 12.sp, color = Color(0xFFF87171))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Disconnect",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFF87171)
+                                    )
+                                }
+                            }
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(Color(0xFF1D4ED8))
+                                        .clickable { onConnectPaired() }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        "Connect",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(Color(0xFF221518))
+                                        .border(1.dp, Color(0xFF7F1D1D), RoundedCornerShape(16.dp))
+                                        .clickable { onUnpair() }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        "Unpair",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFF87171)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1459,7 +1770,7 @@ fun ClipboardSyncModeSelectorCard(
                     title = "Android → Mac",
                     desc = "Copy on Android updates Mac",
                     isSelected = currentMode == ClipboardSyncMode.ANDROID_TO_MAC,
-                    badge = null,
+                    badge = if (currentMode == ClipboardSyncMode.ANDROID_TO_MAC) "ACTIVE" else null,
                     onClick = { onModeSelected(ClipboardSyncMode.ANDROID_TO_MAC) }
                 )
 
@@ -1469,7 +1780,7 @@ fun ClipboardSyncModeSelectorCard(
                     title = "Mac → Android",
                     desc = "Copy on Mac updates Android",
                     isSelected = currentMode == ClipboardSyncMode.MAC_TO_ANDROID,
-                    badge = null,
+                    badge = if (currentMode == ClipboardSyncMode.MAC_TO_ANDROID) "ACTIVE" else null,
                     onClick = { onModeSelected(ClipboardSyncMode.MAC_TO_ANDROID) }
                 )
 
@@ -1479,7 +1790,7 @@ fun ClipboardSyncModeSelectorCard(
                     title = "Two-Way Sync",
                     desc = "Copy on either device updates the other",
                     isSelected = currentMode == ClipboardSyncMode.TWO_WAY,
-                    badge = "ACTIVE",
+                    badge = if (currentMode == ClipboardSyncMode.TWO_WAY) "ACTIVE" else null,
                     onClick = { onModeSelected(ClipboardSyncMode.TWO_WAY) }
                 )
             }
@@ -1838,14 +2149,54 @@ fun NearbyDevicesCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             if (devices.isEmpty()) {
-                // Show default / illustrative Rahul's Android or searching state
-                DiscoveredDeviceRow(
-                    name = "Rahul's Android",
-                    subtext = "Android 15 • Last seen: Just now",
-                    isPaired = false,
-                    anotherDevicePaired = pairedDevice != null,
-                    onAction = { onRefresh() }
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF0C121E))
+                        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text("📡", fontSize = 28.sp)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "No devices found nearby",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Ensure DexoLink is active on your Mac and connected to the same Wi-Fi network.",
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = onRefresh,
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("⟲ Scan Again", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                            }
+                            Button(
+                                onClick = onManualIP,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1D4ED8)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("🔗 Direct IP", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
             } else {
                 devices.forEach { device ->
                     val isPaired = pairedDevice != null &&
@@ -1874,6 +2225,13 @@ fun DiscoveredDeviceRow(
     anotherDevicePaired: Boolean,
     onAction: () -> Unit
 ) {
+    val context = LocalContext.current
+    val isMac = name.lowercase().contains("mac") ||
+            name.lowercase().contains("book") ||
+            name.lowercase().contains("laptop") ||
+            name.lowercase().contains("desktop") ||
+            name.lowercase().contains("pc")
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1886,8 +2244,12 @@ fun DiscoveredDeviceRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Phone graphic
-            PhoneGraphic(modifier = Modifier.size(width = 24.dp, height = 38.dp))
+            // Appropriate device graphic based on device type
+            if (isMac) {
+                MacBookGraphic(modifier = Modifier.size(width = 32.dp, height = 22.dp))
+            } else {
+                PhoneGraphic(modifier = Modifier.size(width = 24.dp, height = 38.dp))
+            }
 
             Spacer(modifier = Modifier.width(10.dp))
 
@@ -1915,23 +2277,40 @@ fun DiscoveredDeviceRow(
                 )
             }
 
-            // Pair / Connect Pill Button
-            val buttonColor = if (isPaired) Color(0xFF1D4ED8) else Color(0xFF4F46E5)
+            // Pair / Connect Pill Button with strict 1-device policy handling
+            val buttonColor = if (anotherDevicePaired) {
+                Color(0xFF334155)
+            } else if (isPaired) {
+                Color(0xFF1D4ED8)
+            } else {
+                Color(0xFF4F46E5)
+            }
+
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
                     .background(buttonColor)
-                    .clickable { onAction() }
+                    .clickable {
+                        if (anotherDevicePaired) {
+                            Toast.makeText(
+                                context,
+                                "Strict 1-Device Policy: Unpair current Mac first before pairing a new device.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            onAction()
+                        }
+                    }
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔗", fontSize = 11.sp)
+                    Text(if (anotherDevicePaired) "🔒" else if (isPaired) "🔗" else "✨", fontSize = 11.sp)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        if (isPaired) "Connect" else "Pair",
+                        if (anotherDevicePaired) "Blocked" else if (isPaired) "Connect" else "Pair",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = if (anotherDevicePaired) Color(0xFF94A3B8) else Color.White
                     )
                 }
             }
@@ -2425,9 +2804,12 @@ fun CompletedTransferItemView(item: TransferItem) {
 @Composable
 fun SettingsTabContent(
     pairedDevice: TrustedDevice?,
+    localDeviceName: String,
+    lastPingLatency: Long?,
     onUnpair: () -> Unit,
     onShowSecurity: () -> Unit,
-    onSendPing: () -> Unit
+    onSendPing: () -> Unit,
+    onOpenRenameLocal: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -2446,7 +2828,62 @@ fun SettingsTabContent(
             )
         }
 
-        // 1. Device Pairing Policy Card
+        // 1. Device Identity Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
+                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("📱", fontSize = 18.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "This Device Identity",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E293B))
+                                .clickable { onOpenRenameLocal() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("✏️ Edit", fontSize = 11.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        localDeviceName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}) • Model: ${Build.MODEL}",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "This name is broadcasted over Wi-Fi so nearby Macs can identify your phone.",
+                        fontSize = 10.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
+            }
+        }
+
+        // 2. Device Pairing Policy Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
@@ -2475,6 +2912,12 @@ fun SettingsTabContent(
                             fontSize = 13.sp,
                             color = Color(0xFF34D399)
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "ID: ${pairedDevice.deviceId.take(16)}...",
+                            fontSize = 10.sp,
+                            color = Color(0xFF64748B)
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = onUnpair,
@@ -2490,7 +2933,7 @@ fun SettingsTabContent(
             }
         }
 
-        // 2. Security Overview Card
+        // 3. Security Overview Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
@@ -2521,7 +2964,7 @@ fun SettingsTabContent(
             }
         }
 
-        // 3. Connection Diagnostics
+        // 4. Connection Diagnostics
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF101726)),
@@ -2531,24 +2974,51 @@ fun SettingsTabContent(
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        "⚡ Diagnostics",
+                        "⚡ Diagnostics & Latency",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = Color.White
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Send a cryptographic ping packet to the paired Mac to measure real network roundtrip latency.",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8)
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
+                    if (lastPingLatency != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF22C55E))
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Last Ping Latency: ${lastPingLatency} ms",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF22C55E)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     Button(
                         onClick = onSendPing,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E3A8A)),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Test Ping Latency 🏓", fontSize = 12.sp)
+                        Text(
+                            if (lastPingLatency != null) "Ping Again (${lastPingLatency}ms) 🏓" else "Test Ping Latency 🏓",
+                            fontSize = 12.sp
+                        )
                     }
                 }
             }
         }
 
-        // 4. App Info
+        // 5. App Info
         item {
             Column(
                 modifier = Modifier.fillMaxWidth(),

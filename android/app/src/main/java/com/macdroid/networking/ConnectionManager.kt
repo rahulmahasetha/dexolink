@@ -89,6 +89,9 @@ class ConnectionManager(private val context: Context) {
         private set
 
     var autoReconnect: Boolean = true
+    private var pingStartTime: Long = 0L
+    var lastPingLatency: Long? = null
+        private set
 
     var state: ConnectionState = ConnectionState.Disconnected
         private set(value) {
@@ -420,7 +423,13 @@ class ConnectionManager(private val context: Context) {
             }
 
             is PongMessage -> {
-                // Heartbeat alive
+                val latency = if (pingStartTime > 0L) System.currentTimeMillis() - pingStartTime else -1L
+                if (latency >= 0L) {
+                    lastPingLatency = latency
+                    log("🏓 Pong received in ${latency}ms")
+                } else {
+                    log("🏓 Pong heartbeat received")
+                }
             }
 
             is ClipboardPushMessage -> {
@@ -508,7 +517,8 @@ class ConnectionManager(private val context: Context) {
     }
 
     fun sendPing() {
-        log("Sending PING...")
+        pingStartTime = System.currentTimeMillis()
+        log("⚡ Sending PING...")
         sendMessage(PingMessage)
     }
 
