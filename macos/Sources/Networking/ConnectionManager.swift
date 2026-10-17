@@ -10,6 +10,15 @@ public enum ConnectionState {
     case authenticated
     case transferring
     case failed(Error)
+
+    public var isConnected: Bool {
+        switch self {
+        case .connected, .authenticated, .transferring:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 public protocol ConnectionManagerDelegate: AnyObject {

@@ -304,22 +304,52 @@ struct MenuBarView: View {
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.secondary)
-                            Spacer()
-                            if appState.isDiscovering {
+
+                            if appState.isActivelyScanning {
                                 ProgressView()
                                     .scaleEffect(0.6)
                             }
+
+                            Spacer()
+
+                            // Start / Stop Discovery Control
+                            Button(action: {
+                                appState.setDiscoveryEnabled(!appState.discoveryEnabled)
+                            }) {
+                                HStack(spacing: 3) {
+                                    Circle()
+                                        .fill(appState.discoveryEnabled ? Color.green : Color.red)
+                                        .frame(width: 6, height: 6)
+                                    Text(appState.discoveryEnabled ? "Stop" : "Start")
+                                        .font(.system(size: 10, weight: .bold))
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .help(appState.discoveryEnabled ? "Stop discovery & suppress pairing notifications" : "Start discovery & enable pairing notifications")
+
+                            // Manual Rescan Button
+                            Button(action: {
+                                appState.refreshDiscovery()
+                            }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(appState.discoveryEnabled ? .accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!appState.discoveryEnabled)
+                            .help("Rescan nearby devices now")
                         }
 
                         if appState.discoveredDevices.isEmpty {
                             VStack(spacing: 6) {
-                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                Image(systemName: appState.discoveryEnabled ? "antenna.radiowaves.left.and.right" : "eye.slash")
                                     .font(.title3)
                                     .foregroundColor(.secondary)
-                                Text("Searching on local Wi-Fi...")
+                                Text(appState.discoveryEnabled ? (appState.isActivelyScanning ? "Searching on local Wi-Fi..." : "No devices found nearby") : "Discovery paused")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                Text("Open DexoLink on your iPhone or Android phone on the same Wi-Fi.")
+                                Text(appState.discoveryEnabled ? "Open DexoLink on your iPhone or Android phone on the same Wi-Fi." : "Click 'Start' above to resume Wi-Fi discovery & pairing.")
                                     .font(.caption2)
                                     .foregroundColor(.secondary.opacity(0.8))
                                     .multilineTextAlignment(.center)
@@ -356,8 +386,7 @@ struct MenuBarView: View {
                 Spacer()
 
                 Button("Refresh") {
-                    appState.discoveryService.stopBrowsing()
-                    appState.discoveryService.startBrowsing()
+                    appState.refreshDiscovery()
                 }
                 .buttonStyle(.plain)
                 .font(.caption2)
@@ -409,7 +438,7 @@ struct MenuBarView: View {
         case .connecting:
             return "Connecting..."
         case .disconnected:
-            return "Ready to connect • Wi-Fi Auto-Discovery"
+            return appState.discoveryEnabled ? "Ready to connect • Wi-Fi Auto-Discovery" : "Discovery paused • Foreground link ready"
         case .failed(let err):
             return "Error: \(err.localizedDescription)"
         }
@@ -457,27 +486,60 @@ struct DeviceRow: View {
 
     var body: some View {
         let pairedDevice = TrustStore.shared.getPairedDevice()
-        let isPaired = (pairedDevice != null && (device.id == pairedDevice!.deviceId || device.name == pairedDevice!.deviceName))
-        let anotherDevicePaired = (pairedDevice != null && !isPaired)
+        let isPaired = (pairedDevice != nil && (device.id == pairedDevice!.deviceId || device.name == pairedDevice!.deviceName))
+        let isCurrentConnected = isPaired && (appState.connectionState.isConnected)
+        let anotherDevicePaired = (pairedDevice != nil && !isPaired)
 
         HStack {
-            Image(systemName: device.name.contains("iPhone") ? "iphone" : "candybarphone")
-                .foregroundColor(.accentColor)
-                .font(.body)
+            // Device Icon (iPhone, iPad, Mac, Android)
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: deviceIconName)
+                    .foregroundColor(device.isOnline ? .accentColor : .secondary)
+                    .font(.body)
+
+                // Online/Offline status dot
+                Circle()
+                    .fill(device.isOnline ? Color.green : Color.secondary.opacity(0.5))
+                    .frame(width: 6, height: 6)
+                    .offset(x: 2, y: 2)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(device.name)
                         .font(.caption)
                         .fontWeight(.semibold)
+                        .foregroundColor(device.isOnline ? .primary : .secondary)
 
-                    if isPaired {
+                    if isCurrentConnected {
                         Text("★ Paired")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(.green)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(Color.green.opacity(0.18))
+                            .cornerRadius(4)
+                        Text("Connected")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.green.opacity(0.18))
+                            .cornerRadius(4)
+                    } else if isPaired {
+                        Text("★ Paired")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.cyan.opacity(0.18))
+                            .cornerRadius(4)
+                        Text(device.isOnline ? "Online" : "Offline")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(device.isOnline ? .green : .secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background((device.isOnline ? Color.green : Color.secondary).opacity(0.15))
                             .cornerRadius(4)
                     } else if anotherDevicePaired {
                         Text("Blocked")
@@ -487,17 +549,33 @@ struct DeviceRow: View {
                             .padding(.vertical, 1)
                             .background(Color.orange.opacity(0.18))
                             .cornerRadius(4)
+                    } else {
+                        Text(device.isOnline ? "Available" : "Offline")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(device.isOnline ? .blue : .secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background((device.isOnline ? Color.blue : Color.secondary).opacity(0.15))
+                            .cornerRadius(4)
                     }
                 }
 
-                Text(isPaired ? "Auto-connects on Wi-Fi" : (anotherDevicePaired ? "1-device policy limit" : "Available nearby"))
+                // Subtitle
+                Text(subtitleText(isPaired: isPaired, isConnected: isCurrentConnected, anotherPaired: anotherDevicePaired))
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
 
             Spacer()
 
-            if isPaired {
+            if isCurrentConnected {
+                Button("Disconnect") {
+                    appState.disconnect()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .tint(.red)
+            } else if isPaired {
                 Button("Connect") {
                     appState.connect(to: device)
                 }
@@ -522,8 +600,50 @@ struct DeviceRow: View {
         .cornerRadius(6)
     }
 
-    private var null: TrustedDevice? {
-        return nil
+    private var deviceIconName: String {
+        let lower = device.name.lowercased()
+        if device.deviceType == "iphone" || lower.contains("iphone") {
+            return "iphone"
+        } else if device.deviceType == "ipad" || lower.contains("ipad") {
+            return "ipad"
+        } else if device.deviceType == "mac" || lower.contains("mac") {
+            return "laptopcomputer"
+        } else {
+            return "candybarphone"
+        }
+    }
+
+    private func subtitleText(isPaired: Bool, isConnected: Bool, anotherPaired: Bool) -> String {
+        if isConnected {
+            return "Connected • Auto-sync active"
+        } else if isPaired {
+            if device.isOnline {
+                return "Available on local Wi-Fi • Auto-connect ready"
+            } else {
+                return "Offline • Last seen: \(formattedLastSeen(device.lastSeen))"
+            }
+        } else if anotherPaired {
+            return "1-device policy: unpair current device first"
+        } else {
+            if device.isOnline {
+                return "Available on local Wi-Fi"
+            } else {
+                return "Offline • Last seen: \(formattedLastSeen(device.lastSeen))"
+            }
+        }
+    }
+
+    private func formattedLastSeen(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 60 {
+            return "Just now"
+        } else if seconds < 3600 {
+            return "\(seconds / 60)m ago"
+        } else if seconds < 86400 {
+            return "\(seconds / 3600)h ago"
+        } else {
+            return "\(seconds / 86400)d ago"
+        }
     }
 }
 
