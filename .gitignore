@@ -1,0 +1,57 @@
+# macOS System & Finder
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Android & Gradle Build Artifacts
+.gradle/
+**/build/
+build/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Android Local & Secrets Configuration
+local.properties
+*.keystore
+*.jks
+*.key
+*.pem
+*.p12
+
+# Swift PM & macOS Build Artifacts
+.build/
+**/.build/
+.swiftpm/
+**/.swiftpm/
+xcuserdata/
+**/xcuserdata/
+*.xcworkspace
+*.xcuserdatad
+macos/dist/
+*.dmg
+*.app
+DerivedData/
+*.dSYM/
+*.o
+*.swiftmodule
+*.swiftdoc
+*.swiftinterface
+
+# IDE & Editor Files
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+*.bak
+
+# Temporary Scratch Files & Logs
+scratch/
+*.log

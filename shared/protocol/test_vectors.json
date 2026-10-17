@@ -1,0 +1,22 @@
+{
+  "hello_message": {
+    "type": "HELLO",
+    "version": 1,
+    "deviceId": "a1b2c3d4e5f60718",
+    "deviceName": "Alice's MacBook"
+  },
+  "transfer_request": {
+    "type": "TRANSFER_REQUEST",
+    "transferId": "550e8400-e29b-41d4-a716-446655440000",
+    "totalFiles": 1,
+    "totalSize": 1024
+  },
+  "file_meta": {
+    "type": "FILE_META",
+    "transferId": "550e8400-e29b-41d4-a716-446655440000",
+    "fileId": "660e8400-e29b-41d4-a716-446655440000",
+    "name": "document.pdf",
+    "size": 1024,
+    "mimeType": "application/pdf"
+  }
+}
