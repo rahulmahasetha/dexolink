@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.net.Uri
+import com.macdroid.MacDroidApplication
 import com.macdroid.core.ClipboardSyncMode
 import com.macdroid.core.MacDroidClipboardManager
 import com.macdroid.core.TransferManager
@@ -401,11 +402,27 @@ class ConnectionManager(private val context: Context) {
                     pairingManager.confirmPairing()
                     state = ConnectionState.Authenticated(peerName, peerId)
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
+
+                    // Automatically stop discovery and scanning on both devices once pairing succeeds!
+                    try {
+                        MacDroidApplication.discoveryService.stopBrowsing()
+                        log("Pairing succeeded with $peerName — stopped Wi-Fi discovery")
+                    } catch (e: Exception) {
+                        log("Could not stop discovery: ${e.message}")
+                    }
                 } else {
                     val reason = if (message.reason.isNotBlank()) message.reason else "Pairing rejected by peer"
                     log("⛔ Pairing rejected: $reason")
                     state = ConnectionState.Failed(reason)
                     disconnect(disableAutoReconnect = true)
+
+                    // If pairing is rejected or fails, continue scanning until pairing succeeds or user clicks Stop!
+                    try {
+                        MacDroidApplication.discoveryService.startBrowsing()
+                        log("Continuing discovery scanning after pairing rejection...")
+                    } catch (e: Exception) {
+                        log("Could not restart discovery: ${e.message}")
+                    }
                 }
             }
 
@@ -477,6 +494,12 @@ class ConnectionManager(private val context: Context) {
             state = ConnectionState.Authenticated(currentState.peerName, currentState.peerId)
             sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
             log("Pairing confirmed by user for ${currentState.peerName} (${currentState.peerId})")
+            try {
+                MacDroidApplication.discoveryService.stopBrowsing()
+                log("Pairing confirmed — stopped Wi-Fi discovery scanning")
+            } catch (e: Exception) {
+                log("Could not stop discovery: ${e.message}")
+            }
         }
     }
 
@@ -485,6 +508,12 @@ class ConnectionManager(private val context: Context) {
         sendMessage(PairResponseMessage(accepted = false, publicKey = "", reason = "Pairing declined by user"))
         state = ConnectionState.Failed("Pairing declined")
         disconnect(disableAutoReconnect = true)
+        try {
+            MacDroidApplication.discoveryService.startBrowsing()
+            log("Pairing rejected — continuing Wi-Fi discovery scanning")
+        } catch (e: Exception) {
+            log("Could not restart discovery: ${e.message}")
+        }
     }
 
     fun unpairCurrentDevice() {

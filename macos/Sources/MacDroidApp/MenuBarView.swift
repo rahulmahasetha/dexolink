@@ -22,14 +22,6 @@ struct MenuBarView: View {
                     .font(.headline)
                     .fontWeight(.bold)
 
-                Text("v2")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.purple)
-                    .cornerRadius(6)
-
                 Spacer()
 
                 Button(action: {
@@ -58,6 +50,64 @@ struct MenuBarView: View {
 
             ScrollView {
                 VStack(spacing: 10) {
+                    // MARK: - Incoming Pairing Request Card
+                    if let req = appState.incomingPairingRequest {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "lock.shield.fill")
+                                    .foregroundColor(.purple)
+                                    .font(.title3)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Pairing Request")
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                    Text("\(req.peerName) wants to pair with this Mac")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+
+                            if !req.pin.isEmpty {
+                                HStack {
+                                    Text("Code: \(req.pin)")
+                                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                        .padding(.vertical, 3)
+                                        .padding(.horizontal, 8)
+                                        .background(Color.purple.opacity(0.12))
+                                        .cornerRadius(6)
+                                    Spacer()
+                                }
+                            }
+
+                            HStack(spacing: 10) {
+                                Button("Reject") {
+                                    appState.rejectIncomingPairing()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .foregroundColor(.red)
+
+                                Spacer()
+
+                                Button("Accept") {
+                                    appState.acceptIncomingPairing()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .tint(.green)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.purple.opacity(0.08))
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+
                     // MARK: - Strict 1-Device Pairing Status Card
                     if let paired = TrustStore.shared.getPairedDevice() {
                         HStack(spacing: 10) {
@@ -401,6 +451,19 @@ struct MenuBarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            // MARK: - Developer Attribution Footer
+            HStack {
+                Spacer()
+                Text("Developed by Rahul Mahaseth | DexoLink v2.0.0")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary.opacity(0.8))
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            .background(Color(nsColor: .controlBackgroundColor))
         }
         .frame(width: 340, height: 500)
         .sheet(isPresented: $showManualIPSheet) {

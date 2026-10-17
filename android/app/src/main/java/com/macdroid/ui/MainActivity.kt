@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val lastSyncedSnippet = mutableStateOf<String?>(null)
     private val lastPingLatency = mutableStateOf<Long?>(null)
     private val localDeviceName = mutableStateOf("")
+    private val isDiscoveryScanning = mutableStateOf(true)
 
     // File Sharing state
     private val activeTransfers = mutableStateListOf<TransferItem>()
@@ -124,8 +125,16 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         localDeviceName.value = connectionManager.deviceName
+        isDiscoveryScanning.value = discoveryService.isBrowsing
         for (device in discoveryService.discoveredDevices.values) {
-            if (discoveredDevices.none { it.host == device.host && it.port == device.port }) {
+            val existingIndex = discoveredDevices.indexOfFirst {
+                (!device.deviceId.isNullOrBlank() && it.deviceId == device.deviceId) ||
+                (it.name.isNotBlank() && it.name == device.name) ||
+                (it.host == device.host && it.port == device.port)
+            }
+            if (existingIndex >= 0) {
+                discoveredDevices[existingIndex] = device
+            } else {
                 discoveredDevices.add(device)
             }
         }
@@ -198,7 +207,20 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                         discoveredDevices.clear()
                         discoveryService.stopBrowsing()
                         discoveryService.startBrowsing()
+                        isDiscoveryScanning.value = true
                         log("Refreshed Wi-Fi discovery")
+                    },
+                    isScanning = isDiscoveryScanning.value,
+                    onStartDiscovery = {
+                        discoveredDevices.clear()
+                        discoveryService.startBrowsing()
+                        isDiscoveryScanning.value = true
+                        log("Started nearby device discovery")
+                    },
+                    onStopDiscovery = {
+                        discoveryService.stopBrowsing()
+                        isDiscoveryScanning.value = false
+                        log("Stopped device discovery")
                     },
                     onSendFiles = { uris ->
                         uris.forEach { uri ->
@@ -373,6 +395,13 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     override fun onStateChanged(state: ConnectionState) {
         connectionState.value = state
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
+        if (state is ConnectionState.Authenticated || state is ConnectionState.Connected) {
+            isDiscoveryScanning.value = false
+        } else if (state is ConnectionState.Disconnected || state is ConnectionState.Failed) {
+            if (isDiscoveryScanning.value && pairedDevice.value == null) {
+                discoveryService.startBrowsing()
+            }
+        }
     }
 
     override fun onMessageReceived(message: ProtocolMessage) {
@@ -395,7 +424,14 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
 
     // DiscoveryListener
     override fun onDeviceFound(device: DiscoveredDevice) {
-        if (discoveredDevices.none { it.host == device.host && it.port == device.port }) {
+        val existingIndex = discoveredDevices.indexOfFirst {
+            (!device.deviceId.isNullOrBlank() && it.deviceId == device.deviceId) ||
+            (it.name.isNotBlank() && it.name == device.name) ||
+            (it.host == device.host && it.port == device.port)
+        }
+        if (existingIndex >= 0) {
+            discoveredDevices[existingIndex] = device
+        } else {
             discoveredDevices.add(device)
             log("Discovered: ${device.name} @ ${device.host}:${device.port}")
         }
@@ -644,6 +680,9 @@ fun MainScreenRoot(
     onSendPing: () -> Unit,
     onCheckClipboard: () -> Unit,
     onRefreshDiscovery: () -> Unit,
+    isScanning: Boolean,
+    onStartDiscovery: () -> Unit,
+    onStopDiscovery: () -> Unit,
     onSendFiles: (List<Uri>) -> Unit,
     onCancelTransfer: (String) -> Unit,
     onOpenFile: (File) -> Unit,
@@ -723,14 +762,14 @@ fun MainScreenRoot(
             confirmButton = {
                 Button(
                     onClick = onConfirmPairing,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9333EA))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A))
                 ) {
-                    Text("Pair & Trust Device", fontWeight = FontWeight.Bold)
+                    Text("Accept", fontWeight = FontWeight.Bold, color = Color.White)
                 }
             },
             dismissButton = {
                 TextButton(onClick = onRejectPairing) {
-                    Text("Decline", color = Color.Gray)
+                    Text("Reject", color = Color(0xFFEF4444), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -929,20 +968,6 @@ fun MainScreenRoot(
                                     fontSize = 20.sp,
                                     color = Color.White
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF381B6D))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        "v2",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFC084FC)
-                                    )
-                                }
                             }
                             Text(
                                 "Connect • Sync • Share",
@@ -1064,6 +1089,8 @@ fun MainScreenRoot(
                             showRenameDialog = true
                         },
                         onRefreshDiscovery = onRefreshDiscovery,
+                        isScanning = isScanning,
+                        onToggleScan = { if (isScanning) onStopDiscovery() else onStartDiscovery() },
                         onOpenFilePicker = { filePickerLauncher.launch(arrayOf("*/*")) },
                         onOpenManualIP = { showManualIPDialog = true },
                         onNavigateFiles = { selectedTab = NavTab.FILES },
@@ -1129,6 +1156,8 @@ fun HomeScreenContent(
     onCheckClipboard: () -> Unit,
     onOpenRenamePaired: () -> Unit,
     onRefreshDiscovery: () -> Unit,
+    isScanning: Boolean,
+    onToggleScan: () -> Unit,
     onOpenFilePicker: () -> Unit,
     onOpenManualIP: () -> Unit,
     onNavigateFiles: () -> Unit,
@@ -1197,7 +1226,9 @@ fun HomeScreenContent(
             NearbyDevicesCard(
                 devices = devices,
                 pairedDevice = pairedDevice,
+                isScanning = isScanning,
                 onConnect = onConnect,
+                onToggleScan = onToggleScan,
                 onRefresh = onRefreshDiscovery,
                 onManualIP = onOpenManualIP
             )
@@ -2085,7 +2116,9 @@ fun ActiveTransferItemView(
 fun NearbyDevicesCard(
     devices: List<DiscoveredDevice>,
     pairedDevice: TrustedDevice?,
+    isScanning: Boolean,
     onConnect: (DiscoveredDevice) -> Unit,
+    onToggleScan: () -> Unit,
     onRefresh: () -> Unit,
     onManualIP: () -> Unit
 ) {
@@ -2109,14 +2142,66 @@ fun NearbyDevicesCard(
                     fontSize = 15.sp,
                     color = Color.White
                 )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    "⟲",
-                    fontSize = 16.sp,
-                    color = Color(0xFF38BDF8),
-                    modifier = Modifier.clickable { onRefresh() }
-                )
+                if (isScanning) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 2.dp,
+                        color = Color(0xFF38BDF8)
+                    )
+                }
                 Spacer(modifier = Modifier.weight(1f))
+
+                // Start / Stop Discovery Toggle Button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isScanning) Color(0xFF3F1316) else Color(0xFF0F3924))
+                        .border(
+                            1.dp,
+                            if (isScanning) Color(0xFF7F1D1D) else Color(0xFF166534),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .clickable { onToggleScan() }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (isScanning) Color(0xFFEF4444) else Color(0xFF22C55E))
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            if (isScanning) "Stop" else "Start",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isScanning) Color(0xFFFCA5A5) else Color(0xFF86EFAC)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Rescan Button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF1A2333))
+                        .border(1.dp, Color(0xFF2B3A52), RoundedCornerShape(16.dp))
+                        .clickable { onRefresh() }
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        "⟲",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF38BDF8)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
 
                 // Manual IP Fallback Pill Button
                 Box(
@@ -2125,13 +2210,13 @@ fun NearbyDevicesCard(
                         .background(Color(0xFF1A2333))
                         .border(1.dp, Color(0xFF2B3A52), RoundedCornerShape(16.dp))
                         .clickable { onManualIP() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("🔗", fontSize = 11.sp)
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("🔗", fontSize = 10.sp)
+                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
-                            "Manual IP",
+                            "Direct IP",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
@@ -2141,9 +2226,9 @@ fun NearbyDevicesCard(
             }
 
             Text(
-                "Automatically discover devices on the same Wi-Fi",
+                if (isScanning) "Continuously discovering devices available for pairing on Wi-Fi" else "Discovery paused • Tap 'Start' to discover nearby devices",
                 fontSize = 11.sp,
-                color = Color(0xFF64748B)
+                color = if (isScanning) Color(0xFF64748B) else Color(0xFF94A3B8)
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -2162,37 +2247,49 @@ fun NearbyDevicesCard(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text("📡", fontSize = 28.sp)
+                        Text(if (isScanning) "📡" else "💤", fontSize = 28.sp)
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            "No devices found nearby",
+                            if (isScanning) "Searching for nearby devices..." else "Discovery is paused",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = Color.White
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Ensure DexoLink is active on your Mac and connected to the same Wi-Fi network.",
+                            if (isScanning)
+                                "Continuously scanning Wi-Fi network for Mac & Android devices..."
+                            else
+                                "Tap 'Start' above to continuously discover nearby devices available for pairing.",
                             fontSize = 11.sp,
                             color = Color(0xFF64748B),
                             textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = onRefresh,
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text("⟲ Scan Again", fontSize = 11.sp, color = Color(0xFF38BDF8))
-                            }
                             Button(
-                                onClick = onManualIP,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1D4ED8)),
+                                onClick = onToggleScan,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isScanning) Color(0xFFB91C1C) else Color(0xFF15803D)
+                                ),
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                             ) {
-                                Text("🔗 Direct IP", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (isScanning) "⏹ Stop Scanning" else "▶ Start Discovery",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            if (isScanning) {
+                                OutlinedButton(
+                                    onClick = onRefresh,
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("⟲ Rescan", fontSize = 11.sp, color = Color(0xFF38BDF8))
+                                }
                             }
                         }
                     }
@@ -2401,41 +2498,60 @@ fun DexoLinkBottomNavBar(
         border = BorderStroke(1.dp, Color(0xFF1E293B)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 12.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            NavBarItem(
-                title = "Home",
-                icon = "🏠",
-                isSelected = selectedTab == NavTab.HOME,
-                badge = null,
-                onClick = { onTabSelected(NavTab.HOME) }
-            )
-            NavBarItem(
-                title = "Files",
-                icon = "📁",
-                isSelected = selectedTab == NavTab.FILES,
-                badge = null,
-                onClick = { onTabSelected(NavTab.FILES) }
-            )
-            NavBarItem(
-                title = "Transfers",
-                icon = "⇅",
-                isSelected = selectedTab == NavTab.TRANSFERS,
-                badge = if (activeTransfersCount > 0) activeTransfersCount.toString() else null,
-                onClick = { onTabSelected(NavTab.TRANSFERS) }
-            )
-            NavBarItem(
-                title = "Settings",
-                icon = "⚙️",
-                isSelected = selectedTab == NavTab.SETTINGS,
-                badge = null,
-                onClick = { onTabSelected(NavTab.SETTINGS) }
-            )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp, horizontal = 12.dp),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NavBarItem(
+                    title = "Home",
+                    icon = "🏠",
+                    isSelected = selectedTab == NavTab.HOME,
+                    badge = null,
+                    onClick = { onTabSelected(NavTab.HOME) }
+                )
+                NavBarItem(
+                    title = "Files",
+                    icon = "📁",
+                    isSelected = selectedTab == NavTab.FILES,
+                    badge = null,
+                    onClick = { onTabSelected(NavTab.FILES) }
+                )
+                NavBarItem(
+                    title = "Transfers",
+                    icon = "⇅",
+                    isSelected = selectedTab == NavTab.TRANSFERS,
+                    badge = if (activeTransfersCount > 0) activeTransfersCount.toString() else null,
+                    onClick = { onTabSelected(NavTab.TRANSFERS) }
+                )
+                NavBarItem(
+                    title = "Settings",
+                    icon = "⚙️",
+                    isSelected = selectedTab == NavTab.SETTINGS,
+                    badge = null,
+                    onClick = { onTabSelected(NavTab.SETTINGS) }
+                )
+            }
+
+            // Fixed non-editable developer attribution footer
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF060911))
+                    .padding(vertical = 5.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Developed by Rahul Mahaseth | DexoLink v2.0.0",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF64748B),
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
@@ -3025,15 +3141,16 @@ fun SettingsTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "DexoLink v2.0.0 (Build 3)",
+                    "Developed by Rahul Mahaseth | DexoLink v2.0.0",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
-                    color = Color(0xFF64748B)
+                    color = Color(0xFF94A3B8)
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    "Secure bidirectional sync & quick file sharing",
+                    "Secure bidirectional sync & device discovery",
                     fontSize = 11.sp,
-                    color = Color(0xFF475569)
+                    color = Color(0xFF64748B)
                 )
             }
         }

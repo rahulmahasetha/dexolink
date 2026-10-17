@@ -40,6 +40,8 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
         const val ACTION_SEND_CLIPBOARD = "com.macdroid.action.SEND_CLIPBOARD"
         const val ACTION_DISCONNECT = "com.macdroid.action.DISCONNECT"
         const val ACTION_CONNECT = "com.macdroid.action.CONNECT"
+        const val ACTION_ACCEPT_PAIRING = "com.macdroid.action.ACCEPT_PAIRING"
+        const val ACTION_REJECT_PAIRING = "com.macdroid.action.REJECT_PAIRING"
 
         const val EXTRA_HOST = "extra_host"
         const val EXTRA_PORT = "extra_port"
@@ -187,6 +189,16 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
                 if (!host.isNullOrBlank()) {
                     connectionManager.connect(host, port)
                 }
+            }
+
+            ACTION_ACCEPT_PAIRING -> {
+                connectionManager.confirmPairing()
+                updateNotification(connectionManager.state)
+            }
+
+            ACTION_REJECT_PAIRING -> {
+                connectionManager.rejectPairing()
+                updateNotification(connectionManager.state)
             }
 
             ACTION_START -> {
@@ -466,7 +478,39 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
 
-        if (state is ConnectionState.Authenticated || state is ConnectionState.Connected) {
+        if (state is ConnectionState.Pairing) {
+            val acceptIntent = Intent(this, MacDroidService::class.java).apply {
+                action = ACTION_ACCEPT_PAIRING
+            }
+            val acceptPendingIntent = PendingIntent.getService(
+                this,
+                10,
+                acceptIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val rejectIntent = Intent(this, MacDroidService::class.java).apply {
+                action = ACTION_REJECT_PAIRING
+            }
+            val rejectPendingIntent = PendingIntent.getService(
+                this,
+                11,
+                rejectIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            builder.addAction(
+                android.R.drawable.checkbox_on_background,
+                "Accept",
+                acceptPendingIntent
+            )
+            builder.addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Reject",
+                rejectPendingIntent
+            )
+            builder.setPriority(NotificationCompat.PRIORITY_HIGH)
+        } else if (state is ConnectionState.Authenticated || state is ConnectionState.Connected) {
             builder.addAction(
                 android.R.drawable.ic_menu_send,
                 "📋 Send Clip",

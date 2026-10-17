@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Network
+import UserNotifications
 import Core
 import Networking
 import Crypto
@@ -20,12 +21,29 @@ app.delegate = appDelegate
 app.run()
 
 
-class MacDroidAppDelegate: NSObject, NSApplicationDelegate {
+class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     let appState = AppState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Configure native system notifications for device pairing
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+
+        let acceptAction = UNNotificationAction(identifier: "ACCEPT_PAIRING", title: "Accept", options: [.foreground])
+        let rejectAction = UNNotificationAction(identifier: "REJECT_PAIRING", title: "Reject", options: [.destructive])
+        let category = UNNotificationCategory(identifier: "PAIRING_CATEGORY", actions: [acceptAction, rejectAction], intentIdentifiers: [], options: [])
+        center.setNotificationCategories([category])
+
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if granted {
+                print("🔔 macOS system notification authorization granted")
+            } else if let error = error {
+                print("⚠️ Notification auth error: \(error.localizedDescription)")
+            }
+        }
+
         // Create the status bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -37,7 +55,7 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate {
 
         // Create the popover that shows our SwiftUI view
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 320, height: 400)
+        popover.contentSize = NSSize(width: 340, height: 500)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
             rootView: MenuBarView(appState: appState)
@@ -45,6 +63,29 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate {
 
         print("✅ MacDroid is running in the menu bar!")
         print("   Click the antenna icon (⌘) in your menu bar to open.")
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == "ACCEPT_PAIRING" {
+            DispatchQueue.main.async {
+                self.appState.acceptIncomingPairing()
+            }
+        } else if response.actionIdentifier == "REJECT_PAIRING" {
+            DispatchQueue.main.async {
+                self.appState.rejectIncomingPairing()
+            }
+        } else {
+            DispatchQueue.main.async {
+                if let button = self.statusItem.button, !self.popover.isShown {
+                    self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                }
+            }
+        }
+        completionHandler()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -64,6 +105,12 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+public struct PairingRequestInfo: Equatable {
+    public let peerName: String
+    public let publicKey: String
+    public let pin: String
+}
+
 // A state object to hold our managers and pass them to the UI
 class AppState: ObservableObject {
     let connectionManager = ConnectionManager()
@@ -79,6 +126,7 @@ class AppState: ObservableObject {
     @Published var connectionState: ConnectionState = .disconnected
     @Published var connectedDeviceName: String? = nil
     @Published var pairingPin: String? = nil
+    @Published var incomingPairingRequest: PairingRequestInfo? = nil
     @Published var lastPingLatencyMs: Int? = nil
     @Published var statusMessage: String = "Ready to connect"
     @Published var localIP: String = "Detecting..."
@@ -265,6 +313,41 @@ class AppState: ObservableObject {
     func cancelTransfer(id: String) {
         transferManager.cancelTransfer(id: id)
     }
+
+    func acceptIncomingPairing() {
+        guard let req = incomingPairingRequest else { return }
+        let peerName = req.peerName
+        self.connectionManager.send(message: .pairResponse(accepted: true, publicKey: CryptoService.shared.publicKeyBase64))
+        self.pairingManager.confirmPairing()
+        self.incomingPairingRequest = nil
+        self.pairingPin = nil
+        self.clipboardManager.direction = .bidirectional
+        self.statusMessage = "Connected to \(peerName) (Paired)"
+        
+        // Automatically stop discovery and scanning on both devices once pairing succeeds!
+        self.discoveryService.stopBrowsing()
+        self.isActivelyScanning = false
+        print("✅ Accepted pairing with \(peerName) — stopped discovery & scanning")
+    }
+
+    func rejectIncomingPairing() {
+        guard let req = incomingPairingRequest else { return }
+        let peerName = req.peerName
+        self.connectionManager.send(message: .pairResponse(accepted: false, publicKey: "", reason: "Pairing was rejected on Mac"))
+        self.incomingPairingRequest = nil
+        self.pairingPin = nil
+        self.connectionManager.disconnect()
+        
+        // If pairing is rejected or fails, continue scanning until pairing succeeds or user clicks Stop!
+        if self.discoveryEnabled {
+            self.discoveryService.startBrowsing()
+            self.isActivelyScanning = true
+            self.statusMessage = "Pairing rejected. Continuing scanning..."
+        } else {
+            self.statusMessage = "Pairing rejected."
+        }
+        print("⛔ Rejected pairing with \(peerName) — continuing discovery if enabled")
+    }
 }
 
 extension AppState: DiscoveryServiceDelegate {
@@ -304,18 +387,33 @@ extension AppState: ConnectionManagerDelegate {
                 self.clipboardManager.direction = .bidirectional
             case .authenticated:
                 self.clipboardManager.direction = .bidirectional
-                self.statusMessage = "Connected • Auto Clipboard Sync Active"
+                self.statusMessage = "Connected to \(self.connectedDeviceName ?? "Device") (Paired)"
+                // Automatically stop discovery and scanning once connected & authenticated!
+                self.discoveryService.stopBrowsing()
+                self.isActivelyScanning = false
             case .transferring:
                 self.statusMessage = "Transferring..."
             case .disconnected:
                 self.connectedDeviceName = nil
                 self.pairingPin = nil
+                self.incomingPairingRequest = nil
                 self.statusMessage = "Disconnected"
                 self.clipboardManager.direction = .disabled
+                // If discovery is enabled and not paired, continue scanning until pairing succeeds or user clicks Stop!
+                if self.discoveryEnabled && !TrustStore.shared.hasPairedDevice() {
+                    self.discoveryService.startBrowsing()
+                    self.isActivelyScanning = true
+                }
             case .failed(let err):
                 self.pairingPin = nil
+                self.incomingPairingRequest = nil
                 self.statusMessage = "Connection failed: \(err.localizedDescription)"
                 self.clipboardManager.direction = .disabled
+                // If discovery is enabled and not paired, continue scanning until pairing succeeds or user clicks Stop!
+                if self.discoveryEnabled && !TrustStore.shared.hasPairedDevice() {
+                    self.discoveryService.startBrowsing()
+                    self.isActivelyScanning = true
+                }
             case .connecting:
                 self.statusMessage = "Connecting..."
             }
@@ -346,6 +444,9 @@ extension AppState: ConnectionManagerDelegate {
                     paired: true
                 )
                 self.connectionManager.send(message: ack)
+                // Stop discovery since we are paired and connected
+                self.discoveryService.stopBrowsing()
+                self.isActivelyScanning = false
                 print("🤝 Hello received from paired device \(deviceName) — sent HelloAck(paired: true)")
             } else {
                 self.statusMessage = "Handshaking with \(deviceName)..."
@@ -377,6 +478,8 @@ extension AppState: ConnectionManagerDelegate {
                         TrustedDevice(deviceId: deviceId, deviceName: deviceName, publicKeyBase64: "", pairedAt: Date())
                     )
                 }
+                self.discoveryService.stopBrowsing()
+                self.isActivelyScanning = false
                 print("🤝 HelloAck(paired: true) received from \(deviceName)")
             } else {
                 if !self.discoveryEnabled {
@@ -418,17 +521,24 @@ extension AppState: ConnectionManagerDelegate {
             }
 
             self.pairingManager.initiatePairing(peerId: peerName, peerName: peerName, peerKeyBase64: publicKey)
-            if case .waitingForPin(let pin) = self.pairingManager.state {
-                self.pairingPin = pin
-                self.statusMessage = "Pairing Code: \(pin) • Confirming..."
-                print("🔐 SAS 6-digit confirmation PIN: \(pin) for \(peerName)")
+            var pin = ""
+            if case .waitingForPin(let p) = self.pairingManager.state {
+                pin = p
+                self.pairingPin = p
             }
-            self.connectionManager.send(message: .pairResponse(accepted: true, publicKey: CryptoService.shared.publicKeyBase64))
-            self.pairingManager.confirmPairing()
-            self.pairingPin = nil
-            self.clipboardManager.direction = .bidirectional
-            self.statusMessage = "Paired with \(peerName) • Auto Syncing"
-            print("✅ Completed one-time pairing with \(peerName)")
+
+            self.incomingPairingRequest = PairingRequestInfo(peerName: peerName, publicKey: publicKey, pin: pin)
+            self.statusMessage = "Pairing request from \(peerName) • Awaiting approval"
+
+            // Send system notification with Accept and Reject actions
+            let content = UNMutableNotificationContent()
+            content.title = "DexoLink: Pairing Request"
+            content.body = "\(peerName) wants to pair with your Mac. Accept connection?"
+            content.sound = .default
+            content.categoryIdentifier = "PAIRING_CATEGORY"
+            let req = UNNotificationRequest(identifier: "dexolink_pairing_\(peerName)", content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(req, withCompletionHandler: nil)
+            print("🔔 Sent pairing notification with Accept/Reject for \(peerName)")
 
         case let .pairResponse(accepted, publicKey, reason):
             let peerName = self.connectedDeviceName ?? "Device"
@@ -437,13 +547,24 @@ extension AppState: ConnectionManagerDelegate {
                 self.pairingManager.confirmPairing()
                 self.pairingPin = nil
                 self.clipboardManager.direction = .bidirectional
-                self.statusMessage = "Paired with \(peerName) • Auto Syncing"
-                print("✅ Completed one-time pairing response with \(peerName)")
+                self.statusMessage = "Connected to \(peerName) (Paired)"
+                
+                // Automatically stop discovery and scanning on both devices once pairing succeeds!
+                self.discoveryService.stopBrowsing()
+                self.isActivelyScanning = false
+                print("✅ Completed pairing with \(peerName) — stopped scanning")
             } else {
                 let msg = reason ?? "Pairing declined by \(peerName)"
                 self.statusMessage = msg
                 print("⛔ Pairing declined by \(peerName): \(msg)")
                 self.connectionManager.disconnect()
+                
+                // If pairing is rejected or fails, continue scanning until pairing succeeds or user clicks Stop!
+                if self.discoveryEnabled {
+                    self.discoveryService.startBrowsing()
+                    self.isActivelyScanning = true
+                    self.statusMessage = "Pairing rejected: \(msg). Continuing discovery..."
+                }
             }
 
         case .unpair:
