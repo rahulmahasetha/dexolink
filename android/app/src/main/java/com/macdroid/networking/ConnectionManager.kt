@@ -274,10 +274,10 @@ class ConnectionManager(private val context: Context) {
         when (message) {
             is HelloMessage -> {
                 log("Peer identified: ${message.deviceName} (${message.deviceId})")
-                val isTrusted = trustStore.isTrusted(message.deviceId)
+                val isTrusted = trustStore.isPairedWith(message.deviceId)
 
                 if (isTrusted) {
-                    log("Device ${message.deviceName} (${message.deviceId}) is trusted in TrustStore! Authenticating...")
+                    log("Device ${message.deviceName} (${message.deviceId}) is our paired device! Authenticating...")
                     state = ConnectionState.Authenticated(message.deviceName, message.deviceId)
                     val ack = HelloAckMessage(
                         version = 1,
@@ -288,7 +288,7 @@ class ConnectionManager(private val context: Context) {
                     sendMessage(ack)
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
                 } else {
-                    log("Device ${message.deviceName} (${message.deviceId}) is not in TrustStore. Starting pairing handshake...")
+                    log("Device ${message.deviceName} (${message.deviceId}) is not paired. HelloAck(paired: false)")
                     val ack = HelloAckMessage(
                         version = 1,
                         deviceId = deviceId,
@@ -296,8 +296,12 @@ class ConnectionManager(private val context: Context) {
                         paired = false
                     )
                     sendMessage(ack)
-                    // Request pairing
-                    sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
+                    // Strict 1-device policy: only send pairRequest if not already paired!
+                    if (!trustStore.hasPairedDevice()) {
+                        sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
+                    } else {
+                        log("ℹ️ Already paired with '${trustStore.getPairedDevice()?.deviceName}'. Awaiting manual unpair.")
+                    }
                 }
             }
 
@@ -306,9 +310,8 @@ class ConnectionManager(private val context: Context) {
                 if (message.paired) {
                     log("Peer verified authenticated session: ${message.deviceName}")
                     state = ConnectionState.Authenticated(message.deviceName, message.deviceId)
-                    // Save to trust store if not present
-                    if (!trustStore.isTrusted(message.deviceId)) {
-                        trustStore.addTrustedDevice(
+                    if (!trustStore.isPairedWith(message.deviceId)) {
+                        trustStore.setPairedDevice(
                             TrustedDevice(
                                 deviceId = message.deviceId,
                                 deviceName = message.deviceName,
@@ -319,29 +322,45 @@ class ConnectionManager(private val context: Context) {
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
                     log("[Mode Sync] Synced mode '${clipboardManager.syncMode.id}' with ${message.deviceName}")
                 } else {
-                    log("Peer requires pairing. Initiating PAIR_REQUEST...")
-                    sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
+                    if (!trustStore.hasPairedDevice()) {
+                        log("Initiating PAIR_REQUEST to ${message.deviceName}...")
+                        sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
+                    } else {
+                        log("ℹ️ Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}'")
+                    }
                 }
             }
 
             is PairRequestMessage -> {
-                log("Received PAIR_REQUEST with public key from peer")
+                log("Received PAIR_REQUEST from peer")
                 val peerName = when (val s = state) {
                     is ConnectionState.Connected -> s.peerName
                     is ConnectionState.Authenticated -> s.peerName
-                    else -> "MacBook"
+                    else -> "Device"
                 }
                 val peerId = when (val s = state) {
                     is ConnectionState.Connected -> s.peerAddress
                     is ConnectionState.Authenticated -> s.peerId
-                    else -> "Mac"
+                    else -> "Device"
+                }
+
+                // Strict 1-device policy: check if phone is already paired with another device!
+                val existingPaired = trustStore.getPairedDevice()
+                if (existingPaired != null && existingPaired.deviceId != peerId && existingPaired.deviceName != peerName) {
+                    log("⛔ Auto-rejecting PAIR_REQUEST from $peerName: Already paired with '${existingPaired.deviceName}'")
+                    sendMessage(
+                        PairResponseMessage(
+                            accepted = false,
+                            publicKey = "",
+                            reason = "Device is already paired with '${existingPaired.deviceName}'. In accordance with DexoLink's strict one-device policy, please unpair first."
+                        )
+                    )
+                    state = ConnectionState.Failed("Rejected pairing: Already paired with ${existingPaired.deviceName}")
+                    return
                 }
 
                 val pin = pairingManager.initiatePairing(peerId, peerName, message.publicKey)
                 log("Generated SAS confirmation PIN: $pin for pairing with $peerName")
-
-                // Send PAIR_RESPONSE with our public key
-                sendMessage(PairResponseMessage(accepted = true, publicKey = cryptoService.publicKeyBase64))
                 state = ConnectionState.Pairing(pin = pin, peerName = peerName, peerId = peerId)
             }
 
@@ -352,13 +371,13 @@ class ConnectionManager(private val context: Context) {
                         is ConnectionState.Connected -> s.peerName
                         is ConnectionState.Authenticated -> s.peerName
                         is ConnectionState.Pairing -> s.peerName
-                        else -> "MacBook"
+                        else -> "Device"
                     }
                     val peerId = when (val s = state) {
                         is ConnectionState.Connected -> s.peerAddress
                         is ConnectionState.Authenticated -> s.peerId
                         is ConnectionState.Pairing -> s.peerId
-                        else -> "Mac"
+                        else -> "Device"
                     }
 
                     val pin = pairingManager.initiatePairing(peerId, peerName, message.publicKey)
@@ -367,9 +386,19 @@ class ConnectionManager(private val context: Context) {
                     state = ConnectionState.Authenticated(peerName, peerId)
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
                 } else {
-                    log("Peer rejected pairing.")
-                    state = ConnectionState.Failed("Pairing rejected by peer")
+                    val reason = if (message.reason.isNotBlank()) message.reason else "Pairing rejected by peer"
+                    log("⛔ Pairing rejected: $reason")
+                    state = ConnectionState.Failed(reason)
+                    disconnect(disableAutoReconnect = true)
                 }
+            }
+
+            is UnpairMessage -> {
+                log("🗑️ Received UNPAIR from peer. Clearing paired trust store...")
+                trustStore.unpairDevice()
+                pairingManager.unpair()
+                state = ConnectionState.Disconnected
+                disconnect(disableAutoReconnect = true)
             }
 
             is PingMessage -> {
@@ -413,9 +442,10 @@ class ConnectionManager(private val context: Context) {
     }
 
     fun confirmPairing() {
-        pairingManager.confirmPairing()
         val currentState = state
         if (currentState is ConnectionState.Pairing) {
+            pairingManager.confirmPairing()
+            sendMessage(PairResponseMessage(accepted = true, publicKey = cryptoService.publicKeyBase64))
             state = ConnectionState.Authenticated(currentState.peerName, currentState.peerId)
             sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
             log("Pairing confirmed by user for ${currentState.peerName} (${currentState.peerId})")
@@ -424,8 +454,19 @@ class ConnectionManager(private val context: Context) {
 
     fun rejectPairing() {
         pairingManager.rejectPairing()
-        state = ConnectionState.Failed("Pairing cancelled")
+        sendMessage(PairResponseMessage(accepted = false, publicKey = "", reason = "Pairing declined by user"))
+        state = ConnectionState.Failed("Pairing declined")
         disconnect(disableAutoReconnect = true)
+    }
+
+    fun unpairCurrentDevice() {
+        val paired = trustStore.getPairedDevice()
+        log("Unpairing current device: ${paired?.deviceName}")
+        sendMessage(UnpairMessage)
+        trustStore.unpairDevice()
+        pairingManager.unpair()
+        disconnect(disableAutoReconnect = true)
+        state = ConnectionState.Disconnected
     }
 
     fun sendMessage(message: ProtocolMessage) {

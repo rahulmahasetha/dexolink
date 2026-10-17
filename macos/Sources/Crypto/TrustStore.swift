@@ -19,52 +19,75 @@ public struct TrustedDevice: Codable, Equatable {
 public class TrustStore {
     public static let shared = TrustStore()
     private let queue = DispatchQueue(label: "com.macdroid.truststore")
-    
-    // In a production app, we would store this securely in the Keychain.
-    // For simplicity in this implementation, we store it in UserDefaults
-    // because the public keys are not sensitive, they just identify the peer.
     private let defaultsKey = "com.macdroid.trustedDevices"
     
     public init() {}
     
-    private func loadDevicesInternal() -> [TrustedDevice] {
+    private func loadDeviceInternal() -> TrustedDevice? {
         guard let data = UserDefaults.standard.data(forKey: defaultsKey),
               let devices = try? JSONDecoder().decode([TrustedDevice].self, from: data) else {
-            return []
+            return nil
         }
-        return devices
+        return devices.first
     }
 
-    public func getTrustedDevices() -> [TrustedDevice] {
+    public func getPairedDevice() -> TrustedDevice? {
         return queue.sync {
-            return loadDevicesInternal()
+            return loadDeviceInternal()
         }
     }
-    
-    public func isTrusted(deviceId: String) -> Bool {
+
+    public func hasPairedDevice() -> Bool {
         return queue.sync {
-            let devices = loadDevicesInternal()
-            return devices.contains(where: { $0.deviceId == deviceId })
+            return loadDeviceInternal() != nil
         }
     }
-    
-    public func addTrustedDevice(_ device: TrustedDevice) {
+
+    public func isPaired(deviceId: String) -> Bool {
+        return queue.sync {
+            guard let paired = loadDeviceInternal() else { return false }
+            return paired.deviceId == deviceId
+        }
+    }
+
+    public func setPairedDevice(_ device: TrustedDevice) {
         queue.sync {
-            var devices = loadDevicesInternal()
-            devices.removeAll(where: { $0.deviceId == device.deviceId })
-            devices.append(device)
+            // Strictly enforce one paired device at a time
+            let devices = [device]
             if let data = try? JSONEncoder().encode(devices) {
                 UserDefaults.standard.set(data, forKey: defaultsKey)
             }
         }
     }
+
+    public func unpairDevice() {
+        queue.sync {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        }
+    }
+
+    // Backwards-compatible facade methods
+    public func getTrustedDevices() -> [TrustedDevice] {
+        return queue.sync {
+            if let d = loadDeviceInternal() {
+                return [d]
+            }
+            return []
+        }
+    }
+    
+    public func isTrusted(deviceId: String) -> Bool {
+        return isPaired(deviceId: deviceId)
+    }
+    
+    public func addTrustedDevice(_ device: TrustedDevice) {
+        setPairedDevice(device)
+    }
     
     public func removeTrustedDevice(deviceId: String) {
         queue.sync {
-            var devices = loadDevicesInternal()
-            devices.removeAll(where: { $0.deviceId == deviceId })
-            if let data = try? JSONEncoder().encode(devices) {
-                UserDefaults.standard.set(data, forKey: defaultsKey)
+            if let paired = loadDeviceInternal(), paired.deviceId == deviceId {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
             }
         }
     }

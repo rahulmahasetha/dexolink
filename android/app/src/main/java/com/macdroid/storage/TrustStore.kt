@@ -2,7 +2,6 @@ package com.macdroid.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import org.json.JSONArray
 import org.json.JSONObject
 
 data class TrustedDevice(
@@ -31,7 +30,7 @@ data class TrustedDevice(
 class TrustStore(context: Context) {
     companion object {
         private const val PREFS_NAME = "macdroid_trust_store"
-        private const val KEY_TRUSTED_DEVICES = "trusted_devices"
+        private const val KEY_PAIRED_DEVICE = "single_paired_device"
 
         @Volatile
         private var instance: TrustStore? = null
@@ -47,56 +46,71 @@ class TrustStore(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun getTrustedDevices(): List<TrustedDevice> {
-        val jsonStr = prefs.getString(KEY_TRUSTED_DEVICES, null) ?: return emptyList()
+    fun getPairedDevice(): TrustedDevice? {
+        val jsonStr = prefs.getString(KEY_PAIRED_DEVICE, null) ?: return null
         return try {
-            val arr = JSONArray(jsonStr)
-            val list = mutableListOf<TrustedDevice>()
-            for (i in 0 until arr.length()) {
-                list.add(TrustedDevice.fromJson(arr.getJSONObject(i)))
-            }
-            list
+            TrustedDevice.fromJson(JSONObject(jsonStr))
         } catch (e: Exception) {
-            emptyList()
+            null
         }
+    }
+
+    @Synchronized
+    fun hasPairedDevice(): Boolean {
+        return getPairedDevice() != null
+    }
+
+    @Synchronized
+    fun isPairedWith(deviceId: String): Boolean {
+        if (deviceId.isBlank()) return false
+        val paired = getPairedDevice() ?: return false
+        return paired.deviceId == deviceId
+    }
+
+    @Synchronized
+    fun setPairedDevice(device: TrustedDevice) {
+        // Enforce strictly one paired device at a time
+        prefs.edit().putString(KEY_PAIRED_DEVICE, device.toJson().toString()).apply()
+    }
+
+    @Synchronized
+    fun unpairDevice() {
+        prefs.edit().remove(KEY_PAIRED_DEVICE).apply()
+    }
+
+    // Backwards-compatible facade methods
+    @Synchronized
+    fun getTrustedDevices(): List<TrustedDevice> {
+        val paired = getPairedDevice() ?: return emptyList()
+        return listOf(paired)
     }
 
     @Synchronized
     fun isTrusted(deviceId: String): Boolean {
-        if (deviceId.isBlank()) return false
-        return getTrustedDevices().any { it.deviceId == deviceId }
+        return isPairedWith(deviceId)
     }
 
     @Synchronized
     fun getDevice(deviceId: String): TrustedDevice? {
-        return getTrustedDevices().find { it.deviceId == deviceId }
+        val paired = getPairedDevice() ?: return null
+        return if (paired.deviceId == deviceId) paired else null
     }
 
     @Synchronized
     fun addTrustedDevice(device: TrustedDevice) {
-        val current = getTrustedDevices().toMutableList()
-        current.removeAll { it.deviceId == device.deviceId }
-        current.add(device)
-        saveList(current)
+        setPairedDevice(device)
     }
 
     @Synchronized
     fun removeTrustedDevice(deviceId: String) {
-        val current = getTrustedDevices().toMutableList()
-        current.removeAll { it.deviceId == deviceId }
-        saveList(current)
+        val paired = getPairedDevice()
+        if (paired != null && paired.deviceId == deviceId) {
+            unpairDevice()
+        }
     }
 
     @Synchronized
     fun clear() {
-        prefs.edit().remove(KEY_TRUSTED_DEVICES).apply()
-    }
-
-    private fun saveList(list: List<TrustedDevice>) {
-        val arr = JSONArray()
-        for (item in list) {
-            arr.put(item.toJson())
-        }
-        prefs.edit().putString(KEY_TRUSTED_DEVICES, arr.toString()).apply()
+        unpairDevice()
     }
 }

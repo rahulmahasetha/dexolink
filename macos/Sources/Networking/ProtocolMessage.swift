@@ -4,7 +4,8 @@ public enum ProtocolMessage: Codable, Equatable {
     case hello(version: Int, deviceId: String, deviceName: String)
     case helloAck(version: Int, deviceId: String, deviceName: String, paired: Bool)
     case pairRequest(publicKey: String)
-    case pairResponse(accepted: Bool, publicKey: String)
+    case pairResponse(accepted: Bool, publicKey: String, reason: String? = nil)
+    case unpair
     case transferRequest(transferId: String, totalFiles: Int, totalSize: Int64)
     case transferResponse(transferId: String, accepted: Bool)
     case fileMeta(transferId: String, fileId: String, name: String, size: Int64, mimeType: String)
@@ -21,7 +22,7 @@ public enum ProtocolMessage: Codable, Equatable {
     case clipboardMode(mode: String)
 
     private enum CodingKeys: String, CodingKey {
-        case type, version, deviceId, deviceName, paired, publicKey, accepted
+        case type, version, deviceId, deviceName, paired, publicKey, accepted, reason
         case transferId, totalFiles, totalSize, fileId, name, size, mimeType
         case offset, sha256, verified, bytesReceived, code, message
         case sequenceNumber, content, mode
@@ -32,6 +33,7 @@ public enum ProtocolMessage: Codable, Equatable {
         case helloAck = "HELLO_ACK"
         case pairRequest = "PAIR_REQUEST"
         case pairResponse = "PAIR_RESPONSE"
+        case unpair = "UNPAIR"
         case transferRequest = "TRANSFER_REQUEST"
         case transferResponse = "TRANSFER_RESPONSE"
         case fileMeta = "FILE_META"
@@ -71,8 +73,11 @@ public enum ProtocolMessage: Codable, Equatable {
         case .pairResponse:
             self = .pairResponse(
                 accepted: try container.decode(Bool.self, forKey: .accepted),
-                publicKey: try container.decode(String.self, forKey: .publicKey)
+                publicKey: try container.decode(String.self, forKey: .publicKey),
+                reason: try container.decodeIfPresent(String.self, forKey: .reason)
             )
+        case .unpair:
+            self = .unpair
         case .transferRequest:
             self = .transferRequest(
                 transferId: try container.decode(String.self, forKey: .transferId),
@@ -151,10 +156,15 @@ public enum ProtocolMessage: Codable, Equatable {
         case let .pairRequest(publicKey):
             try container.encode(MessageType.pairRequest, forKey: .type)
             try container.encode(publicKey, forKey: .publicKey)
-        case let .pairResponse(accepted, publicKey):
+        case let .pairResponse(accepted, publicKey, reason):
             try container.encode(MessageType.pairResponse, forKey: .type)
             try container.encode(accepted, forKey: .accepted)
             try container.encode(publicKey, forKey: .publicKey)
+            if let reason = reason {
+                try container.encode(reason, forKey: .reason)
+            }
+        case .unpair:
+            try container.encode(MessageType.unpair, forKey: .type)
         case let .transferRequest(transferId, totalFiles, totalSize):
             try container.encode(MessageType.transferRequest, forKey: .type)
             try container.encode(transferId, forKey: .transferId)

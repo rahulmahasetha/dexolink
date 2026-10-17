@@ -142,6 +142,17 @@ class AppState: ObservableObject {
         statusMessage = "Disconnected"
     }
 
+    func unpair() {
+        let pairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? (connectedDeviceName ?? "Device")
+        print("🗑️ Unpairing from \(pairedName)...")
+        connectionManager.send(message: .unpair)
+        TrustStore.shared.unpairDevice()
+        connectionManager.disconnect()
+        connectedDeviceName = nil
+        pairingPin = nil
+        statusMessage = "Unpaired from \(pairedName)"
+    }
+
     func sendPing() {
         pingStartTime = Date()
         connectionManager.send(message: .ping)
@@ -168,11 +179,12 @@ extension AppState: DiscoveryServiceDelegate {
             let myName = Host.current().localizedName ?? "MacBook"
             self.discoveredDevices = devices.filter { !$0.name.contains(myName) }
 
-            // Automatic reconnection to trusted device if currently disconnected
+            // Strict 1-device policy: only auto-connect to the single trusted device if currently disconnected!
             if case .disconnected = self.connectionState {
-                if let trustedDevice = self.discoveredDevices.first(where: { $0.isPaired || TrustStore.shared.isTrusted(deviceId: $0.id) }) {
-                    print("🔄 Discovered trusted device: \(trustedDevice.name), auto-connecting...")
-                    self.connect(to: trustedDevice)
+                if let paired = TrustStore.shared.getPairedDevice(),
+                   let matched = self.discoveredDevices.first(where: { $0.id == paired.deviceId || $0.name == paired.deviceName }) {
+                    print("🔄 Discovered paired device: \(matched.name), auto-connecting...")
+                    self.connect(to: matched)
                 }
             }
         }
@@ -226,8 +238,8 @@ extension AppState: ConnectionManagerDelegate {
         case let .hello(_, deviceId, deviceName):
             self.connectedDeviceName = deviceName
             let myName = Host.current().localizedName ?? "MacBook"
-            let isTrusted = TrustStore.shared.isTrusted(deviceId: deviceId) ||
-                            TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == deviceName })
+            let isTrusted = TrustStore.shared.isPaired(deviceId: deviceId) ||
+                            (TrustStore.shared.getPairedDevice()?.deviceName == deviceName)
 
             if isTrusted {
                 self.statusMessage = "Paired with \(deviceName) (Trusted) • Syncing"
@@ -239,7 +251,7 @@ extension AppState: ConnectionManagerDelegate {
                     paired: true
                 )
                 self.connectionManager.send(message: ack)
-                print("🤝 Hello received from trusted device \(deviceName) — sent HelloAck(paired: true)")
+                print("🤝 Hello received from paired device \(deviceName) — sent HelloAck(paired: true)")
             } else {
                 self.statusMessage = "Handshaking with \(deviceName)..."
                 let ack = ProtocolMessage.helloAck(
@@ -249,8 +261,13 @@ extension AppState: ConnectionManagerDelegate {
                     paired: false
                 )
                 self.connectionManager.send(message: ack)
-                self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
-                print("🔐 Hello received from untrusted device \(deviceName) — sent HelloAck(paired: false) & PairRequest")
+                // Strict 1-device policy: only send pairRequest if not already paired!
+                if !TrustStore.shared.hasPairedDevice() {
+                    self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
+                    print("🔐 Hello received from unpaired device \(deviceName) — sent HelloAck(paired: false) & PairRequest")
+                } else {
+                    print("ℹ️ Hello from \(deviceName), but Mac is already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? ""). Awaiting manual action.")
+                }
             }
 
         case let .helloAck(_, deviceId, deviceName, paired):
@@ -258,20 +275,36 @@ extension AppState: ConnectionManagerDelegate {
             if paired {
                 self.statusMessage = "Connected to \(deviceName) • Syncing"
                 self.clipboardManager.direction = .bidirectional
-                if !TrustStore.shared.isTrusted(deviceId: deviceId) {
-                    TrustStore.shared.addTrustedDevice(
+                if !TrustStore.shared.isPaired(deviceId: deviceId) {
+                    TrustStore.shared.setPairedDevice(
                         TrustedDevice(deviceId: deviceId, deviceName: deviceName, publicKeyBase64: "", pairedAt: Date())
                     )
                 }
                 print("🤝 HelloAck(paired: true) received from \(deviceName)")
             } else {
-                self.statusMessage = "Pairing with \(deviceName)..."
-                self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
-                print("🔐 HelloAck(paired: false) received from \(deviceName) — initiated PairRequest")
+                if !TrustStore.shared.hasPairedDevice() {
+                    self.statusMessage = "Pairing with \(deviceName)..."
+                    self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
+                    print("🔐 HelloAck(paired: false) received from \(deviceName) — initiated PairRequest")
+                } else {
+                    print("ℹ️ Cannot pair with \(deviceName): Already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? "")")
+                }
             }
 
         case let .pairRequest(publicKey):
-            let peerName = self.connectedDeviceName ?? "Android Device"
+            let peerName = self.connectedDeviceName ?? "Device"
+            // Strict 1-device policy: check if Mac is already paired with another device
+            if let paired = TrustStore.shared.getPairedDevice(), paired.deviceName != peerName {
+                print("⛔ Pairing request from \(peerName) rejected: Mac already paired with \(paired.deviceName)")
+                self.connectionManager.send(message: .pairResponse(
+                    accepted: false,
+                    publicKey: "",
+                    reason: "Mac is already paired with '\(paired.deviceName)'. In accordance with DexoLink's strict one-device policy, please unpair first."
+                ))
+                self.statusMessage = "Rejected pairing from \(peerName) (Already paired with \(paired.deviceName))"
+                return
+            }
+
             self.pairingManager.initiatePairing(peerId: peerName, peerName: peerName, peerKeyBase64: publicKey)
             if case .waitingForPin(let pin) = self.pairingManager.state {
                 self.pairingPin = pin
@@ -282,22 +315,33 @@ extension AppState: ConnectionManagerDelegate {
             self.pairingManager.confirmPairing()
             self.pairingPin = nil
             self.clipboardManager.direction = .bidirectional
-            self.statusMessage = "Paired with \(peerName) (Trusted) • Auto Syncing"
+            self.statusMessage = "Paired with \(peerName) • Auto Syncing"
             print("✅ Completed one-time pairing with \(peerName)")
 
-        case let .pairResponse(accepted, publicKey):
-            let peerName = self.connectedDeviceName ?? "Android Device"
+        case let .pairResponse(accepted, publicKey, reason):
+            let peerName = self.connectedDeviceName ?? "Device"
             if accepted {
                 self.pairingManager.initiatePairing(peerId: peerName, peerName: peerName, peerKeyBase64: publicKey)
                 self.pairingManager.confirmPairing()
                 self.pairingPin = nil
                 self.clipboardManager.direction = .bidirectional
-                self.statusMessage = "Paired with \(peerName) (Trusted) • Auto Syncing"
+                self.statusMessage = "Paired with \(peerName) • Auto Syncing"
                 print("✅ Completed one-time pairing response with \(peerName)")
             } else {
-                self.statusMessage = "Pairing declined by \(peerName)"
+                let msg = reason ?? "Pairing declined by \(peerName)"
+                self.statusMessage = msg
+                print("⛔ Pairing declined by \(peerName): \(msg)")
                 self.connectionManager.disconnect()
             }
+
+        case .unpair:
+            let peer = self.connectedDeviceName ?? "Device"
+            print("🗑️ Peer \(peer) requested unpair")
+            TrustStore.shared.unpairDevice()
+            self.connectionManager.disconnect()
+            self.connectedDeviceName = nil
+            self.pairingPin = nil
+            self.statusMessage = "\(peer) unpaired"
 
             case .ping:
                 self.connectionManager.send(message: .pong)

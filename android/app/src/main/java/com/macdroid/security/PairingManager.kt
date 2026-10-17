@@ -113,6 +113,12 @@ class PairingManager(private val context: Context) {
         resetPending()
     }
 
+    fun unpair() {
+        trustStore.unpairDevice()
+        state = PairingState.Idle
+        resetPending()
+    }
+
     fun reset() {
         state = PairingState.Idle
         resetPending()

@@ -216,20 +216,22 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
     override fun onDeviceFound(device: DiscoveredDevice) {
         Log.d(TAG, "Discovery: Found ${device.name} @ ${device.host}:${device.port} (trusted: ${device.isTrusted})")
 
-        // If not connected and not currently connecting, automatically connect
-        if (!connectionManager.isConnected() && connectionManager.state !is ConnectionState.Connecting) {
-            val trustStore = TrustStore.getInstance(this)
-            val isKnown = device.isTrusted ||
-                    (device.deviceId != null && trustStore.isTrusted(device.deviceId)) ||
-                    trustStore.getTrustedDevices().isEmpty() ||
-                    device.host == connectionManager.lastConnectedHost
+        // Strict 1-device policy: ONLY auto-connect to the single saved paired device!
+        val trustStore = TrustStore.getInstance(this)
+        val paired = trustStore.getPairedDevice()
 
-            if (isKnown && connectionManager.autoReconnect) {
-                Log.d(TAG, "⚡ Automatic connection triggered to discovered Mac: ${device.name} (${device.host}:${device.port})")
+        if (paired != null && !connectionManager.isConnected() && connectionManager.state !is ConnectionState.Connecting) {
+            val isMyPairedDevice = (device.deviceId != null && device.deviceId == paired.deviceId) ||
+                    device.name == paired.deviceName
+
+            if (isMyPairedDevice && connectionManager.autoReconnect) {
+                Log.d(TAG, "⚡ Automatic reconnection to paired device: ${device.name} (${device.host}:${device.port})")
                 connectionManager.connect(device.host, device.port)
             }
         } else if (connectionManager.isConnected()) {
-            connectionManager.updateTargetIfChanged(device.host, device.port)
+            if (paired != null && (device.deviceId == paired.deviceId || device.name == paired.deviceName)) {
+                connectionManager.updateTargetIfChanged(device.host, device.port)
+            }
         }
     }
 

@@ -7,6 +7,7 @@ enum class MessageType(val value: String) {
     HELLO_ACK("HELLO_ACK"),
     PAIR_REQUEST("PAIR_REQUEST"),
     PAIR_RESPONSE("PAIR_RESPONSE"),
+    UNPAIR("UNPAIR"),
     TRANSFER_REQUEST("TRANSFER_REQUEST"),
     TRANSFER_RESPONSE("TRANSFER_RESPONSE"),
     FILE_META("FILE_META"),
@@ -57,8 +58,10 @@ sealed class ProtocolMessage {
                 )
                 MessageType.PAIR_RESPONSE -> PairResponseMessage(
                     accepted = json.optBoolean("accepted", false),
-                    publicKey = json.optString("publicKey", "")
+                    publicKey = json.optString("publicKey", ""),
+                    reason = json.optString("reason", "")
                 )
+                MessageType.UNPAIR -> UnpairMessage
                 MessageType.TRANSFER_REQUEST -> TransferRequestMessage(
                     transferId = json.optString("transferId", ""),
                     totalFiles = json.optInt("totalFiles", 0),
@@ -145,12 +148,26 @@ data class PairRequestMessage(val publicKey: String) : ProtocolMessage() {
     }
 }
 
-data class PairResponseMessage(val accepted: Boolean, val publicKey: String) : ProtocolMessage() {
+data class PairResponseMessage(
+    val accepted: Boolean,
+    val publicKey: String,
+    val reason: String = ""
+) : ProtocolMessage() {
     override val type = MessageType.PAIR_RESPONSE
     override fun toJson() = JSONObject().apply {
         put("type", type.value)
         put("accepted", accepted)
         put("publicKey", publicKey)
+        if (reason.isNotBlank()) {
+            put("reason", reason)
+        }
+    }
+}
+
+object UnpairMessage : ProtocolMessage() {
+    override val type = MessageType.UNPAIR
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
     }
 }
 

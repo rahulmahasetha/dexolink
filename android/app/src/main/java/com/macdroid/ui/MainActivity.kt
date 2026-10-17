@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val connectionState = mutableStateOf<ConnectionState>(ConnectionState.Disconnected)
     private val currentSyncMode = mutableStateOf(ClipboardSyncMode.TWO_WAY)
     private val discoveredDevices = mutableStateListOf<DiscoveredDevice>()
+    private val pairedDevice = mutableStateOf<TrustedDevice?>(null)
     private val logs = mutableStateListOf<String>()
     private val lastSyncedSnippet = mutableStateOf<String?>(null)
 
@@ -90,6 +92,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         connectionState.value = connectionManager.state
         currentSyncMode.value = connectionManager.clipboardManager.syncMode
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
+        pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         for (device in discoveryService.discoveredDevices.values) {
             if (discoveredDevices.none { it.host == device.host && it.port == device.port }) {
                 discoveredDevices.add(device)
@@ -102,6 +105,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     connectionState = connectionState.value,
                     syncMode = currentSyncMode.value,
                     devices = discoveredDevices,
+                    pairedDevice = pairedDevice.value,
                     logs = logs,
                     lastSyncedSnippet = lastSyncedSnippet.value,
                     onModeSelected = { mode ->
@@ -111,14 +115,16 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     onConnect = { device ->
                         connectionManager.connect(device.host, device.port)
                     },
-                    onDirectConnect = { ip, port ->
-                        connectionManager.connect(ip, port)
-                    },
                     onDisconnect = {
                         connectionManager.disconnect(disableAutoReconnect = true)
                     },
+                    onUnpair = {
+                        connectionManager.unpairCurrentDevice()
+                        pairedDevice.value = null
+                    },
                     onConfirmPairing = {
                         connectionManager.confirmPairing()
+                        pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
                     },
                     onRejectPairing = {
                         connectionManager.rejectPairing()
@@ -169,6 +175,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         connectionState.value = connectionManager.state
         currentSyncMode.value = connectionManager.clipboardManager.syncMode
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
+        pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         checkAndSyncClipboard("onResume")
     }
 
@@ -206,6 +213,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     // ConnectionEventListener
     override fun onStateChanged(state: ConnectionState) {
         connectionState.value = state
+        pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
     }
 
     override fun onMessageReceived(message: ProtocolMessage) {
@@ -268,22 +276,18 @@ fun MainScreen(
     connectionState: ConnectionState,
     syncMode: ClipboardSyncMode,
     devices: List<DiscoveredDevice>,
+    pairedDevice: TrustedDevice?,
     logs: List<String>,
     lastSyncedSnippet: String?,
     onModeSelected: (ClipboardSyncMode) -> Unit,
     onConnect: (DiscoveredDevice) -> Unit,
-    onDirectConnect: (String, Int) -> Unit,
     onDisconnect: () -> Unit,
+    onUnpair: () -> Unit,
     onConfirmPairing: () -> Unit,
     onRejectPairing: () -> Unit,
     onSendPing: () -> Unit,
     onRefreshDiscovery: () -> Unit
 ) {
-    val context = LocalContext.current
-    var showDirectConnectDialog by remember { mutableStateOf(false) }
-    var directIp by remember { mutableStateOf("10.7.196.204") }
-    var directPort by remember { mutableStateOf("52840") }
-
     if (connectionState is ConnectionState.Pairing) {
         AlertDialog(
             onDismissRequest = onRejectPairing,
@@ -325,9 +329,9 @@ fun MainScreen(
                         )
                     }
                     Text(
-                        "Once paired, both devices are permanently trusted and will auto-connect on local Wi-Fi without entering IP addresses.",
+                        "Strict 1-Device Policy: Only 1 device may be paired at a time. All other pairing requests will be rejected until unpaired.",
                         fontSize = 11.sp,
-                        color = Color.Gray,
+                        color = Color(0xFFE2B6FF),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
@@ -366,7 +370,7 @@ fun MainScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                "⚡ Background Persistent",
+                                "⚡ 1-Device Policy Active",
                                 fontSize = 11.sp,
                                 color = Color(0xFF34C759)
                             )
@@ -397,17 +401,22 @@ fun MainScreen(
                 ConnectionStatusBanner(connectionState = connectionState)
             }
 
-            // 2. Active Session Card if Connected/Authenticated
+            // 2. Paired Device Card (Strict 1-Device Policy)
+            item {
+                PairedDeviceCard(
+                    pairedDevice = pairedDevice,
+                    isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated,
+                    onUnpair = onUnpair
+                )
+            }
+
+            // 3. Active Session Card if Connected/Authenticated
             if (connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated) {
                 item {
                     val peerName = when (connectionState) {
                         is ConnectionState.Authenticated -> connectionState.peerName
                         is ConnectionState.Connected -> connectionState.peerName
                         else -> "MacBook"
-                    }
-                    val peerAddr = when (connectionState) {
-                        is ConnectionState.Connected -> connectionState.peerAddress
-                        else -> ""
                     }
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -436,13 +445,11 @@ fun MainScreen(
                                         fontSize = 17.sp,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
-                                    if (peerAddr.isNotEmpty()) {
-                                        Text(
-                                            peerAddr,
-                                            fontSize = 12.sp,
-                                            color = Color.Gray
-                                        )
-                                    }
+                                    Text(
+                                        "Connected via Local Wi-Fi (IP-Free)",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF86EFAC)
+                                    )
                                 }
                                 Button(
                                     onClick = onDisconnect,
@@ -527,7 +534,7 @@ fun MainScreen(
                 }
             }
 
-            // 3. Clipboard Sync Mode Selector Card
+            // 4. Clipboard Sync Mode Selector Card
             item {
                 ClipboardSyncModeCard(
                     currentMode = syncMode,
@@ -535,7 +542,7 @@ fun MainScreen(
                 )
             }
 
-            // 3. Discovered Devices (Automatic Wi-Fi Discovery)
+            // 5. Discovered Devices (Automatic Wi-Fi Discovery - Zero IP)
             item {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -543,20 +550,20 @@ fun MainScreen(
                 ) {
                     Column {
                         Text(
-                            "Nearby MacBooks",
+                            "Nearby Devices",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            "Zero manual IP • Automatic Wi-Fi discovery",
+                            "Auto-discovered on Wi-Fi • Zero IP address entry",
                             fontSize = 11.sp,
                             color = Color.Gray
                         )
                     }
                     Spacer(modifier = Modifier.weight(1f))
-                    TextButton(onClick = { showDirectConnectDialog = true }) {
-                        Text("Manual IP", fontSize = 11.sp, color = Color.Gray)
+                    TextButton(onClick = onRefreshDiscovery) {
+                        Text("Scan", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -577,13 +584,13 @@ fun MainScreen(
                             Text("📡", fontSize = 28.sp)
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Searching for Mac on Wi-Fi...",
+                                "Searching for devices on local Wi-Fi...",
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "Make sure DexoLink is running on your Mac and both devices are on the same local Wi-Fi. Auto-discovery connects without manual IP.",
+                                "Make sure DexoLink is open on your Mac or nearby device. Both devices discover each other automatically without any IP address entry.",
                                 fontSize = 12.sp,
                                 color = Color.Gray,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -593,9 +600,15 @@ fun MainScreen(
                 }
             } else {
                 items(devices) { device ->
-                    val isTrusted = device.isTrusted || TrustStore.getInstance(context).isTrusted(device.deviceId ?: "")
+                    val isCurrentPaired = pairedDevice != null &&
+                            (device.deviceId == pairedDevice.deviceId || device.name == pairedDevice.deviceName)
+                    val anotherDevicePaired = pairedDevice != null && !isCurrentPaired
+
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isCurrentPaired) Color(0xFF16251C) else MaterialTheme.colorScheme.surface
+                        ),
+                        border = if (isCurrentPaired) BorderStroke(1.dp, Color(0xFF285435)) else null,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -605,7 +618,10 @@ fun MainScreen(
                                 .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("💻", fontSize = 24.sp)
+                            Text(
+                                if (device.name.contains("iPhone", ignoreCase = true) || device.name.contains("iPad", ignoreCase = true) || device.name.contains("Android", ignoreCase = true)) "📱" else "💻",
+                                fontSize = 24.sp
+                            )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -615,7 +631,7 @@ fun MainScreen(
                                         fontSize = 15.sp
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    if (isTrusted) {
+                                    if (isCurrentPaired) {
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(4.dp))
@@ -623,10 +639,23 @@ fun MainScreen(
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
                                             Text(
-                                                "★ Trusted",
+                                                "★ Paired",
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF34C759)
+                                            )
+                                        }
+                                    } else if (anotherDevicePaired) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color(0xFF3E2D18))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                "Blocked",
+                                                fontSize = 10.sp,
+                                                color = Color(0xFFFFB340)
                                             )
                                         }
                                     } else {
@@ -637,7 +666,7 @@ fun MainScreen(
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
                                             Text(
-                                                "New Device",
+                                                "Available",
                                                 fontSize = 10.sp,
                                                 color = Color.LightGray
                                             )
@@ -645,25 +674,44 @@ fun MainScreen(
                                     }
                                 }
                                 Text(
-                                    "${device.host}:${device.port}",
+                                    if (isCurrentPaired) "Paired & trusted device"
+                                    else if (anotherDevicePaired) "1-device policy: unpair current device first"
+                                    else "Local Wi-Fi discovery • IP-free",
                                     fontSize = 12.sp,
                                     color = Color.Gray
                                 )
                             }
-                            Button(
-                                onClick = { onConnect(device) },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = if (isTrusted) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                else ButtonDefaults.buttonColors(containerColor = Color(0xFF9D4EDD))
-                            ) {
-                                Text(if (isTrusted) "Connect" else "Pair & Connect", fontSize = 12.sp)
+                            if (isCurrentPaired) {
+                                Button(
+                                    onClick = { onConnect(device) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text("Connect", fontSize = 12.sp)
+                                }
+                            } else if (anotherDevicePaired) {
+                                OutlinedButton(
+                                    onClick = { /* Blocked by 1-device policy */ },
+                                    enabled = false,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Unpair First", fontSize = 11.sp)
+                                }
+                            } else {
+                                Button(
+                                    onClick = { onConnect(device) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9D4EDD))
+                                ) {
+                                    Text("Pair Device", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // 4. Live Activity Log
+            // 6. Live Activity Log
             item {
                 Text(
                     "Activity Log",
@@ -704,53 +752,117 @@ fun MainScreen(
             }
         }
     }
+}
 
-    if (showDirectConnectDialog) {
-        AlertDialog(
-            onDismissRequest = { showDirectConnectDialog = false },
-            title = { Text("Direct IP Connection") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+@Composable
+fun PairedDeviceCard(
+    pairedDevice: TrustedDevice?,
+    isConnected: Boolean,
+    onUnpair: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (pairedDevice != null) Color(0xFF16231A) else MaterialTheme.colorScheme.surface
+        ),
+        border = if (pairedDevice != null) BorderStroke(1.dp, Color(0xFF285435)) else null,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (pairedDevice != null) Color(0xFF1B4E2E) else Color(0xFF282E38)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(if (pairedDevice != null) "🔒" else "🔓", fontSize = 18.sp)
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Enter your Mac's IP address and port (seen in macOS menu bar):",
-                        fontSize = 12.sp,
+                        if (pairedDevice != null) "Paired Device (1-Device Policy)" else "No Device Paired",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = if (pairedDevice != null) Color(0xFF4ADE80) else MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        if (pairedDevice != null) "Strictly 1 device • Auto-connects on Wi-Fi" else "Strict 1-device policy enforced",
+                        fontSize = 11.sp,
                         color = Color.Gray
                     )
-                    OutlinedTextField(
-                        value = directIp,
-                        onValueChange = { directIp = it },
-                        label = { Text("Mac IP Address") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = directPort,
-                        onValueChange = { directPort = it },
-                        label = { Text("Port") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val port = directPort.toIntOrNull() ?: 52840
-                        if (directIp.isNotBlank()) {
-                            onDirectConnect(directIp.trim(), port)
-                            showDirectConnectDialog = false
-                        }
+                if (pairedDevice != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isConnected) Color(0xFF1B5E3C) else Color(0xFF2B3A42))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            if (isConnected) "CONNECTED" else "SAVED",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isConnected) Color(0xFF4ADE80) else Color(0xFF64D2FF)
+                        )
                     }
-                ) {
-                    Text("Connect")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDirectConnectDialog = false }) {
-                    Text("Cancel")
                 }
             }
-        )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (pairedDevice != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF0F1A13))
+                        .padding(12.dp)
+                ) {
+                    Text("💻", fontSize = 22.sp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            pairedDevice.deviceName,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            "Trusted device • Auto-sync active",
+                            fontSize = 11.sp,
+                            color = Color(0xFF86EFAC)
+                        )
+                    }
+                    Button(
+                        onClick = onUnpair,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Unpair", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "To pair another Mac or device, you must explicitly unpair this one first.",
+                    fontSize = 11.sp,
+                    color = Color.Gray
+                )
+            } else {
+                Text(
+                    "DexoLink strictly allows only one paired device at a time. Tap 'Pair Device' below on any discovered device to send a pairing request.",
+                    fontSize = 12.sp,
+                    color = Color.LightGray,
+                    lineHeight = 16.sp
+                )
+            }
+        }
     }
 }
 
@@ -781,12 +893,16 @@ fun ConnectionStatusBanner(connectionState: ConnectionState) {
             "Connecting / Auto-Reconnecting...",
             connectionState.target
         )
-        is ConnectionState.Failed -> Quadruple(
-            Color(0xFF421515),
-            Color(0xFFFF453A),
-            "Connection Failed (Retrying in background)",
-            connectionState.reason
-        )
+        is ConnectionState.Failed -> {
+            val isRejection = connectionState.reason.contains("pair", ignoreCase = true) ||
+                    connectionState.reason.contains("policy", ignoreCase = true)
+            Quadruple(
+                Color(0xFF421515),
+                Color(0xFFFF453A),
+                if (isRejection) "Pairing Blocked / Rejected" else "Connection Failed (Retrying in background)",
+                connectionState.reason
+            )
+        }
         is ConnectionState.Disconnected -> Quadruple(
             Color(0xFF1C2027),
             Color(0xFF6E7681),

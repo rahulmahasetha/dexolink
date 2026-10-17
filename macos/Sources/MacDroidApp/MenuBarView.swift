@@ -28,27 +28,66 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Network Details Banner
-            HStack(spacing: 6) {
-                Image(systemName: "network")
-                    .foregroundColor(.accentColor)
-                    .font(.caption)
-                Text("IP: \(appState.localIP) • Port: \(appState.discoveryService.listeningPort)")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                Spacer()
-                Button("Copy") {
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-                    pb.setString("\(appState.localIP):\(appState.discoveryService.listeningPort)", forType: .string)
+            // Strict 1-Device Pairing Policy Status Card (IP-Free)
+            if let paired = TrustStore.shared.getPairedDevice() {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundColor(.green)
+                        .font(.title2)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text(paired.deviceName)
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                            Text("★ Paired")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.green.opacity(0.18))
+                                .cornerRadius(4)
+                        }
+                        Text(isConnected ? "Connected & Syncing Active" : "1-Device Policy • Auto-reconnects on local Wi-Fi")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Unpair") {
+                        appState.unpair()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
+                    .help("Disconnect and unpair this device to allow pairing another")
                 }
-                .buttonStyle(.plain)
-                .font(.caption2)
-                .foregroundColor(.accentColor)
+                .padding(10)
+                .background(Color.green.opacity(0.10))
+                .cornerRadius(8)
+                .padding(8)
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "link.badge.plus")
+                        .foregroundColor(.accentColor)
+                        .font(.title2)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No Device Paired")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text("1-Device Policy • Tap 'Pair Device' below to link an iOS or Android device")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+                .background(Color.accentColor.opacity(0.08))
+                .cornerRadius(8)
+                .padding(8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color.accentColor.opacity(0.08))
 
             Divider()
 
@@ -63,7 +102,7 @@ struct MenuBarView: View {
                             .font(.subheadline)
                             .fontWeight(.bold)
                             .foregroundColor(.purple)
-                        Text("Confirm this 6-digit code on Android device")
+                        Text("Confirm this 6-digit code on the requested device")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -76,8 +115,6 @@ struct MenuBarView: View {
 
                 Divider()
             }
-
-            Divider()
 
             // Active Connection Card (if connected)
             if isConnected {
@@ -152,7 +189,7 @@ struct MenuBarView: View {
             // Discovered Devices Section
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Nearby Devices")
+                    Text("Nearby Devices (iOS & Android)")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
@@ -167,13 +204,13 @@ struct MenuBarView: View {
 
                 if appState.discoveredDevices.isEmpty {
                     VStack(spacing: 6) {
-                        Image(systemName: "wifi.slash")
+                        Image(systemName: "antenna.radiowaves.left.and.right.slash")
                             .font(.title3)
                             .foregroundColor(.secondary)
-                        Text(appState.isDiscovering ? "Searching for Android devices..." : "Discovery idle")
+                        Text(appState.isDiscovering ? "Scanning for nearby devices..." : "Discovery idle")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text("Ensure your Android phone is on the same Wi-Fi with DexoLink open.")
+                        Text("Open DexoLink on your iPhone or Android phone on the same Wi-Fi.")
                             .font(.caption2)
                             .foregroundColor(.secondary.opacity(0.8))
                             .multilineTextAlignment(.center)
@@ -220,7 +257,7 @@ struct MenuBarView: View {
             .padding(10)
             .background(Color(nsColor: .windowBackgroundColor))
         }
-        .frame(width: 320, height: 420)
+        .frame(width: 330, height: 430)
     }
 
     private var isConnected: Bool {
@@ -238,12 +275,12 @@ struct MenuBarView: View {
 
     private var footerStatusText: String {
         if isConnected {
-            return "Connected to \(appState.connectedDeviceName ?? "Android")"
+            return "Connected to \(appState.connectedDeviceName ?? "Device")"
         }
         if case .connecting = appState.connectionState {
             return "Connecting..."
         }
-        return appState.isDiscovering ? "Scanning on Wi-Fi" : "Idle"
+        return appState.isDiscovering ? "Scanning on local Wi-Fi" : "Idle"
     }
 }
 
@@ -251,25 +288,33 @@ struct DeviceRow: View {
     let device: DiscoveredDevice
     @ObservedObject var appState: AppState
 
-    var isTrusted: Bool {
-        return device.isPaired ||
-               TrustStore.shared.isTrusted(deviceId: device.id) ||
-               TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == device.name })
+    private var pairedDevice: TrustedDevice? {
+        return TrustStore.shared.getPairedDevice()
+    }
+
+    private var isThisDevicePaired: Bool {
+        guard let p = pairedDevice else { return false }
+        return p.deviceId == device.id || p.deviceName == device.name
+    }
+
+    private var isAnotherDevicePaired: Bool {
+        guard let _ = pairedDevice else { return false }
+        return !isThisDevicePaired
     }
 
     var body: some View {
         HStack {
-            Image(systemName: "candybarphone")
+            Image(systemName: deviceIcon)
                 .font(.title3)
-                .foregroundColor(isTrusted ? .green : .accentColor)
+                .foregroundColor(isThisDevicePaired ? .green : .accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(device.name)
                         .font(.subheadline)
                         .lineLimit(1)
-                    if isTrusted {
-                        Text("★ Trusted")
+                    if isThisDevicePaired {
+                        Text("★ Paired")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundColor(.green)
                             .padding(.horizontal, 4)
@@ -285,11 +330,27 @@ struct DeviceRow: View {
 
             Spacer()
 
-            Button(isTrusted ? "Connect" : "Pair & Connect") {
-                appState.connect(to: device)
+            if isThisDevicePaired {
+                Button("Connect") {
+                    appState.connect(to: device)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            } else if isAnotherDevicePaired {
+                Text("Unpair First")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.gray.opacity(0.15))
+                    .cornerRadius(4)
+            } else {
+                Button("Pair Device") {
+                    appState.connect(to: device)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 10)
@@ -299,10 +360,21 @@ struct DeviceRow: View {
         )
     }
 
-    private var deviceSubtitle: String {
-        if case .service(let name, _, _, _) = device.endpoint {
-            return name
+    private var deviceIcon: String {
+        let n = device.name.lowercased()
+        if n.contains("iphone") || n.contains("ipad") || n.contains("ios") {
+            return "apple.logo"
         }
-        return "Discovered on Wi-Fi"
+        return "candybarphone"
+    }
+
+    private var deviceSubtitle: String {
+        if isAnotherDevicePaired {
+            return "Blocked by 1-device policy"
+        }
+        if isThisDevicePaired {
+            return "Trusted device"
+        }
+        return "Discovered nearby (Tap to pair)"
     }
 }
