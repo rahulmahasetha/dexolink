@@ -1,11 +1,101 @@
 # DexoLink 🚀
 
+[![Version](https://img.shields.io/badge/Release-v2.0.2-blue.svg)](https://github.com/rahulmahasetha/dexolink/releases)
 [![CI/CD Pipeline](https://github.com/rahulmahasetha/dexolink/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulmahasetha/dexolink/actions/workflows/ci.yml)
 [![Platform - macOS](https://img.shields.io/badge/Platform-macOS%2013%2B-black?logo=apple)](https://github.com/rahulmahasetha/dexolink)
 [![Platform - Android](https://img.shields.io/badge/Platform-Android%208.0%2B-green?logo=android)](https://github.com/rahulmahasetha/dexolink)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**DexoLink** enables seamless, zero-configuration peer-to-peer connectivity between macOS and Android devices over local Wi-Fi. Inspired by Apple AirDrop, DexoLink provides automatic device discovery, one-time cryptographic pairing, real-time bidirectional clipboard synchronization, and high-performance file streaming—all without requiring an active internet connection or third-party cloud servers.
+**DexoLink** enables seamless, zero-configuration peer-to-peer connectivity between macOS and Android devices over local Wi-Fi. Inspired by Apple AirDrop, DexoLink provides automatic device discovery, one-time cryptographic pairing, real-time bidirectional clipboard synchronization, native system Share Menu integration, and high-performance chunked file streaming—all without requiring an active internet connection or third-party cloud servers.
+
+---
+
+## 📦 Public App Downloads (v2.0.2)
+
+> **Note:** Even though the project source code repository is kept private on GitHub, the compiled application packages are **publicly distributed** for anyone to install and run without building from source or logging in.
+
+| Platform | Download Asset | Supported OS | Description |
+|:---|:---|:---|:---|
+| **macOS** | [**DexoLink.dmg**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink.dmg) | macOS 13.0+ (Ventura, Sonoma, Sequoia) | Drag & drop menu bar application (`DexoLink.app`) |
+| **macOS (v2.0.2)** | [**DexoLink-v2.0.2.dmg**](https://github.com/rahulmahasetha/dexolink/releases/download/v2.0.2/DexoLink-v2.0.2.dmg) | macOS 13.0+ | Exact versioned DMG disk image |
+| **Android** | [**DexoLink-Android.apk**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink-Android.apk) | Android 8.0+ (Oreo through Android 15) | Standalone APK package |
+| **Android (v2.0.2)** | [**DexoLink-v2.0.2.apk**](https://github.com/rahulmahasetha/dexolink/releases/download/v2.0.2/DexoLink-v2.0.2.apk) | Android 8.0+ | Exact versioned APK package |
+
+---
+
+## 🔄 Project Workflow
+
+The following diagram and step-by-step phases illustrate the end-to-end operation of DexoLink between Android and macOS:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Android as 📱 Android Device
+    participant Mac as 💻 macOS Menu Bar
+    
+    Note over Android,Mac: Phase 1: Zero-Config Local Discovery (mDNS / Bonjour)
+    Mac->>Android: Broadcast _macdroid._tcp. (host, port, deviceId)
+    Android->>Mac: Resolve via NsdManager & discover nearby MacBook
+    
+    Note over Android,Mac: Phase 2: One-Time Cryptographic Pairing (SAS PIN)
+    Android->>Mac: PAIR_REQUEST (publicKey, salt)
+    Mac-->>Android: PAIR_RESPONSE (publicKey, salt)
+    Note over Android,Mac: Both compute 6-digit PIN = SHA-256(K1, K2) % 1,000,000
+    Android->>Mac: Confirm SAS PIN & save to TrustStore (Permanent Trust)
+    
+    Note over Android,Mac: Phase 3: Persistent Connection & Heartbeat
+    Android->>Mac: HELLO (auth: true, deviceId) -> HELLO_ACK
+    loop Every 15 seconds
+        Android->>Mac: PING -> PONG (latency check & dead link recovery)
+    end
+    
+    Note over Android,Mac: Phase 4: Real-Time Clipboard Sync & History
+    Android->>Mac: CLIPBOARD_PUSH (hash, seq, text)
+    Mac-->>Android: CLIPBOARD_ACK (hash, seq)
+    Note over Android,Mac: Deduplicated & saved to local Clipboard History
+    
+    Note over Android,Mac: Phase 5: High-Speed File Streaming & Controls
+    Android->>Mac: TRANSFER_REQUEST (name, size, chunks)
+    Mac-->>Android: TRANSFER_RESPONSE (accepted: true)
+    loop File Chunks (1 MB chunks)
+        Android->>Mac: FILE_CHUNK (chunkIndex, data, sha256)
+        opt Real-Time Control
+            Mac->>Android: PAUSE / RESUME / CANCEL
+        end
+    end
+    Note over Android,Mac: Verified via SHA-256 checksum & saved to Downloads
+```
+
+### End-to-End Workflow Stages
+
+1. **Zero-Configuration Discovery (Local Subnet Only)**:
+   - macOS broadcasts a local Bonjour service (`_macdroid._tcp.local.`) on port `52840`.
+   - Android's background `NsdManager` listens and discovers the Mac instantly without cloud signaling, Bluetooth pairing, or manual IP entry.
+   - Devices appear automatically with real-time signal status. Duplicate entries are automatically deduplicated.
+
+2. **One-Time Cryptographic Pairing (SAS 6-Digit PIN)**:
+   - Untrusted devices initiate pairing using a Short Authentication String (SAS).
+   - Both devices deterministically derive a matching 6-digit confirmation PIN (`SHA-256(sorted(K1, K2)) % 1,000,000`).
+   - Confirming links the cryptographic identities permanently into persistent `TrustStore` storage.
+
+3. **Persistent Background Connection & Heartbeat Monitoring**:
+   - Android runs a sticky Foreground Service with `WIFI_MODE_FULL_LOW_LATENCY` and wake lock.
+   - macOS runs an event-driven background service in the menu bar.
+   - An active 15-second heartbeat (`PING`/`PONG`) detects network drops and automatically reconnects with exponential backoff.
+
+4. **Bidirectional Clipboard Synchronization**:
+   - Text copied on either device is captured, hashed with SHA-256 to prevent feedback loops, and transmitted immediately.
+   - Supports 3 modes: **Two-Way Sync**, **Android → Mac**, and **Mac → Android**.
+   - Includes a persistent **Clipboard History** with single-item deletion and multi-select bulk delete.
+
+5. **High-Speed File Transfer & Native Share Menu Integration**:
+   - Integrated directly into the native system Share Menu on both Android and macOS ("Share with DexoLink").
+   - Large files (up to 10 GB) are streamed in sequential 1 MB chunks with SHA-256 integrity checks.
+   - **Real-Time Transfer Controls**: Active transfers feature instant **Pause (`||`)**, **Resume (`▶`)**, and **Cancel (`✕`)** without dropping paired socket connections.
+
+6. **Safe History Management**:
+   - Transfer and clipboard history records can be deleted individually (`🗑`) or via long-press multi-select bulk deletion with confirmation dialogs.
+   - **Guaranteed Safe**: Deleting history entries never deletes original physical files on disk and never disconnects paired devices.
 
 ---
 
@@ -15,41 +105,25 @@
   Eliminates manual IP and port entry. macOS uses `NWBrowser`/`NWListener` and Android uses `NsdManager` over the `_macdroid._tcp.` local domain. Discovered devices appear instantly on both apps.
 
 - 🔐 **One-Time Cryptographic Pairing & SAS 6-Digit PIN**  
-  Establishes trust via cryptographic identities. Both devices deterministically compute a 6-digit Short Authentication String (SAS) confirmation code (`SHA-256(sorted(K1, K2)) % 1000000`). Confirming the code on Android links the devices permanently.
+  Establishes trust via cryptographic identities. Both devices deterministically compute a 6-digit Short Authentication String (SAS) confirmation code. Confirming the code links the devices permanently.
 
 - 💾 **Persistent TrustStore & Zero-Touch Reconnection**  
   Trusted identities are securely persisted in `TrustStore` on both macOS (`trusted_devices.json`) and Android (`SharedPreferences`). Once paired, devices automatically authenticate upon network reconnects or app restarts without re-entering PINs.
 
-- 📋 **Bidirectional Real-Time Clipboard Synchronization**  
-  Copying text on either device instantly synchronizes with the other in real time. Features three user-selectable sync modes:
-  1. **Two-Way Sync:** Copies on either device automatically update the other.
-  2. **Android → Mac:** Android copies update Mac clipboard only.
-  3. **Mac → Android:** Mac copies update Android clipboard only.  
-  Includes cryptographic content-hash tracking and sequence ordering to prevent sync loops and echo duplicates.
+- 📋 **Bidirectional Real-Time Clipboard Synchronization & History**  
+  Copying text on either device instantly synchronizes with the other in real time with 3 sync modes (Two-Way, Android → Mac, Mac → Android). Includes a searchable, selectable history log.
 
 - ⚡ **Background Persistence on Android**  
-  Runs a sticky Foreground Service with `PARTIAL_WAKE_LOCK` and `WIFI_MODE_FULL_HIGH_PERF`, maintaining socket connections and background clipboard sync even when the app is minimized.
+  Runs a sticky Foreground Service with `PARTIAL_WAKE_LOCK` and Wi-Fi performance lock, maintaining socket connections and background clipboard sync even when the app is minimized.
 
-- 📁 **Chunked File Transfer Streaming**  
-  Transfers large files with chunked protocol streaming, progress tracking, and SHA-256 verification.
+- 📁 **Chunked File Streaming with Pause / Resume / Cancel**  
+  Transfers up to 10 GB with chunked protocol streaming, progress tracking, pause/resume capability, and SHA-256 verification.
+
+- 📤 **Native System Share Menu Integration**  
+  Share files, photos, videos, and links directly from Finder or any Android app into DexoLink with 1-tap transfer.
 
 - 🛡️ **Local-Only & Private**  
   All traffic stays strictly within your local Wi-Fi subnet. No cloud accounts, telemetries, or external internet connections required.
-
----
-
-## 📥 Installation
-
-### macOS
-1. Download `DexoLink.dmg` from the latest [GitHub Release](https://github.com/rahulmahasetha/dexolink/releases) or the [Actions Artifacts](https://github.com/rahulmahasetha/dexolink/actions).
-2. Open `DexoLink.dmg` and drag **DexoLink.app** into your `/Applications` folder.
-3. Launch **DexoLink** from Applications or Spotlight. It lives conveniently in your macOS Menu Bar.
-4. When prompted by macOS, allow Local Network permissions.
-
-### Android
-1. Download `DexoLink-Android.apk` from the latest [GitHub Release](https://github.com/rahulmahasetha/dexolink/releases) or the [Actions Artifacts](https://github.com/rahulmahasetha/dexolink/actions).
-2. Open the APK on your Android device to install (allow "Install Unknown Apps" if prompted).
-3. Open **DexoLink** and grant notification permissions (required for foreground background persistence).
 
 ---
 
@@ -67,8 +141,9 @@
    - A 6-digit confirmation PIN will appear on both screens.
    - Tap **"Pair & Trust Device"** to verify.
 5. **Enjoy Seamless Sync:**
-   - Both devices now show **"★ Trusted"** and are connected!
+   - Both devices now show **"★ Paired • Connected"**!
    - Copy any text on your Mac or Android—it updates the other device instantly.
+   - Select any file in Finder or Android Files and choose **"Share with DexoLink"** to send.
 
 ---
 
@@ -78,32 +153,32 @@
 dexolink/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml               # GitHub Actions CI/CD pipeline
+│       └── ci.yml               # Automated CI/CD build & public release pipeline
 ├── android/
 │   ├── app/
 │   │   ├── src/main/
 │   │   │   ├── java/com/macdroid/
-│   │   │   │   ├── core/        # Clipboard manager & File streamer
-│   │   │   │   ├── networking/  # NSD Discovery & Socket ConnectionManager
+│   │   │   │   ├── core/        # Clipboard manager, TransferManager & History
+│   │   │   │   ├── networking/  # NSD Discovery, ConnectionManager & ProtocolCodec
 │   │   │   │   ├── security/    # SAS PairingManager & CryptoService
 │   │   │   │   ├── service/     # Foreground persistent service
 │   │   │   │   ├── storage/     # Persistent TrustStore
-│   │   │   │   └── ui/          # Jetpack Compose UI
+│   │   │   │   └── ui/          # Jetpack Compose UI & System ShareActivity
 │   │   │   ├── res/             # Vector icons & branding resources
 │   │   │   └── AndroidManifest.xml
-│   │   └── build.gradle.kts
+│   │   └── build.gradle.kts     # Android Gradle build configuration (v2.0.2)
 │   ├── gradlew
 │   └── settings.gradle.kts
 ├── macos/
 │   ├── Sources/
-│   │   ├── Core/                # ClipboardManager & TransferManager
+│   │   ├── Core/                # ClipboardManager & TransferManager with Pause/Resume
 │   │   ├── Crypto/              # TrustStore, CryptoService & PairingManager
 │   │   ├── Networking/          # Bonjour DiscoveryService & ConnectionManager
-│   │   ├── UI/                  # MenuBarView & SwiftUI controls
-│   │   └── MacDroidApp/         # App entrypoint & State coordination
+│   │   ├── UI/                  # MenuBarView, HistorySheetView & SwiftUI controls
+│   │   └── MacDroidApp/         # App entrypoint, ShareWindowView & State coordination
 │   ├── Tests/                   # Unit & protocol codec tests
 │   ├── scripts/
-│   │   └── package_dmg.sh       # Automated DMG packager
+│   │   └── package_dmg.sh       # Automated DMG packaging script (v2.0.2)
 │   └── Package.swift
 ├── docs/
 │   └── PROTOCOL.md              # Binary framing & message specs
@@ -119,14 +194,14 @@ dexolink/
 ## 🛠️ Building From Source
 
 ### Prerequisites
-- **macOS:** macOS 13+ (Ventura or newer), Swift 5.9+ / Xcode 15+
-- **Android:** Android Studio Jellyfish / Koala, JDK 21+
+- **macOS:** macOS 13+ (Ventura, Sonoma, Sequoia), Swift 5.9+ / Xcode 15+
+- **Android:** Android Studio, JDK 21+
 
 ### Build macOS App & DMG
 ```bash
 cd macos
 
-# Run tests
+# Run unit and protocol tests
 swift test
 
 # Build release and package DMG
@@ -148,13 +223,13 @@ cd android
 # Build release APK
 ./gradlew assembleRelease
 ```
-The resulting APKs will be in `android/app/build/outputs/apk/`.
+The resulting APK will be in `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ---
 
 ## 🔄 Protocol & Network Specification
 
-DexoLink uses a custom framing protocol over raw TCP:
+DexoLink uses a high-performance framing protocol over raw TCP:
 - **Framing:** 4-byte Big-Endian Length prefix followed by UTF-8 encoded JSON payload:
   ```
   +-------------------------+---------------------------------+
@@ -162,20 +237,15 @@ DexoLink uses a custom framing protocol over raw TCP:
   +-------------------------+---------------------------------+
   ```
 - **Service Type:** `_macdroid._tcp.local.` on port `52840`.
-- **Handshake Sequence:**
-  1. Discovery: mDNS TXT record resolves `deviceId` and `deviceName`.
-  2. Initiation: `HELLO` $\rightarrow$ `HELLO_ACK`.
-  3. Trust Check: If device is in `TrustStore`, `HELLO_ACK(paired: true)` triggers instant authentication.
-  4. Pairing (if untrusted): `PAIR_REQUEST` $\rightarrow$ SAS 6-digit PIN confirmation $\rightarrow$ `PAIR_RESPONSE` $\rightarrow$ Persist in `TrustStore`.
-  5. Session: `CLIPBOARD_MODE`, `CLIPBOARD_PUSH` / `CLIPBOARD_ACK`, file chunk streaming, and heartbeats (`PING`/`PONG`).
+- **Supported Control Messages:**
+  - `HELLO` / `HELLO_ACK`: Initial handshake and trust negotiation.
+  - `PAIR_REQUEST` / `PAIR_RESPONSE`: Cryptographic key exchange and SAS PIN calculation.
+  - `CLIPBOARD_PUSH` / `CLIPBOARD_ACK`: Incremental clipboard synchronizer with hash deduplication.
+  - `TRANSFER_REQUEST` / `TRANSFER_RESPONSE`: Chunked file transfer session setup.
+  - `PAUSE` / `RESUME` / `CANCEL`: Transfer stream flow control.
+  - `PING` / `PONG`: Heartbeat liveness monitoring and connection auto-recovery.
 
 For complete protocol schema details, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change. All contributions are automatically tested and built by the [GitHub Actions CI/CD pipeline](.github/workflows/ci.yml).
 
 ---
 
