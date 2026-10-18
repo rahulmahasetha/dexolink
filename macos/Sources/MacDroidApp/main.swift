@@ -64,6 +64,20 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         print("✅ MacDroid is running in the menu bar!")
         print("   Click the antenna icon (⌘) in your menu bar to open.")
 
+        // Register native system Services provider so DexoLink appears in macOS Services & Share menus
+        NSApplication.shared.servicesProvider = self
+        NSUpdateDynamicServices()
+
+        // Handle direct file launches via CLI or Finder open
+        let launchArgs = Array(CommandLine.arguments.dropFirst())
+        let fileArgs = launchArgs.filter { FileManager.default.fileExists(atPath: $0) }.map { URL(fileURLWithPath: $0) }
+        if !fileArgs.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self = self else { return }
+                ShareWindowController.present(appState: self.appState, urls: fileArgs, text: nil)
+            }
+        }
+
         // Automatically open the popover on launch so the user sees the interface immediately
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self, let button = self.statusItem.button else { return }
@@ -108,6 +122,77 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             // Bring popover window to front
             popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    // MARK: - Native macOS Services Provider & System Share Target
+    @objc func shareToDexoLink(_ pboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        var urls: [URL] = []
+        var text: String? = nil
+
+        // 1. Try reading file URLs
+        if let fileURLs = pboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !fileURLs.isEmpty {
+            urls = fileURLs
+        } else if let filenames = pboard.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] {
+            urls = filenames.map { URL(fileURLWithPath: $0) }
+        }
+
+        // 2. Try reading string or public URL if no files
+        if urls.isEmpty {
+            if let string = pboard.string(forType: .string) {
+                text = string
+            } else if let urlString = pboard.string(forType: .init("public.url")) {
+                text = urlString
+            }
+        }
+
+        guard !urls.isEmpty || (text != nil && !text!.isEmpty) else {
+            error.pointee = "No compatible files or text found to share via DexoLink." as NSString
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            ShareWindowController.present(appState: self.appState, urls: urls, text: text)
+        }
+    }
+
+    // MARK: - Finder "Open With" / File Handlers
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            ShareWindowController.present(appState: self.appState, urls: urls, text: nil)
+        }
+        sender.reply(toOpenOrPrint: .success)
+    }
+
+    // MARK: - Custom URL Scheme & Universal Open (dexolink://share?text=... or dexolink://share?file=...)
+    func application(_ application: NSApplication, open urls: [URL]) {
+        var fileUrls: [URL] = []
+        var shareText: String? = nil
+
+        for url in urls {
+            if url.scheme?.lowercased() == "dexolink" {
+                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                    if let textItem = components.queryItems?.first(where: { $0.name == "text" || $0.name == "url" })?.value {
+                        shareText = textItem
+                    }
+                    if let fileItem = components.queryItems?.first(where: { $0.name == "file" || $0.name == "path" })?.value {
+                        fileUrls.append(URL(fileURLWithPath: fileItem))
+                    }
+                }
+            } else if url.isFileURL {
+                fileUrls.append(url)
+            }
+        }
+
+        if !fileUrls.isEmpty || shareText != nil {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                ShareWindowController.present(appState: self.appState, urls: fileUrls, text: shareText)
+            }
         }
     }
 }

@@ -540,23 +540,27 @@ struct MenuBarView: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Send File"
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.sendFile(url: url)
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Send"
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                appState.sendFile(url: url)
+            }
         }
     }
 
     private func handleFileDrop(providers: [NSItemProvider]) -> Bool {
-        guard isConnected, let provider = providers.first else { return false }
-        provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, error in
-            if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                DispatchQueue.main.async {
-                    self.appState.sendFile(url: url)
-                }
-            } else if let url = item as? URL {
-                DispatchQueue.main.async {
-                    self.appState.sendFile(url: url)
+        guard isConnected else { return false }
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, error in
+                if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    DispatchQueue.main.async {
+                        self.appState.sendFile(url: url)
+                    }
+                } else if let url = item as? URL {
+                    DispatchQueue.main.async {
+                        self.appState.sendFile(url: url)
+                    }
                 }
             }
         }

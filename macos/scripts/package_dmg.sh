@@ -94,6 +94,60 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
     <array>
         <string>_macdroid._tcp</string>
     </array>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Send with DexoLink</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>shareToDexoLink</string>
+            <key>NSPortName</key>
+            <string>DexoLink</string>
+            <key>NSRequiredContext</key>
+            <dict/>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSFilenamesPboardType</string>
+                <string>public.plain-text</string>
+                <string>public.utf8-plain-text</string>
+                <string>NSStringPboardType</string>
+                <string>NSURLPboardType</string>
+                <string>public.url</string>
+                <string>public.file-url</string>
+            </array>
+        </dict>
+    </array>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>All Files</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.item</string>
+                <string>public.data</string>
+                <string>public.content</string>
+            </array>
+        </dict>
+    </array>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.dexolink.share</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>dexolink</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 EOF
