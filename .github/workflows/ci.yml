@@ -8,13 +8,24 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish as GitHub Release'
+        required: false
+        type: boolean
+        default: true
+      tag_name:
+        description: 'Release Tag Name (e.g. v2.0.2)'
+        required: false
+        type: string
+        default: 'v2.0.2'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-macos:
-    name: Build & Test macOS App
+    name: Build & Package macOS App (DMG)
     runs-on: macos-14
     steps:
       - name: Checkout Code
@@ -33,16 +44,23 @@ jobs:
           chmod +x macos/scripts/package_dmg.sh
           ./macos/scripts/package_dmg.sh
 
+      - name: Stage macOS Release Artifacts
+        run: |
+          mkdir -p macos_artifacts
+          cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink.dmg
+          cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink-v2.0.2.dmg
+          ls -lh macos_artifacts/
+
       - name: Upload macOS DMG Artifact
         uses: actions/upload-artifact@v4
         with:
           name: DexoLink-macOS-DMG
-          path: macos/dist/DexoLink.dmg
+          path: macos_artifacts/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
   build-android:
-    name: Build & Test Android App
+    name: Build & Package Android App (APK)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -68,18 +86,26 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
+      - name: Stage Android Release Artifacts
+        run: |
+          mkdir -p android_artifacts
+          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v2.0.2.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-Android.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/app-debug.apk
+          ls -lh android_artifacts/
+
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: DexoLink-Android-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android_artifacts/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
   publish-release:
-    name: Publish GitHub Release
+    name: Publish Public GitHub Release
     needs: [build-macos, build-android]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == true || github.event.inputs.publish_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -102,14 +128,33 @@ jobs:
       - name: Prepare Release Assets
         run: |
           mkdir -p release_assets
-          cp artifacts/macos/DexoLink.dmg release_assets/DexoLink.dmg
-          cp artifacts/android/app-debug.apk release_assets/DexoLink-Android.apk
+          cp artifacts/macos/DexoLink-v2.0.2.dmg release_assets/DexoLink-v2.0.2.dmg 2>/dev/null || cp artifacts/macos/DexoLink.dmg release_assets/DexoLink-v2.0.2.dmg
+          cp artifacts/macos/DexoLink.dmg release_assets/DexoLink.dmg 2>/dev/null || true
+          cp artifacts/android/DexoLink-v2.0.2.apk release_assets/DexoLink-v2.0.2.apk 2>/dev/null || cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-v2.0.2.apk
+          cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-Android.apk 2>/dev/null || true
           ls -lh release_assets/
+
+      - name: Determine Release Tag
+        id: release_info
+        run: |
+          if [ -n "${{ github.ref_name }}" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "TITLE=DexoLink ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "TAG=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+            echo "TITLE=DexoLink ${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=v2.0.2" >> $GITHUB_OUTPUT
+            echo "TITLE=DexoLink v2.0.2" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release_info.outputs.TAG }}
+          name: ${{ steps.release_info.outputs.TITLE }}
           files: release_assets/*
           generate_release_notes: true
           draft: false
           prerelease: false
+
