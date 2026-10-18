@@ -3778,7 +3778,7 @@ fun DexoLinkBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v2.0.0",
+                    "Developed by Rahul Mahaseth | DexoLink v2.0.2",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF64748B),

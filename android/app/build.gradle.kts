@@ -11,8 +11,8 @@ android {
         applicationId = "com.macdroid"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.0.0"
+        versionCode = 5
+        versionName = "2.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
