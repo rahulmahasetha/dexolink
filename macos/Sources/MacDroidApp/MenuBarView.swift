@@ -135,6 +135,16 @@ struct MenuBarView: View {
 
                             Spacer()
 
+                            if isConnected {
+                                Button("Disconnect") {
+                                    appState.disconnect()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .tint(.orange)
+                                .help("Disconnect active session while preserving pairing")
+                            }
+
                             Button("Unpair") {
                                 appState.unpair()
                             }
@@ -261,6 +271,12 @@ struct MenuBarView: View {
                                         Text("\(formatBytes(Int64(transfer.speedBytesPerSec)))/s")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
+                                        Text("•")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Text("ETA: \(formatETA(transfer.etaSeconds))")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
                                     }
                                     Text("\(Int(transfer.progress * 100))%")
                                         .font(.caption2)
@@ -291,7 +307,14 @@ struct MenuBarView: View {
                                         Text(formatBytes(item.size))
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
-                                        if let url = item.localURL {
+                                        if item.state != .completed && item.isOutgoing && item.localURL != nil {
+                                            Button("Resume") {
+                                                appState.resumeTransfer(id: item.id)
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.mini)
+                                            .font(.caption2)
+                                        } else if let url = item.localURL {
                                             Button("Show") {
                                                 NSWorkspace.shared.activateFileViewerSelecting([url])
                                             }
@@ -545,6 +568,21 @@ struct MenuBarView: View {
         formatter.allowedUnits = [.useAll]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    private func formatETA(_ seconds: Int) -> String {
+        if seconds <= 0 { return "Calculating..." }
+        if seconds < 60 {
+            return "\(seconds)s"
+        } else if seconds < 3600 {
+            let m = seconds / 60
+            let s = seconds % 60
+            return "\(m)m \(s)s"
+        } else {
+            let h = seconds / 3600
+            let m = (seconds % 3600) / 60
+            return "\(h)h \(m)m"
+        }
     }
 }
 

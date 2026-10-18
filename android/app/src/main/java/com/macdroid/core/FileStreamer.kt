@@ -9,8 +9,8 @@ import java.security.MessageDigest
 
 class FileStreamer(private val context: Context) {
     companion object {
-        const val CHUNK_SIZE = 64 * 1024 // 64 KB
-        const val MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024 // 2 GB limit
+        const val CHUNK_SIZE = 512 * 1024 // 512 KB high-throughput streaming
+        const val MAX_FILE_SIZE = 10L * 1024 * 1024 * 1024 // 10 GB limit
 
         fun sanitizeFilename(name: String): String {
             // Prevent path traversal attacks

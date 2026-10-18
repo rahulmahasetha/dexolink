@@ -2,9 +2,12 @@ package com.macdroid.core
 
 import android.content.Context
 import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
 import com.macdroid.networking.*
@@ -39,7 +42,12 @@ data class TransferItem(
     val startTime: Long = System.currentTimeMillis(),
     var speedBytesPerSec: Double = 0.0,
     var errorMessage: String? = null
-)
+) {
+    val etaSeconds: Long
+        get() = if (speedBytesPerSec > 1024 && size > bytesTransferred) {
+            ((size - bytesTransferred) / speedBytesPerSec).toLong()
+        } else 0L
+}
 
 interface TransferEventListener {
     fun onTransferUpdated(item: TransferItem)
@@ -50,15 +58,20 @@ interface TransferEventListener {
 class TransferManager(
     private val context: Context,
     private val trustStore: TrustStore,
+    private val isConnectionActive: () -> Boolean = { true },
     private val sendCallback: (ProtocolMessage) -> Unit
 ) {
     companion object {
         private const val TAG = "TransferManager"
-        const val MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024 // 2 GB limit
+        const val MAX_FILE_SIZE = 10L * 1024 * 1024 * 1024 // 10 GB limit
     }
 
     private val fileStreamer = FileStreamer(context)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val transferExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DexoLink-TransferWorker").apply { isDaemon = true }
+    }
+    private val transferScope = CoroutineScope(transferExecutor.asCoroutineDispatcher() + SupervisorJob())
     private val mainHandler = Handler(Looper.getMainLooper())
     private val listeners = mutableListOf<TransferEventListener>()
 
@@ -86,7 +99,7 @@ class TransferManager(
     private data class ReceiverContext(
         val transferId: String,
         val destinationFile: File,
-        val outputStream: FileOutputStream,
+        val raf: java.io.RandomAccessFile,
         val digest: MessageDigest,
         val expectedSize: Long,
         var receivedBytes: Long = 0L
@@ -94,6 +107,78 @@ class TransferManager(
 
     private val activeReceivers = ConcurrentHashMap<String, ReceiverContext>()
     private val senderCancelTokens = Collections.synchronizedSet(mutableSetOf<String>())
+
+    // Transient power and network locks: held ONLY during active chunk transmission/reception.
+    // 30-minute safety timeout prevents indefinite battery drain.
+    private var transferWakeLock: PowerManager.WakeLock? = null
+    private var transferWifiLock: WifiManager.WifiLock? = null
+
+    @Synchronized
+    private fun acquireTransferLocks() {
+        try {
+            if (transferWakeLock == null) {
+                val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                transferWakeLock = powerManager?.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "DexoLink:ActiveFileTransfer"
+                )?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (transferWakeLock?.isHeld != true) {
+                // Safety cap of 30 minutes prevents indefinite battery drain if peer crashes
+                transferWakeLock?.acquire(30 * 60 * 1000L)
+                Log.d(TAG, "⚡ Acquired transfer WakeLock (30-min safety cap)")
+            }
+
+            if (transferWifiLock == null) {
+                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                transferWifiLock = wifiManager?.createWifiLock(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    } else {
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    },
+                    "DexoLink:TransferWifiLock"
+                )?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (transferWifiLock?.isHeld != true) {
+                transferWifiLock?.acquire()
+                Log.d(TAG, "⚡ Acquired transfer WifiLock")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not acquire transfer locks: ${e.message}")
+        }
+    }
+
+    @Synchronized
+    private fun releaseTransferLocksIfNeeded() {
+        if (activeTransfers.isEmpty() && activeReceivers.isEmpty()) {
+            try {
+                if (transferWakeLock?.isHeld == true) {
+                    transferWakeLock?.release()
+                    Log.d(TAG, "💤 Released transfer WakeLock (all transfers finished)")
+                }
+                if (transferWifiLock?.isHeld == true) {
+                    transferWifiLock?.release()
+                    Log.d(TAG, "💤 Released transfer WifiLock (all transfers finished)")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not release transfer locks: ${e.message}")
+            }
+        }
+    }
+
+    fun cleanup() {
+        try {
+            if (transferWakeLock?.isHeld == true) transferWakeLock?.release()
+            if (transferWifiLock?.isHeld == true) transferWifiLock?.release()
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
 
     fun addListener(listener: TransferEventListener) {
         if (!listeners.contains(listener)) listeners.add(listener)
@@ -107,6 +192,10 @@ class TransferManager(
 
     fun sendFile(uri: Uri) {
         scope.launch {
+            if (!isConnectionActive()) {
+                Log.w(TAG, "Cannot send file: Device is not connected")
+                return@launch
+            }
             try {
                 val (size, mimeType) = fileStreamer.getFileMetadata(uri)
                 val filename = fileStreamer.getFileName(uri)
@@ -116,7 +205,7 @@ class TransferManager(
                     return@launch
                 }
                 if (size > MAX_FILE_SIZE) {
-                    Log.w(TAG, "File exceeds 2 GB limit: $filename ($size bytes)")
+                    Log.w(TAG, "File exceeds 10 GB limit: $filename ($size bytes)")
                     return@launch
                 }
 
@@ -134,6 +223,7 @@ class TransferManager(
                 )
 
                 activeTransfers[transferId] = item
+                acquireTransferLocks()
                 notifyUpdate(item)
 
                 val request = TransferRequestMessage(
@@ -165,7 +255,7 @@ class TransferManager(
             for ((fId, ctx) in activeReceivers) {
                 if (ctx.transferId == id) {
                     try {
-                        ctx.outputStream.close()
+                        ctx.raf.close()
                         ctx.destinationFile.delete()
                     } catch (e: Exception) {
                         // Ignore
@@ -174,18 +264,37 @@ class TransferManager(
                 }
             }
             Log.d(TAG, "Cancelled transfer: $id")
+            releaseTransferLocksIfNeeded()
+        }
+    }
+
+    fun cancelAll() {
+        val ids = activeTransfers.keys().toList()
+        for (id in ids) {
+            cancelTransfer(id)
+        }
+    }
+
+    fun resumeTransfer(id: String) {
+        scope.launch {
+            val item = completedTransfers.firstOrNull { it.id == id }
+            if (item != null && item.isOutgoing && item.uri != null) {
+                completedTransfers.remove(item)
+                Log.d(TAG, "Resuming transfer for ${item.name} ($id)")
+                sendFile(item.uri)
+            }
         }
     }
 
     // MARK: - Message Handler
 
     fun handleIncomingMessage(message: ProtocolMessage) {
-        scope.launch {
+        transferScope.launch {
             when (message) {
                 is TransferRequestMessage -> {
-                    // Security 1: Enforce strict 1-device policy & pairing authorization
-                    if (!trustStore.hasPairedDevice()) {
-                        Log.w(TAG, "⛔ Rejecting TransferRequest: Device not paired")
+                    // Security 1: Enforce connection or pairing authorization
+                    if (!trustStore.hasPairedDevice() && !isConnectionActive()) {
+                        Log.w(TAG, "⛔ Rejecting TransferRequest: Device not paired or connected")
                         sendCallback(TransferResponseMessage(message.transferId, accepted = false))
                         return@launch
                     }
@@ -197,7 +306,20 @@ class TransferManager(
                         return@launch
                     }
 
-                    // Auto-accept from authorized paired device
+                    // Security 3: Available storage check
+                    try {
+                        val stat = android.os.StatFs(downloadDirectory.absolutePath)
+                        val freeBytes = stat.availableBytes
+                        if (freeBytes < message.totalSize + (100L * 1024 * 1024)) {
+                            Log.w(TAG, "⛔ Rejecting TransferRequest: Insufficient device storage (needs ${message.totalSize}, available $freeBytes)")
+                            sendCallback(TransferResponseMessage(message.transferId, accepted = false))
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not check StatFs: ${e.message}")
+                    }
+
+                    // Auto-accept from authorized paired or connected device
                     val item = TransferItem(
                         id = message.transferId,
                         fileId = "",
@@ -207,6 +329,7 @@ class TransferManager(
                         state = TransferStatus.TRANSFERRING
                     )
                     activeTransfers[message.transferId] = item
+                    acquireTransferLocks()
                     notifyUpdate(item)
 
                     sendCallback(TransferResponseMessage(message.transferId, accepted = true))
@@ -217,6 +340,7 @@ class TransferManager(
                     val item = activeTransfers[message.transferId] ?: return@launch
                     if (message.accepted) {
                         item.state = TransferStatus.TRANSFERRING
+                        acquireTransferLocks()
                         notifyUpdate(item)
 
                         // Start sending file chunks
@@ -227,6 +351,7 @@ class TransferManager(
                         item.errorMessage = "Transfer declined by peer"
                         activeTransfers.remove(message.transferId)
                         completedTransfers.add(0, item)
+                        releaseTransferLocksIfNeeded()
                         notifyUpdate(item)
                         notifyFailed(item, "Declined by peer")
                     }
@@ -245,18 +370,20 @@ class TransferManager(
                         destination.setWritable(true, false)
                         destination.setExecutable(false, false)
 
-                        val fos = FileOutputStream(destination)
+                        val raf = java.io.RandomAccessFile(destination, "rw")
+                        raf.setLength(0) // Start fresh
                         val digest = MessageDigest.getInstance("SHA-256")
 
                         val ctx = ReceiverContext(
                             transferId = message.transferId,
                             destinationFile = destination,
-                            outputStream = fos,
+                            raf = raf,
                             digest = digest,
                             expectedSize = message.size,
                             receivedBytes = 0L
                         )
                         activeReceivers[message.fileId] = ctx
+                        acquireTransferLocks()
 
                         val item = TransferItem(
                             id = message.transferId,
@@ -276,6 +403,7 @@ class TransferManager(
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed creating destination file: ${e.message}", e)
                         sendCallback(CancelMessage(message.transferId))
+                        releaseTransferLocksIfNeeded()
                     }
                 }
 
@@ -287,7 +415,7 @@ class TransferManager(
                     if (ctx.receivedBytes + chunkData.size > ctx.expectedSize) {
                         Log.w(TAG, "Security alert: Received bytes exceed expected size! Aborting.")
                         try {
-                            ctx.outputStream.close()
+                            ctx.raf.close()
                             ctx.destinationFile.delete()
                         } catch (e: Exception) {}
                         activeReceivers.remove(message.fileId)
@@ -296,7 +424,8 @@ class TransferManager(
                     }
 
                     try {
-                        ctx.outputStream.write(chunkData)
+                        ctx.raf.seek(message.offset)
+                        ctx.raf.write(chunkData)
                         ctx.digest.update(chunkData)
                         ctx.receivedBytes += chunkData.size
 
@@ -319,16 +448,40 @@ class TransferManager(
                 is FileCompleteMessage -> {
                     val ctx = activeReceivers.remove(message.fileId) ?: return@launch
                     try {
-                        ctx.outputStream.flush()
-                        ctx.outputStream.close()
+                        ctx.raf.fd.sync()
+                        ctx.raf.close()
                     } catch (e: Exception) {}
 
-                    val computedHash = ctx.digest.digest().joinToString("") { "%02x".format(it) }
-                    val verified = computedHash.equals(message.sha256, ignoreCase = true)
+                    var computedHash = ctx.digest.digest().joinToString("") { "%02x".format(it) }
+                    var verified = computedHash.equals(message.sha256, ignoreCase = true)
+
+                    // If stream digest didn't match, double check directly from written disk file
+                    if (!verified && ctx.destinationFile.exists() && ctx.destinationFile.length() == ctx.expectedSize) {
+                        try {
+                            val md = MessageDigest.getInstance("SHA-256")
+                            ctx.destinationFile.inputStream().use { fis ->
+                                val buf = ByteArray(65536)
+                                var r: Int
+                                while (fis.read(buf).also { r = it } != -1) {
+                                    md.update(buf, 0, r)
+                                }
+                            }
+                            val diskHash = md.digest().joinToString("") { "%02x".format(it) }
+                            if (diskHash.equals(message.sha256, ignoreCase = true)) {
+                                Log.d(TAG, "SHA-256 verified via disk file stream ($diskHash)")
+                                verified = true
+                            } else {
+                                Log.e(TAG, "SHA-256 mismatch! Expected: ${message.sha256}, Stream: $computedHash, Disk: $diskHash")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Disk verification error: ${e.message}")
+                        }
+                    }
 
                     sendCallback(FileAckMessage(message.fileId, verified = verified))
 
                     val item = activeTransfers.remove(ctx.transferId)
+                    releaseTransferLocksIfNeeded()
                     if (item != null) {
                         if (verified) {
                             item.state = TransferStatus.COMPLETED
@@ -338,6 +491,17 @@ class TransferManager(
                             completedTransfers.add(0, item)
                             notifyUpdate(item)
                             notifyCompleted(item)
+                            try {
+                                android.media.MediaScannerConnection.scanFile(
+                                    context,
+                                    arrayOf(ctx.destinationFile.absolutePath),
+                                    null
+                                ) { path, uri ->
+                                    Log.d(TAG, "Indexed to Android Downloads media store: $path -> $uri")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Media scanner indexing error: ${e.message}")
+                            }
                             Log.d(TAG, "✅ File verified & completed: ${item.name} (${item.size} bytes)")
                         } else {
                             // Discard corrupt file
@@ -356,6 +520,7 @@ class TransferManager(
                     for ((tId, item) in activeTransfers) {
                         if (item.fileId == message.fileId) {
                             activeTransfers.remove(tId)
+                            releaseTransferLocksIfNeeded()
                             if (message.verified) {
                                 item.state = TransferStatus.COMPLETED
                                 item.progress = 1.0f
@@ -386,13 +551,14 @@ class TransferManager(
                     for ((fId, ctx) in activeReceivers) {
                         if (ctx.transferId == message.transferId) {
                             try {
-                                ctx.outputStream.close()
+                                ctx.raf.close()
                                 ctx.destinationFile.delete()
                             } catch (e: Exception) {}
                             activeReceivers.remove(fId)
                         }
                     }
                     Log.d(TAG, "Transfer ${message.transferId} cancelled by peer")
+                    releaseTransferLocksIfNeeded()
                 }
 
                 else -> {}
@@ -432,6 +598,7 @@ class TransferManager(
                         if (senderCancelTokens.contains(transferId)) {
                             senderCancelTokens.remove(transferId)
                             Log.d(TAG, "Streaming aborted: transfer $transferId cancelled")
+                            releaseTransferLocksIfNeeded()
                             return@launch
                         }
 
@@ -460,9 +627,9 @@ class TransferManager(
                             notifyUpdate(item)
                         }
 
-                        // Slight yield every few chunks to prevent flooding
-                        if (offset % (FileStreamer.CHUNK_SIZE * 4L) == 0L) {
-                            delay(5)
+                        // Cooperative yield every 4 MB to keep coroutine responsive without artificial sleep
+                        if (offset % (FileStreamer.CHUNK_SIZE * 8L) == 0L) {
+                            yield()
                         }
                     }
                 }
@@ -483,6 +650,7 @@ class TransferManager(
                     item.state = TransferStatus.FAILED
                     item.errorMessage = e.localizedMessage
                     completedTransfers.add(0, item)
+                    releaseTransferLocksIfNeeded()
                     notifyUpdate(item)
                     notifyFailed(item, e.localizedMessage ?: "Stream error")
                 }

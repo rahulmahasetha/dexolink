@@ -67,10 +67,12 @@ class TrustStore(context: Context) {
     }
 
     @Synchronized
-    fun isPairedWith(deviceId: String): Boolean {
-        if (deviceId.isBlank()) return false
+    fun isPairedWith(deviceId: String, deviceName: String? = null): Boolean {
+        if (deviceId.isBlank() && deviceName.isNullOrBlank()) return false
         val paired = getPairedDevice() ?: return false
-        return paired.deviceId == deviceId
+        if (deviceId.isNotBlank() && paired.deviceId == deviceId) return true
+        if (!deviceName.isNullOrBlank() && paired.deviceName == deviceName) return true
+        return false
     }
 
     @Synchronized

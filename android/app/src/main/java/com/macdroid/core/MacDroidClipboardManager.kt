@@ -7,6 +7,7 @@ import android.util.Log
 import java.security.MessageDigest
 
 enum class ClipboardSyncMode(val id: String, val title: String, val description: String) {
+    DISABLED("disabled", "Disabled", "Clipboard synchronization paused"),
     ANDROID_TO_MAC("android_to_mac", "Android → Mac", "Copy on Android updates Mac; Mac changes ignored"),
     MAC_TO_ANDROID("mac_to_android", "Mac → Android", "Copy on Mac updates Android; Android changes ignored"),
     TWO_WAY("two_way", "Two-Way Sync", "Copy on either device updates the other");
@@ -56,9 +57,9 @@ class MacDroidClipboardManager(private val context: Context) {
      * Returns true if clipboard was updated, false if it was rejected/duplicate/echo.
      */
     fun handleMessage(content: String): Boolean {
-        // Enforce mode: In ANDROID_TO_MAC mode, never apply incoming clipboard from Mac
-        if (syncMode == ClipboardSyncMode.ANDROID_TO_MAC) {
-            Log.d(TAG, "[Mode: Android → Mac] Dropped incoming clipboard push from Mac (reverse sync prohibited)")
+        // Enforce mode: In DISABLED or ANDROID_TO_MAC mode, never apply incoming clipboard from Mac
+        if (syncMode == ClipboardSyncMode.DISABLED || syncMode == ClipboardSyncMode.ANDROID_TO_MAC) {
+            Log.d(TAG, "[Mode: $syncMode] Dropped incoming clipboard push from Mac")
             return false
         }
 
@@ -90,9 +91,9 @@ class MacDroidClipboardManager(private val context: Context) {
      * Enforces sync mode and prevents echo loops.
      */
     fun shouldSend(content: String): Boolean {
-        // Enforce mode: In MAC_TO_ANDROID mode, never send local Android clipboard to Mac
-        if (syncMode == ClipboardSyncMode.MAC_TO_ANDROID) {
-            Log.d(TAG, "[Mode: Mac → Android] Blocked sending local clipboard to Mac (reverse sync prohibited)")
+        // Enforce mode: In DISABLED or MAC_TO_ANDROID mode, never send local Android clipboard to Mac
+        if (syncMode == ClipboardSyncMode.DISABLED || syncMode == ClipboardSyncMode.MAC_TO_ANDROID) {
+            Log.d(TAG, "[Mode: $syncMode] Blocked sending local clipboard to Mac")
             return false
         }
 

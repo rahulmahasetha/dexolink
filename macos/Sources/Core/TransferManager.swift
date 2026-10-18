@@ -62,6 +62,11 @@ public struct TransferItem: Identifiable, Equatable {
         self.startTime = startTime
         self.speedBytesPerSec = speedBytesPerSec
     }
+
+    public var etaSeconds: Int {
+        guard speedBytesPerSec > 1024, size > bytesTransferred else { return 0 }
+        return Int(Double(size - bytesTransferred) / speedBytesPerSec)
+    }
 }
 
 public protocol TransferManagerDelegate: AnyObject {
@@ -71,7 +76,7 @@ public protocol TransferManagerDelegate: AnyObject {
 }
 
 public class TransferManager {
-    public static let maxFileSize: Int64 = 2 * 1024 * 1024 * 1024 // 2 GB limit to prevent resource exhaustion
+    public static let maxFileSize: Int64 = 10 * 1024 * 1024 * 1024 // 10 GB limit
     public weak var delegate: TransferManagerDelegate?
     
     private let connectionManager: ConnectionManager
@@ -93,6 +98,27 @@ public class TransferManager {
     private var activeReceivers: [String: ReceiverContext] = [:]
     private var senderCancelTokens: Set<String> = []
 
+    // Transient macOS power activity: prevents App Nap or system sleep from throttling active file transfers
+    private var transferActivityToken: NSObjectProtocol?
+    
+    private func acquireTransferActivityIfNeeded() {
+        if transferActivityToken == nil {
+            transferActivityToken = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .idleSystemSleepDisabled],
+                reason: "Active DexoLink File Transfer"
+            )
+            print("⚡ [Power Management] Acquired macOS userInitiated transfer activity (App Nap disabled during transfer)")
+        }
+    }
+    
+    private func releaseTransferActivityIfNeeded() {
+        if activeTransfers.isEmpty && activeReceivers.isEmpty, let token = transferActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            transferActivityToken = nil
+            print("💤 [Power Management] Released macOS transfer activity (idle)")
+        }
+    }
+
     public init(connectionManager: ConnectionManager) {
         self.connectionManager = connectionManager
         
@@ -108,6 +134,10 @@ public class TransferManager {
     public func sendFile(url: URL) {
         queue.async { [weak self] in
             guard let self = self else { return }
+            guard self.connectionManager.state.isConnected else {
+                print("⛔ [Quick File Sharing] Cannot send file: Device not connected")
+                return
+            }
             
             do {
                 guard FileManager.default.fileExists(atPath: url.path) else {
@@ -119,7 +149,7 @@ public class TransferManager {
                     throw NSError(domain: "DexoLink", code: 400, userInfo: [NSLocalizedDescriptionKey: "File is empty"])
                 }
                 guard size <= Self.maxFileSize else {
-                    throw NSError(domain: "DexoLink", code: 413, userInfo: [NSLocalizedDescriptionKey: "File exceeds 2 GB limit"])
+                    throw NSError(domain: "DexoLink", code: 413, userInfo: [NSLocalizedDescriptionKey: "File exceeds 10 GB limit"])
                 }
                 
                 let transferId = UUID().uuidString
@@ -137,6 +167,7 @@ public class TransferManager {
                 )
                 
                 self.activeTransfers[transferId] = item
+                self.acquireTransferActivityIfNeeded()
                 self.notifyDelegate(item)
                 
                 let request = ProtocolMessage.transferRequest(
@@ -173,6 +204,29 @@ public class TransferManager {
                 self.activeReceivers.removeValue(forKey: fId)
             }
             print("🚫 [Quick File Sharing] Cancelled transfer \(id)")
+            self.releaseTransferActivityIfNeeded()
+        }
+    }
+    
+    public func cancelAll() {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            let ids = Array(self.activeTransfers.keys)
+            for id in ids {
+                self.cancelTransfer(id: id)
+            }
+        }
+    }
+    
+    public func resumeTransfer(id: String) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if let item = self.completedTransfers.first(where: { $0.id == id }),
+               item.isOutgoing, let url = item.localURL {
+                self.completedTransfers.removeAll(where: { $0.id == id })
+                print("🔄 [Quick File Sharing] Resuming transfer for \(item.name)")
+                self.sendFile(url: url)
+            }
         }
     }
     
@@ -184,9 +238,9 @@ public class TransferManager {
             
             switch message {
             case let .transferRequest(transferId, _, totalSize):
-                // Security check 1: Enforce strict 1-device policy & authentication
-                guard TrustStore.shared.hasPairedDevice() else {
-                    print("⛔ [Access Control] Rejected transferRequest: Device not paired")
+                // Security check 1: Enforce connection or paired authorization
+                guard self.connectionManager.state.isConnected || TrustStore.shared.hasPairedDevice() else {
+                    print("⛔ [Access Control] Rejected transferRequest: Device not connected")
                     self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: false))
                     return
                 }
@@ -196,6 +250,16 @@ public class TransferManager {
                     print("⛔ [Validation] Rejected transferRequest: Invalid size \(totalSize)")
                     self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: false))
                     return
+                }
+
+                // Security check 3: Verify available disk space
+                if let values = try? self.downloadDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+                   let freeBytes = values.volumeAvailableCapacityForImportantUsage {
+                    if freeBytes < totalSize + (100 * 1024 * 1024) {
+                        print("⛔ [Storage] Insufficient disk space on Mac: required \(totalSize), available \(freeBytes)")
+                        self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: false))
+                        return
+                    }
                 }
                 
                 // Auto-accept transfer from authenticated paired device
@@ -208,6 +272,7 @@ public class TransferManager {
                     state: .transferring(progress: 0.0)
                 )
                 self.activeTransfers[transferId] = item
+                self.acquireTransferActivityIfNeeded()
                 self.notifyDelegate(item)
                 
                 self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: true))
@@ -219,6 +284,7 @@ public class TransferManager {
                 if accepted {
                     item.state = .transferring(progress: 0.0)
                     self.activeTransfers[transferId] = item
+                    self.acquireTransferActivityIfNeeded()
                     self.notifyDelegate(item)
                     
                     // Start streaming file
@@ -228,6 +294,7 @@ public class TransferManager {
                     item.state = .failed("Transfer rejected by peer")
                     self.activeTransfers.removeValue(forKey: transferId)
                     self.completedTransfers.insert(item, at: 0)
+                    self.releaseTransferActivityIfNeeded()
                     self.notifyDelegate(item)
                     print("⛔ [Quick File Sharing] Peer rejected transfer \(transferId)")
                 }
@@ -260,6 +327,7 @@ public class TransferManager {
                         receivedBytes: 0
                     )
                     self.activeReceivers[fileId] = ctx
+                    self.acquireTransferActivityIfNeeded()
                     
                     var item = self.activeTransfers[transferId] ?? TransferItem(
                         id: transferId,
@@ -332,11 +400,19 @@ public class TransferManager {
                 try? ctx.fileHandle.close()
                 
                 let computedHash = ctx.hasher.finalize().map { String(format: "%02x", $0) }.joined()
-                let verified = (computedHash.lowercased() == declaredSHA256.lowercased())
+                var verified = (computedHash.lowercased() == declaredSHA256.lowercased())
+                if !verified, FileManager.default.fileExists(atPath: ctx.destinationURL.path) {
+                    if let diskHash = try? FileStreamer.computeSHA256(url: ctx.destinationURL),
+                       diskHash.lowercased() == declaredSHA256.lowercased() {
+                        print("✅ [File Verified] Verified via disk stream: \(diskHash)")
+                        verified = true
+                    }
+                }
                 
                 self.connectionManager.send(message: .fileAck(fileId: fileId, verified: verified))
                 
                 if var item = self.activeTransfers.removeValue(forKey: ctx.transferId) {
+                    self.releaseTransferActivityIfNeeded()
                     if verified {
                         item.state = .completed
                         item.progress = 1.0
@@ -366,6 +442,7 @@ public class TransferManager {
                 // Find sender transfer matching fileId
                 for (tId, var item) in self.activeTransfers where item.fileId == fileId {
                     self.activeTransfers.removeValue(forKey: tId)
+                    self.releaseTransferActivityIfNeeded()
                     if verified {
                         item.state = .completed
                         item.progress = 1.0
@@ -401,6 +478,7 @@ public class TransferManager {
                     self.activeReceivers.removeValue(forKey: fId)
                 }
                 print("🚫 [Quick File Sharing] Transfer \(transferId) cancelled by peer")
+                self.releaseTransferActivityIfNeeded()
                 
             default:
                 break
@@ -413,6 +491,7 @@ public class TransferManager {
     private func startStreamingFile(transferId: String, fileId: String, url: URL, size: Int64) {
         queue.async { [weak self] in
             guard let self = self else { return }
+            self.acquireTransferActivityIfNeeded()
             
             do {
                 let (declaredSize, mimeType) = try FileStreamer.getFileMetadata(url: url)
@@ -438,6 +517,7 @@ public class TransferManager {
                     if self.senderCancelTokens.contains(transferId) {
                         self.senderCancelTokens.remove(transferId)
                         print("⏹️ Sender loop aborted due to cancel")
+                        self.releaseTransferActivityIfNeeded()
                         return
                     }
                     
@@ -469,9 +549,9 @@ public class TransferManager {
                         self.notifyDelegate(item)
                     }
                     
-                    // Yield slightly to prevent buffer saturation on rapid local loops
-                    if offset % (Int64(chunkSize) * 4) == 0 {
-                        Thread.sleep(forTimeInterval: 0.005)
+                    // Minimal yield every 4 MB to keep runloop responsive without artificial latency
+                    if offset % (Int64(chunkSize) * 8) == 0 {
+                        usleep(50)
                     }
                 }
                 
@@ -489,6 +569,7 @@ public class TransferManager {
                 if var item = self.activeTransfers.removeValue(forKey: transferId) {
                     item.state = .failed(error.localizedDescription)
                     self.completedTransfers.insert(item, at: 0)
+                    self.releaseTransferActivityIfNeeded()
                     self.notifyDelegate(item)
                 }
             }

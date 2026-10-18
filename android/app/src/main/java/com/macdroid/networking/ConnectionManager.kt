@@ -45,7 +45,7 @@ class ConnectionManager(private val context: Context) {
         private const val PREFS_NAME = "macdroid_connection_prefs"
         private const val KEY_LAST_HOST = "last_host"
         private const val KEY_LAST_PORT = "last_port"
-        private const val HEARTBEAT_INTERVAL_MS = 20000L
+        private const val ACTIVITY_EXPIRY_THRESHOLD_MS = 35000L // 35s
     }
 
     private val codec = ProtocolCodec()
@@ -53,7 +53,7 @@ class ConnectionManager(private val context: Context) {
     val cryptoService = CryptoService.getInstance(context)
     val trustStore = TrustStore.getInstance(context)
     val pairingManager = PairingManager.getInstance(context)
-    val transferManager = TransferManager(context, trustStore) { sendMessage(it) }
+    val transferManager = TransferManager(context, trustStore, { isConnected() || trustStore.hasPairedDevice() }) { sendMessage(it) }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -67,10 +67,19 @@ class ConnectionManager(private val context: Context) {
     private var listenJob: Job? = null
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
+    private var sendJob: Job? = null
+    private val sendChannel = kotlinx.coroutines.channels.Channel<ProtocolMessage>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var lastDataActivityTimestamp: Long = System.currentTimeMillis()
 
     val deviceId: String get() = cryptoService.deviceId
     var deviceName: String = prefs.getString("custom_device_name", null) ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+        private set
+    var isIncomingConnection: Boolean = false
+        private set
+    var currentPeerId: String? = null
+        private set
+    var currentPeerName: String? = null
         private set
 
     fun setDeviceName(name: String) {
@@ -90,6 +99,7 @@ class ConnectionManager(private val context: Context) {
         private set
 
     var autoReconnect: Boolean = true
+    var userExplicitlyDisconnected: Boolean = false
     private var pingStartTime: Long = 0L
     var lastPingLatency: Long? = null
         private set
@@ -146,6 +156,7 @@ class ConnectionManager(private val context: Context) {
     }
 
     fun connect(host: String, port: Int) {
+        userExplicitlyDisconnected = false
         autoReconnect = true
         lastConnectedHost = host
         lastConnectedPort = port
@@ -163,6 +174,8 @@ class ConnectionManager(private val context: Context) {
                 socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
+                socket.sendBufferSize = 2 * 1024 * 1024
+                socket.receiveBufferSize = 2 * 1024 * 1024
                 handleNewSocket(socket, isIncoming = false)
             } catch (e: Exception) {
                 log("Connection failed: ${e.message}")
@@ -174,14 +187,31 @@ class ConnectionManager(private val context: Context) {
     }
 
     private suspend fun handleNewSocket(socket: Socket, isIncoming: Boolean) {
+        if (isIncoming && userExplicitlyDisconnected) {
+            log("Rejecting incoming connection from ${socket.inetAddress?.hostAddress}: User explicitly disconnected")
+            try { socket.close() } catch (e: Exception) {}
+            return
+        }
+        if (!isIncoming) {
+            userExplicitlyDisconnected = false
+        }
+        isIncomingConnection = isIncoming
         reconnectJob?.cancel()
         activeSocket = socket
-        dataInputStream = DataInputStream(socket.getInputStream())
-        dataOutputStream = DataOutputStream(socket.getOutputStream())
+        socket.tcpNoDelay = true
+        socket.keepAlive = true
+        socket.sendBufferSize = 2 * 1024 * 1024
+        socket.receiveBufferSize = 2 * 1024 * 1024
+        dataInputStream = DataInputStream(java.io.BufferedInputStream(socket.getInputStream(), 512 * 1024))
+        dataOutputStream = DataOutputStream(java.io.BufferedOutputStream(socket.getOutputStream(), 512 * 1024))
 
         val peerAddr = socket.inetAddress?.hostAddress ?: "Unknown"
         state = ConnectionState.Connected(peerName = "MacBook", peerAddress = peerAddr)
         log("Connected to $peerAddr (incoming: $isIncoming)")
+
+        // Start send loop for strictly sequential transmission
+        while (sendChannel.tryReceive().isSuccess) {}
+        startSendLoop()
 
         // Send HELLO handshake
         val hello = HelloMessage(
@@ -199,14 +229,56 @@ class ConnectionManager(private val context: Context) {
         receiveLoop(socket)
     }
 
+    private fun startSendLoop() {
+        sendJob?.cancel()
+        sendJob = scope.launch {
+            for (message in sendChannel) {
+                try {
+                    val out = dataOutputStream ?: continue
+                    val bytes = codec.encode(message)
+                    synchronized(out) {
+                        out.write(bytes)
+                        out.flush()
+                    }
+                    lastDataActivityTimestamp = System.currentTimeMillis()
+                } catch (e: Exception) {
+                    log("Failed to send ${message.type}: ${e.message}")
+                    if (e is java.net.SocketException) {
+                        disconnectInternal(disableAutoReconnect = false)
+                        scheduleReconnect()
+                        break
+                    }
+                }
+            }
+        }
+    }
+
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (isActive) {
-                delay(HEARTBEAT_INTERVAL_MS)
+                // Adaptive heartbeat interval:
+                // Active/recent data exchange (< 1 min): check after 35s
+                // Mild idle (1 - 5 mins): check after 50s
+                // Deep idle (> 5 mins): check after 60s
+                val idleDuration = System.currentTimeMillis() - lastDataActivityTimestamp
+                val checkDelay = when {
+                    idleDuration < 60_000L -> 35_000L
+                    idleDuration < 300_000L -> 50_000L
+                    else -> 60_000L
+                }
+
+                delay(checkDelay)
+
                 val socket = activeSocket
                 if (socket != null && socket.isConnected && !socket.isClosed) {
-                    sendMessage(PingMessage)
+                    val timeSinceActivity = System.currentTimeMillis() - lastDataActivityTimestamp
+                    // If regular data (files, clipboard, acks) was sent/received within the last 35s,
+                    // TCP socket liveness is already proven; skip ping entirely to save radio power!
+                    if (timeSinceActivity >= ACTIVITY_EXPIRY_THRESHOLD_MS) {
+                        pingStartTime = System.currentTimeMillis()
+                        sendMessage(PingMessage)
+                    }
                 } else {
                     break
                 }
@@ -227,6 +299,7 @@ class ConnectionManager(private val context: Context) {
                 stream.readFully(payload)
 
                 val message = codec.decodeMessage(payload)
+                lastDataActivityTimestamp = System.currentTimeMillis()
                 handleIncomingMessage(message)
             }
         } catch (e: Exception) {
@@ -252,7 +325,7 @@ class ConnectionManager(private val context: Context) {
     }
 
     private fun scheduleReconnect() {
-        if (!autoReconnect) return
+        if (!autoReconnect || userExplicitlyDisconnected) return
         val host = lastConnectedHost ?: return
         val port = lastConnectedPort
         if (port <= 0) return
@@ -261,7 +334,13 @@ class ConnectionManager(private val context: Context) {
         reconnectJob = scope.launch {
             var attempt = 1
             while (isActive && autoReconnect && (activeSocket == null || activeSocket?.isClosed == true)) {
-                val delayMs = minOf(1500L * attempt, 10000L)
+                // Adaptive backoff: quick retry for transient drops, capped at 30s when Mac is offline
+                val delayMs = when {
+                    attempt <= 2 -> 2000L
+                    attempt <= 5 -> 5000L
+                    attempt <= 10 -> 12000L
+                    else -> 30000L // 30s cap prevents battery drain while peer remains offline
+                }
                 state = ConnectionState.Connecting("Reconnecting to $host:$port ($attempt)...")
                 log("Auto-reconnecting in ${delayMs / 1000}s (attempt $attempt)...")
                 delay(delayMs)
@@ -291,7 +370,9 @@ class ConnectionManager(private val context: Context) {
         when (message) {
             is HelloMessage -> {
                 log("Peer identified: ${message.deviceName} (${message.deviceId})")
-                val isTrusted = trustStore.isPairedWith(message.deviceId)
+                currentPeerId = message.deviceId
+                currentPeerName = message.deviceName
+                val isTrusted = trustStore.isPairedWith(message.deviceId, message.deviceName)
 
                 if (isTrusted) {
                     log("Device ${message.deviceName} (${message.deviceId}) is our paired device! Authenticating...")
@@ -306,6 +387,8 @@ class ConnectionManager(private val context: Context) {
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
                 } else {
                     log("Device ${message.deviceName} (${message.deviceId}) is not paired. HelloAck(paired: false)")
+                    val peerAddr = activeSocket?.inetAddress?.hostAddress ?: "Unknown"
+                    state = ConnectionState.Connected(peerName = message.deviceName, peerAddress = peerAddr)
                     val ack = HelloAckMessage(
                         version = 1,
                         deviceId = deviceId,
@@ -313,21 +396,18 @@ class ConnectionManager(private val context: Context) {
                         paired = false
                     )
                     sendMessage(ack)
-                    // Strict 1-device policy: only send pairRequest if not already paired!
-                    if (!trustStore.hasPairedDevice()) {
-                        sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
-                    } else {
-                        log("ℹ️ Already paired with '${trustStore.getPairedDevice()?.deviceName}'. Awaiting manual unpair.")
-                    }
+                    log("🤝 Sent HelloAck(paired = false) to ${message.deviceName}")
                 }
             }
 
             is HelloAckMessage -> {
                 log("Peer acknowledged HELLO: ${message.deviceName} (paired: ${message.paired})")
+                currentPeerId = message.deviceId
+                currentPeerName = message.deviceName
                 if (message.paired) {
                     log("Peer verified authenticated session: ${message.deviceName}")
                     state = ConnectionState.Authenticated(message.deviceName, message.deviceId)
-                    if (!trustStore.isPairedWith(message.deviceId)) {
+                    if (!trustStore.isPairedWith(message.deviceId, message.deviceName)) {
                         trustStore.setPairedDevice(
                             TrustedDevice(
                                 deviceId = message.deviceId,
@@ -339,23 +419,28 @@ class ConnectionManager(private val context: Context) {
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
                     log("[Mode Sync] Synced mode '${clipboardManager.syncMode.id}' with ${message.deviceName}")
                 } else {
-                    if (!trustStore.hasPairedDevice()) {
-                        log("Initiating PAIR_REQUEST to ${message.deviceName}...")
-                        sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
+                    if (!isIncomingConnection) {
+                        if (!trustStore.hasPairedDevice()) {
+                            log("Initiating PAIR_REQUEST to ${message.deviceName}...")
+                            state = ConnectionState.Connecting("Pairing request sent to ${message.deviceName}...")
+                            sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
+                        } else {
+                            log("ℹ️ Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}'")
+                        }
                     } else {
-                        log("ℹ️ Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}'")
+                        log("ℹ️ Received HelloAck as receiver from ${message.deviceName} — awaiting incoming PairRequest")
                     }
                 }
             }
 
             is PairRequestMessage -> {
                 log("Received PAIR_REQUEST from peer")
-                val peerName = when (val s = state) {
+                val peerName = currentPeerName ?: when (val s = state) {
                     is ConnectionState.Connected -> s.peerName
                     is ConnectionState.Authenticated -> s.peerName
                     else -> "Device"
                 }
-                val peerId = when (val s = state) {
+                val peerId = currentPeerId ?: when (val s = state) {
                     is ConnectionState.Connected -> s.peerAddress
                     is ConnectionState.Authenticated -> s.peerId
                     else -> "Device"
@@ -384,13 +469,13 @@ class ConnectionManager(private val context: Context) {
             is PairResponseMessage -> {
                 if (message.accepted) {
                     log("Peer accepted pairing response! Verifying SAS key...")
-                    val peerName = when (val s = state) {
+                    val peerName = currentPeerName ?: when (val s = state) {
                         is ConnectionState.Connected -> s.peerName
                         is ConnectionState.Authenticated -> s.peerName
                         is ConnectionState.Pairing -> s.peerName
                         else -> "Device"
                     }
-                    val peerId = when (val s = state) {
+                    val peerId = currentPeerId ?: when (val s = state) {
                         is ConnectionState.Connected -> s.peerAddress
                         is ConnectionState.Authenticated -> s.peerId
                         is ConnectionState.Pairing -> s.peerId
@@ -430,6 +515,10 @@ class ConnectionManager(private val context: Context) {
                 log("🗑️ Received UNPAIR from peer. Clearing paired trust store...")
                 trustStore.unpairDevice()
                 pairingManager.unpair()
+                userExplicitlyDisconnected = true
+                try {
+                    transferManager.cancelAll()
+                } catch (e: Exception) {}
                 state = ConnectionState.Disconnected
                 disconnect(disableAutoReconnect = true)
             }
@@ -522,27 +611,31 @@ class ConnectionManager(private val context: Context) {
         sendMessage(UnpairMessage)
         trustStore.unpairDevice()
         pairingManager.unpair()
+        userExplicitlyDisconnected = true
+        try {
+            transferManager.cancelAll()
+        } catch (e: Exception) {}
         disconnect(disableAutoReconnect = true)
         state = ConnectionState.Disconnected
     }
 
     fun sendMessage(message: ProtocolMessage) {
-        scope.launch {
-            try {
-                val out = dataOutputStream ?: return@launch
-                val bytes = codec.encode(message)
-                synchronized(out) {
-                    out.write(bytes)
-                    out.flush()
-                }
-            } catch (e: Exception) {
-                log("Failed to send ${message.type}: ${e.message}")
-                if (e is java.net.SocketException) {
-                    disconnectInternal(disableAutoReconnect = false)
-                    scheduleReconnect()
-                }
-            }
+        sendChannel.trySend(message)
+    }
+
+    fun requestPairing() {
+        if (!isConnected()) {
+            log("Cannot send PAIR_REQUEST: Not connected to peer")
+            return
         }
+        val existingPaired = trustStore.getPairedDevice()
+        if (existingPaired != null && currentPeerId != null && !trustStore.isPairedWith(currentPeerId ?: "", currentPeerName ?: "")) {
+            log("Cannot request pairing: Already paired with ${existingPaired.deviceName}. Unpair first.")
+            return
+        }
+        log("Sending PAIR_REQUEST to ${currentPeerName ?: "Mac"}...")
+        state = ConnectionState.Connecting("Pairing request sent to ${currentPeerName ?: "Mac"}...")
+        sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
     }
 
     fun sendPing() {
@@ -579,6 +672,10 @@ class ConnectionManager(private val context: Context) {
         transferManager.cancelTransfer(transferId)
     }
 
+    fun resumeTransfer(transferId: String) {
+        transferManager.resumeTransfer(transferId)
+    }
+
     fun isConnected(): Boolean {
         return (state is ConnectionState.Connected || state is ConnectionState.Authenticated) &&
                 activeSocket != null && activeSocket?.isConnected == true && activeSocket?.isClosed == false
@@ -586,14 +683,23 @@ class ConnectionManager(private val context: Context) {
 
     fun disconnect(disableAutoReconnect: Boolean = true) {
         if (disableAutoReconnect) {
+            userExplicitlyDisconnected = true
             autoReconnect = false
             reconnectJob?.cancel()
+            try {
+                transferManager.cancelAll()
+            } catch (e: Exception) {
+                log("Error cancelling transfers on disconnect: ${e.message}")
+            }
         }
         disconnectInternal(disableAutoReconnect)
     }
 
     private fun disconnectInternal(disableAutoReconnect: Boolean) {
         heartbeatJob?.cancel()
+        sendJob?.cancel()
+        sendJob = null
+        while (sendChannel.tryReceive().isSuccess) {}
         try {
             ioJob?.cancel()
             dataInputStream?.close()
@@ -605,6 +711,8 @@ class ConnectionManager(private val context: Context) {
             activeSocket = null
             dataInputStream = null
             dataOutputStream = null
+            currentPeerId = null
+            currentPeerName = null
             if (disableAutoReconnect || !autoReconnect) {
                 state = ConnectionState.Disconnected
             }

@@ -42,6 +42,9 @@ public class ClipboardManager {
     private var sequenceNumber: Int = 0
     private var connectionManager: ConnectionManager?
     
+    private var appActivationObserver: NSObjectProtocol?
+    private var idleCheckCount: Int = 0
+    
     public init() {
         self.lastChangeCount = pasteboard.changeCount
     }
@@ -51,25 +54,66 @@ public class ClipboardManager {
     }
     
     private func startMonitoring() {
-        guard timer == nil else { return }
         self.lastChangeCount = pasteboard.changeCount
         
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            // Check every 300ms for low-latency real-time sync
-            self.timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+        // 1. Event-driven observer: check clipboard immediately whenever user switches applications
+        if appActivationObserver == nil {
+            appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.idleCheckCount = 0
+                self?.scheduleAdaptiveTimer(fast: true)
                 self?.checkForChanges()
             }
         }
+
+        // 2. Schedule adaptive timer
+        scheduleAdaptiveTimer(fast: true)
     }
     
     private func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        if let observer = appActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            appActivationObserver = nil
+        }
+    }
+
+    private func scheduleAdaptiveTimer(fast: Bool) {
+        timer?.invalidate()
+        let interval: TimeInterval = fast ? 1.0 : 3.0
+        let tolerance: TimeInterval = fast ? 0.3 : 0.8
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.direction == .sendOnly || self.direction == .bidirectional else { return }
+            let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                let hadChange = self.checkForChanges()
+                if hadChange {
+                    self.idleCheckCount = 0
+                    if !fast {
+                        self.scheduleAdaptiveTimer(fast: true)
+                    }
+                } else {
+                    self.idleCheckCount += 1
+                    if fast && self.idleCheckCount > 10 {
+                        // Throttle to 3s when idle to conserve battery
+                        self.scheduleAdaptiveTimer(fast: false)
+                    }
+                }
+            }
+            t.tolerance = tolerance
+            self.timer = t
+        }
     }
     
-    private func checkForChanges() {
-        guard direction == .sendOnly || direction == .bidirectional else { return }
+    @discardableResult
+    private func checkForChanges() -> Bool {
+        guard direction == .sendOnly || direction == .bidirectional else { return false }
+        guard connectionManager?.state.isConnected == true else { return false }
         
         let currentCount = pasteboard.changeCount
         if currentCount != lastChangeCount {
@@ -79,7 +123,7 @@ public class ClipboardManager {
                 // Reject extremely large clipboard texts (> 1MB)
                 let textData = Data(text.utf8)
                 if textData.count > 1024 * 1024 {
-                    return
+                    return false
                 }
                 
                 let hash = computeHash(text)
@@ -88,9 +132,11 @@ public class ClipboardManager {
                 if hash != lastSentHash && hash != lastReceivedHash {
                     lastSentHash = hash
                     sendClipboardText(text)
+                    return true
                 }
             }
         }
+        return false
     }
     
     private func sendClipboardText(_ text: String) {

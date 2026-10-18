@@ -13,7 +13,7 @@ data class DiscoveredDevice(
     val name: String,
     val host: String,
     val port: Int,
-    val serviceInfo: NsdServiceInfo,
+    val serviceInfo: NsdServiceInfo? = null,
     val deviceId: String? = null,
     val isTrusted: Boolean = false
 )
@@ -34,6 +34,35 @@ class DiscoveryService(private val context: Context) {
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
     private val trustStore = TrustStore.getInstance(context)
     private val cryptoService = CryptoService.getInstance(context)
+    private val udpBeaconService = UdpBeaconService.getInstance(context)
+
+    init {
+        udpBeaconService.onBeaconReceived = { deviceId, deviceName, deviceType, host, port ->
+            handleUdpBeacon(deviceId, deviceName, deviceType, host, port)
+        }
+    }
+
+    private fun handleUdpBeacon(deviceId: String, deviceName: String, deviceType: String, host: String, port: Int) {
+        val isTrusted = if (deviceId.isNotBlank()) {
+            trustStore.isPairedWith(deviceId, deviceName)
+        } else {
+            trustStore.getTrustedDevices().any { it.deviceName == deviceName }
+        }
+
+        Log.d(TAG, "UDP Beacon discovered: $deviceName @ $host:$port (trusted: $isTrusted)")
+        val device = DiscoveredDevice(
+            name = deviceName,
+            host = host,
+            port = port,
+            serviceInfo = null,
+            deviceId = deviceId,
+            isTrusted = isTrusted
+        )
+        discoveredDevices[deviceName] = device
+        for (l in listeners) {
+            l.onDeviceFound(device)
+        }
+    }
 
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
@@ -100,14 +129,18 @@ class DiscoveryService(private val context: Context) {
         advertisedPort = port
         acquireMulticastLock()
 
+        val connPrefs = context.getSharedPreferences("macdroid_connection_prefs", Context.MODE_PRIVATE)
+        val currentDeviceName = connPrefs.getString("custom_device_name", null) ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+        udpBeaconService.start(cryptoService.deviceId, currentDeviceName, port)
+
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = DEFAULT_SERVICE_NAME
             serviceType = SERVICE_TYPE
             this.port = port
-            val connPrefs = context.getSharedPreferences("macdroid_connection_prefs", Context.MODE_PRIVATE)
-            val currentDeviceName = connPrefs.getString("custom_device_name", null) ?: "${Build.MANUFACTURER} ${Build.MODEL}"
             setAttribute("deviceId", cryptoService.deviceId)
             setAttribute("deviceName", currentDeviceName)
+            getLocalIpAddress()?.let { setAttribute("ip", it) }
+            setAttribute("port", "$port")
         }
 
         registrationListener = object : NsdManager.RegistrationListener {
@@ -139,6 +172,11 @@ class DiscoveryService(private val context: Context) {
     // --- Browse for other MacDroid instances (macOS) ---
 
     fun startBrowsing() {
+        val connPrefs = context.getSharedPreferences("macdroid_connection_prefs", Context.MODE_PRIVATE)
+        val currentDeviceName = connPrefs.getString("custom_device_name", null) ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+        val portToUse = if (advertisedPort > 0) advertisedPort else 52840
+        udpBeaconService.start(cryptoService.deviceId, currentDeviceName, portToUse)
+
         if (isBrowsing) return
         acquireMulticastLock()
 
@@ -197,8 +235,11 @@ class DiscoveryService(private val context: Context) {
                 }
 
                 override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                    val host = serviceInfo.host?.hostAddress ?: return
-                    val port = serviceInfo.port
+                    val resolvedHost = serviceInfo.host?.hostAddress
+                    val hostFromAttr = try { serviceInfo.attributes["ip"]?.let { String(it, Charsets.UTF_8) } } catch (e: Exception) { null }
+                    val host = if (!resolvedHost.isNullOrBlank() && resolvedHost != "0.0.0.0") resolvedHost else hostFromAttr ?: return
+                    val portFromAttr = try { serviceInfo.attributes["port"]?.let { String(it, Charsets.UTF_8).toIntOrNull() } } catch (e: Exception) { null }
+                    val port = if (serviceInfo.port > 0) serviceInfo.port else portFromAttr ?: 52840
                     val rawDeviceId = try {
                         serviceInfo.attributes["deviceId"]?.let { String(it, Charsets.UTF_8) }
                     } catch (e: Exception) { null }
@@ -229,6 +270,29 @@ class DiscoveryService(private val context: Context) {
         }
     }
 
+    fun getLocalIpAddress(): String? {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val intf = interfaces.nextElement()
+                if (intf.isLoopback || !intf.isUp) continue
+                val addrs = intf.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+                        val host = addr.hostAddress
+                        if (!host.isNullOrBlank() && host != "127.0.0.1") {
+                            return host
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+        return null
+    }
+
     fun restartBrowsing() {
         stopBrowsing()
         startBrowsing()
@@ -243,6 +307,8 @@ class DiscoveryService(private val context: Context) {
         discoveryListener = null
         isBrowsing = false
         discoveredDevices.clear()
+        releaseMulticastLock()
+        udpBeaconService.pauseBroadcasting()
     }
 
     fun stopAdvertising() {
@@ -254,11 +320,29 @@ class DiscoveryService(private val context: Context) {
         registrationListener = null
         isAdvertising = false
         releaseMulticastLock()
+        if (!isBrowsing) {
+            udpBeaconService.stop()
+        }
+    }
+
+    fun pauseForActiveConnection() {
+        udpBeaconService.pauseBroadcasting()
+        releaseMulticastLock()
+        Log.d(TAG, "Discovery & beacons paused for active connection (power-saving mode)")
+    }
+
+    fun resumeAfterDisconnect() {
+        if (isBrowsing || isAdvertising) {
+            acquireMulticastLock()
+            udpBeaconService.resumeBroadcasting(activeBurst = true)
+            Log.d(TAG, "Discovery & beacons resumed after disconnect")
+        }
     }
 
     fun stopAll() {
         stopBrowsing()
         stopAdvertising()
         releaseMulticastLock()
+        udpBeaconService.stop()
     }
 }

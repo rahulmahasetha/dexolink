@@ -236,7 +236,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
             val isMyPairedDevice = (device.deviceId != null && device.deviceId == paired.deviceId) ||
                     device.name == paired.deviceName
 
-            if (isMyPairedDevice && connectionManager.autoReconnect) {
+            if (isMyPairedDevice && connectionManager.autoReconnect && !connectionManager.userExplicitlyDisconnected) {
                 Log.d(TAG, "⚡ Automatic reconnection to paired device: ${device.name} (${device.host}:${device.port})")
                 connectionManager.connect(device.host, device.port)
             }
@@ -258,7 +258,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
     // --- Clipboard Sync ---
 
     private fun onPrimaryClipChanged() {
-        if (!connectionManager.isConnected()) return
+        if (!connectionManager.isConnected() || connectionManager.userExplicitlyDisconnected) return
         val currentText = connectionManager.clipboardManager.getCurrentClipText() ?: return
         if (currentText.isNotBlank() && connectionManager.clipboardManager.shouldSend(currentText)) {
             Log.d(TAG, "Local clipboard changed, auto-syncing to Mac (${currentText.take(30)}...)")
@@ -286,11 +286,13 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
         updateNotification(state)
 
         when (state) {
-            is ConnectionState.Authenticated -> {
-                acquireLocks()
+            is ConnectionState.Authenticated, is ConnectionState.Connected -> {
+                // Power saving: pause discovery & beacons while connected over TCP
+                discoveryService.pauseForActiveConnection()
             }
             is ConnectionState.Disconnected, is ConnectionState.Failed -> {
-                releaseLocks()
+                // Resume discovery burst if connection is lost
+                discoveryService.resumeAfterDisconnect()
             }
             else -> {}
         }
@@ -345,39 +347,9 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
     // --- Power & Wifi Locks ---
 
     private fun acquireLocks() {
-        try {
-            if (wakeLock == null) {
-                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-                wakeLock = powerManager.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK,
-                    "MacDroid::PersistentConnectionWakeLock"
-                ).apply {
-                    setReferenceCounted(false)
-                }
-            }
-            if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(12 * 60 * 60 * 1000L) // 12 hours
-                Log.d(TAG, "Acquired WakeLock for background persistence")
-            }
-
-            if (wifiLock == null) {
-                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val lockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-                } else {
-                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
-                }
-                wifiLock = wifiManager.createWifiLock(lockMode, "MacDroid::PersistentWifiLock").apply {
-                    setReferenceCounted(false)
-                }
-            }
-            if (wifiLock?.isHeld == false) {
-                wifiLock?.acquire()
-                Log.d(TAG, "Acquired WifiLock for background persistence")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error acquiring locks: ${e.message}", e)
-        }
+        // Power-saving optimization: Idle connection relies on Android Foreground Service
+        // without holding a continuous CPU WakeLock, allowing the device to enter Doze mode.
+        // Active transfers acquire a dedicated transient WakeLock via TransferManager.
     }
 
     private fun releaseLocks() {

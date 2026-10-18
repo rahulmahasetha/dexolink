@@ -52,10 +52,12 @@ public class TrustStore {
         }
     }
 
-    public func isPaired(deviceId: String) -> Bool {
+    public func isPaired(deviceId: String, deviceName: String? = nil) -> Bool {
         return queue.sync {
             guard let paired = loadDeviceInternal() else { return false }
-            return paired.deviceId == deviceId
+            if !deviceId.isEmpty && paired.deviceId == deviceId { return true }
+            if let devName = deviceName, !devName.isEmpty && paired.deviceName == devName { return true }
+            return false
         }
     }
 

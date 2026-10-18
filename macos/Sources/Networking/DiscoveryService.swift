@@ -76,6 +76,58 @@ public class DiscoveryService {
     public init() {
         loadCachedDevices()
         ensurePairedDeviceIncluded()
+        setupUDPBeacon()
+    }
+
+    private func setupUDPBeacon() {
+        UDPBeaconService.shared.onBeaconReceived = { [weak self] deviceId, deviceName, deviceType, host, port in
+            self?.handleUDPBeacon(deviceId: deviceId, deviceName: deviceName, deviceType: deviceType, host: host, port: port)
+        }
+    }
+
+    private func handleUDPBeacon(deviceId: String, deviceName: String, deviceType: String, host: String, port: Int) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+
+            let isPaired = TrustStore.shared.isTrusted(deviceId: deviceId) ||
+                           TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == deviceName })
+            let endpoint = NWEndpoint.hostPort(host: .init(host), port: .init(integerLiteral: UInt16(port)))
+
+            if let index = self.discoveredDevices.firstIndex(where: { $0.id == deviceId || $0.name == deviceName }) {
+                var existing = self.discoveredDevices[index]
+                existing.name = deviceName
+                existing.endpoint = endpoint
+                existing.isPaired = isPaired
+                existing.isOnline = true
+                existing.lastSeen = Date()
+                existing.host = host
+                existing.port = port
+                existing.deviceType = deviceType
+                self.discoveredDevices[index] = existing
+            } else {
+                let newDevice = DiscoveredDevice(
+                    id: deviceId,
+                    name: deviceName,
+                    serviceName: nil,
+                    endpoint: endpoint,
+                    isPaired: isPaired,
+                    isOnline: true,
+                    lastSeen: Date(),
+                    host: host,
+                    port: port,
+                    deviceType: deviceType
+                )
+                self.discoveredDevices.append(newDevice)
+            }
+
+            self.ensurePairedDeviceIncluded()
+            self.persistCachedDevices()
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.updateDelegate()
+            }
+        }
     }
     
     // MARK: - Browser
@@ -104,6 +156,14 @@ public class DiscoveryService {
         }
         
         browser?.start(queue: queue)
+
+        let myName = Host.current().localizedName ?? "MacBook"
+        UDPBeaconService.shared.start(
+            deviceId: CryptoService.shared.deviceId,
+            deviceName: myName,
+            deviceType: "mac",
+            port: Int(self.listeningPort)
+        )
     }
     
     public func stopBrowsing() {
@@ -113,6 +173,8 @@ public class DiscoveryService {
             self.browser = nil
             self.isBrowsing = false
             
+            UDPBeaconService.shared.pauseBroadcasting()
+
             // Mark online devices as offline, but do NOT remove them!
             for i in 0..<self.discoveredDevices.count {
                 self.discoveredDevices[i].isOnline = false
@@ -166,6 +228,8 @@ public class DiscoveryService {
             if case .service(let name, _, _, _) = result.endpoint {
                 var deviceId = String(name.hashValue)
                 var deviceName = name
+                var host: String? = nil
+                var port: Int? = nil
                 
                 if case .bonjour(let record) = result.metadata {
                     if let id = record.dictionary["deviceId"] {
@@ -173,6 +237,12 @@ public class DiscoveryService {
                     }
                     if let devName = record.dictionary["deviceName"] {
                         deviceName = devName
+                    }
+                    if let ip = record.dictionary["ip"], !ip.isEmpty {
+                        host = ip
+                    }
+                    if let pStr = record.dictionary["port"], let p = Int(pStr), p > 0 {
+                        port = p
                     }
                 }
                 
@@ -203,6 +273,8 @@ public class DiscoveryService {
                     existing.isOnline = true
                     existing.lastSeen = Date()
                     existing.deviceType = devType
+                    if let h = host { existing.host = h }
+                    if let p = port { existing.port = p }
                     self.discoveredDevices[index] = existing
                 } else {
                     let newDevice = DiscoveredDevice(
@@ -213,6 +285,8 @@ public class DiscoveryService {
                         isPaired: isPaired,
                         isOnline: true,
                         lastSeen: Date(),
+                        host: host,
+                        port: port,
                         deviceType: devType
                     )
                     self.discoveredDevices.append(newDevice)
@@ -333,20 +407,37 @@ public class DiscoveryService {
     public func startAdvertising(port: NWEndpoint.Port = 52840) {
         do {
             let tcpOptions = NWProtocolTCP.Options()
+            tcpOptions.enableKeepalive = true
+            tcpOptions.keepaliveIdle = 15
+            tcpOptions.noDelay = true
             let parameters = NWParameters(tls: nil, tcp: tcpOptions)
             parameters.includePeerToPeer = true
             
             listener = try NWListener(using: parameters, on: port)
-            let txtRecord = NWTXTRecord([
+            var txtDict: [String: String] = [
                 "deviceId": CryptoService.shared.deviceId,
                 "deviceName": Host.current().localizedName ?? "MacBook"
-            ])
+            ]
+            if let ip = DiscoveryService.getLocalIP() {
+                txtDict["ip"] = ip
+            }
+            if port != .any {
+                txtDict["port"] = "\(port.rawValue)"
+            }
+            let txtRecord = NWTXTRecord(txtDict)
             listener?.service = NWListener.Service(type: serviceType, domain: serviceDomain, txtRecord: txtRecord)
             
             listener?.stateUpdateHandler = { [weak self] state in
                 if case .ready = state, let rawPort = self?.listener?.port?.rawValue {
                     self?.listeningPort = rawPort
                     print("📡 MacDroid listening on port \(rawPort)")
+                    let myName = Host.current().localizedName ?? "MacBook"
+                    UDPBeaconService.shared.start(
+                        deviceId: CryptoService.shared.deviceId,
+                        deviceName: myName,
+                        deviceType: "mac",
+                        port: Int(rawPort)
+                    )
                 }
             }
             
@@ -364,9 +455,47 @@ public class DiscoveryService {
         }
     }
     
+    public static func getLocalIP() -> String? {
+        var address: String?
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let interface = ptr.pointee
+            let addrFamily = interface.ifa_addr.pointee.sa_family
+            if addrFamily == UInt8(AF_INET) {
+                let flags = Int32(interface.ifa_flags)
+                let isUp = (flags & IFF_UP) == IFF_UP
+                let isLoopback = (flags & IFF_LOOPBACK) == IFF_LOOPBACK
+                if isUp && !isLoopback {
+                    let name = String(cString: interface.ifa_name)
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    if getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                                   &hostname, socklen_t(hostname.count),
+                                   nil, socklen_t(0), NI_NUMERICHOST) == 0 {
+                        let ip = String(cString: hostname)
+                        if !ip.isEmpty && ip != "127.0.0.1" {
+                            if name.hasPrefix("en") {
+                                return ip // Prefer active Wi-Fi or Ethernet
+                            }
+                            if address == nil {
+                                address = ip
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return address
+    }
+    
     public func stopAdvertising() {
         listener?.cancel()
         listener = nil
+        if !isBrowsing {
+            UDPBeaconService.shared.stop()
+        }
     }
     
     private func handleNewConnection(_ connection: NWConnection) {

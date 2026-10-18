@@ -41,16 +41,19 @@ public class ConnectionManager {
         }
     }
     
+    public private(set) var isIncoming: Bool = false
     private var buffer = Data()
     
     public init() {}
     
     public func connect(to endpoint: NWEndpoint) {
+        isIncoming = false
         state = .connecting
         
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.enableKeepalive = true
         tcpOptions.keepaliveIdle = 15
+        tcpOptions.noDelay = true
         
         let parameters = NWParameters(tls: nil, tcp: tcpOptions)
         parameters.includePeerToPeer = true
@@ -67,6 +70,7 @@ public class ConnectionManager {
     
     public func accept(connection: NWConnection) {
         self.connection = connection
+        isIncoming = true
         state = .connecting
         
         connection.stateUpdateHandler = { [weak self] newState in

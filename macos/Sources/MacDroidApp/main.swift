@@ -63,6 +63,13 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
 
         print("✅ MacDroid is running in the menu bar!")
         print("   Click the antenna icon (⌘) in your menu bar to open.")
+
+        // Automatically open the popover on launch so the user sees the interface immediately
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, let button = self.statusItem.button else { return }
+            self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            self.popover.contentViewController?.view.window?.makeKey()
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
@@ -125,6 +132,7 @@ class AppState: ObservableObject {
     @Published var discoveredDevices: [DiscoveredDevice] = []
     @Published var connectionState: ConnectionState = .disconnected
     @Published var connectedDeviceName: String? = nil
+    @Published var connectedDeviceId: String? = nil
     @Published var pairingPin: String? = nil
     @Published var incomingPairingRequest: PairingRequestInfo? = nil
     @Published var lastPingLatencyMs: Int? = nil
@@ -133,6 +141,7 @@ class AppState: ObservableObject {
     @Published var lastSyncedClipboardSnippet: String? = nil
     @Published var activeTransfer: TransferItem? = nil
     @Published var recentTransfers: [TransferItem] = []
+    @Published var userExplicitlyDisconnected: Bool = false
 
     private var pingStartTime: Date?
     private var activeScanTimer: Timer?
@@ -155,11 +164,12 @@ class AppState: ObservableObject {
         // Start discovery with an active scanning window
         startDiscovery(showActiveIndicator: true)
 
-        // Periodic background availability refresh (every 30 seconds)
+        // Periodic background availability refresh (every 30 seconds with 5s tolerance to coalesce CPU wakeups)
         backgroundAvailabilityTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.discoveryEnabled else { return }
+            guard let self = self, self.discoveryEnabled, !self.connectionState.isConnected else { return }
             self.discoveryService.refreshDeviceAvailability()
         }
+        backgroundAvailabilityTimer?.tolerance = 5.0
 
         print("📡 Discovery started on \(localIP):\(discoveryService.listeningPort)...")
     }
@@ -176,12 +186,14 @@ class AppState: ObservableObject {
             }
         }
         discoveryService.startBrowsing()
+        UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
         isDiscovering = true
         statusMessage = "Discovery enabled"
     }
 
     func stopDiscovery() {
         discoveryService.stopBrowsing()
+        UDPBeaconService.shared.pauseBroadcasting()
         isDiscovering = false
         isActivelyScanning = false
         activeScanTimer?.invalidate()
@@ -212,6 +224,7 @@ class AppState: ObservableObject {
             }
         }
         discoveryService.refreshBrowsing()
+        UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
         print("🔄 Manual discovery rescan initiated")
     }
 
@@ -251,12 +264,13 @@ class AppState: ObservableObject {
     }
 
     func connect(to device: DiscoveredDevice) {
+        userExplicitlyDisconnected = false
         print("🔗 Connecting to \(device.name)...")
         statusMessage = "Connecting to \(device.name)..."
-        if let endpoint = device.endpoint {
-            connectionManager.connect(to: endpoint)
-        } else if let host = device.host, let port = device.port {
+        if let host = device.host, let port = device.port, !host.isEmpty, port > 0 {
             connectDirect(host: host, port: port)
+        } else if let endpoint = device.endpoint {
+            connectionManager.connect(to: endpoint)
         } else {
             let sName = device.serviceName ?? device.name
             let ep = NWEndpoint.service(name: sName, type: "_macdroid._tcp", domain: "local.", interface: nil)
@@ -266,18 +280,26 @@ class AppState: ObservableObject {
 
     func disconnect() {
         print("🔌 Disconnecting...")
+        userExplicitlyDisconnected = true
+        clipboardManager.direction = .disabled
+        transferManager.cancelAll()
         connectionManager.disconnect()
         connectedDeviceName = nil
+        connectedDeviceId = nil
         statusMessage = "Disconnected"
     }
 
     func unpair() {
         let pairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? (connectedDeviceName ?? "Device")
         print("🗑️ Unpairing from \(pairedName)...")
+        userExplicitlyDisconnected = true
+        clipboardManager.direction = .disabled
+        transferManager.cancelAll()
         connectionManager.send(message: .unpair)
         TrustStore.shared.unpairDevice()
         connectionManager.disconnect()
         connectedDeviceName = nil
+        connectedDeviceId = nil
         pairingPin = nil
         statusMessage = "Unpaired from \(pairedName)"
     }
@@ -301,6 +323,7 @@ class AppState: ObservableObject {
     }
 
     func connectDirect(host: String, port: Int) {
+        userExplicitlyDisconnected = false
         print("🔗 Connecting directly to \(host):\(port)...")
         statusMessage = "Connecting to \(host):\(port)..."
         connectionManager.connect(to: .hostPort(host: .init(host), port: .init(integerLiteral: UInt16(port))))
@@ -312,6 +335,10 @@ class AppState: ObservableObject {
 
     func cancelTransfer(id: String) {
         transferManager.cancelTransfer(id: id)
+    }
+
+    func resumeTransfer(id: String) {
+        transferManager.resumeTransfer(id: id)
     }
 
     func acceptIncomingPairing() {
@@ -357,8 +384,8 @@ extension AppState: DiscoveryServiceDelegate {
             let myName = Host.current().localizedName ?? "MacBook"
             self.discoveredDevices = devices.filter { !$0.name.contains(myName) }
 
-            // Strict 1-device policy: only auto-connect if discovery is enabled, currently disconnected, and device is online!
-            if self.discoveryEnabled, case .disconnected = self.connectionState {
+            // Strict 1-device policy: only auto-connect if discovery is enabled, NOT explicitly disconnected, currently disconnected, and device is online!
+            if self.discoveryEnabled, !self.userExplicitlyDisconnected, case .disconnected = self.connectionState {
                 if let paired = TrustStore.shared.getPairedDevice(),
                    let matched = self.discoveredDevices.first(where: { ($0.id == paired.deviceId || $0.name == paired.deviceName) && $0.isOnline }) {
                     print("🔄 Discovered paired online device: \(matched.name), auto-connecting...")
@@ -369,6 +396,11 @@ extension AppState: DiscoveryServiceDelegate {
     }
 
     func discoveryService(_ service: DiscoveryService, didReceiveIncomingConnection connection: NWConnection) {
+        if self.userExplicitlyDisconnected {
+            print("⛔ Rejecting incoming connection because user explicitly disconnected")
+            connection.cancel()
+            return
+        }
         print("📲 Accepting incoming connection from: \(connection.endpoint)")
         connectionManager.accept(connection: connection)
     }
@@ -388,31 +420,39 @@ extension AppState: ConnectionManagerDelegate {
             case .authenticated:
                 self.clipboardManager.direction = .bidirectional
                 self.statusMessage = "Connected to \(self.connectedDeviceName ?? "Device") (Paired)"
-                // Automatically stop discovery and scanning once connected & authenticated!
+                // Automatically stop discovery, beacons, and scanning once connected & authenticated to save battery
                 self.discoveryService.stopBrowsing()
+                UDPBeaconService.shared.pauseBroadcasting()
                 self.isActivelyScanning = false
             case .transferring:
                 self.statusMessage = "Transferring..."
             case .disconnected:
                 self.connectedDeviceName = nil
+                self.connectedDeviceId = nil
                 self.pairingPin = nil
                 self.incomingPairingRequest = nil
                 self.statusMessage = "Disconnected"
                 self.clipboardManager.direction = .disabled
-                // If discovery is enabled and not paired, continue scanning until pairing succeeds or user clicks Stop!
-                if self.discoveryEnabled && !TrustStore.shared.hasPairedDevice() {
-                    self.discoveryService.startBrowsing()
-                    self.isActivelyScanning = true
+                // If discovery is enabled, resume beacons and browsing
+                if self.discoveryEnabled {
+                    UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
+                    if !TrustStore.shared.hasPairedDevice() {
+                        self.discoveryService.startBrowsing()
+                        self.isActivelyScanning = true
+                    }
                 }
             case .failed(let err):
+                self.connectedDeviceId = nil
                 self.pairingPin = nil
                 self.incomingPairingRequest = nil
                 self.statusMessage = "Connection failed: \(err.localizedDescription)"
                 self.clipboardManager.direction = .disabled
-                // If discovery is enabled and not paired, continue scanning until pairing succeeds or user clicks Stop!
-                if self.discoveryEnabled && !TrustStore.shared.hasPairedDevice() {
-                    self.discoveryService.startBrowsing()
-                    self.isActivelyScanning = true
+                if self.discoveryEnabled {
+                    UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
+                    if !TrustStore.shared.hasPairedDevice() {
+                        self.discoveryService.startBrowsing()
+                        self.isActivelyScanning = true
+                    }
                 }
             case .connecting:
                 self.statusMessage = "Connecting..."
@@ -430,9 +470,9 @@ extension AppState: ConnectionManagerDelegate {
         switch message {
         case let .hello(_, deviceId, deviceName):
             self.connectedDeviceName = deviceName
+            self.connectedDeviceId = deviceId
             let myName = Host.current().localizedName ?? "MacBook"
-            let isTrusted = TrustStore.shared.isPaired(deviceId: deviceId) ||
-                            (TrustStore.shared.getPairedDevice()?.deviceName == deviceName)
+            let isTrusted = TrustStore.shared.isPaired(deviceId: deviceId, deviceName: deviceName)
 
             if isTrusted {
                 self.statusMessage = "Paired with \(deviceName) (Trusted) • Syncing"
@@ -457,23 +497,16 @@ extension AppState: ConnectionManagerDelegate {
                     paired: false
                 )
                 self.connectionManager.send(message: ack)
-                // Strict 1-device policy & discoveryEnabled check:
-                if !self.discoveryEnabled {
-                    print("🔇 Discovery is stopped: Suppressing new device pairing request from \(deviceName)")
-                } else if !TrustStore.shared.hasPairedDevice() {
-                    self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
-                    print("🔐 Hello received from unpaired device \(deviceName) — sent HelloAck(paired: false) & PairRequest")
-                } else {
-                    print("ℹ️ Hello from \(deviceName), but Mac is already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? ""). Awaiting manual action.")
-                }
+                print("🤝 Sent HelloAck(paired: false) to \(deviceName)")
             }
 
         case let .helloAck(_, deviceId, deviceName, paired):
             self.connectedDeviceName = deviceName
+            self.connectedDeviceId = deviceId
             if paired {
                 self.statusMessage = "Connected to \(deviceName) • Syncing"
                 self.clipboardManager.direction = .bidirectional
-                if !TrustStore.shared.isPaired(deviceId: deviceId) {
+                if !TrustStore.shared.isPaired(deviceId: deviceId, deviceName: deviceName) {
                     TrustStore.shared.setPairedDevice(
                         TrustedDevice(deviceId: deviceId, deviceName: deviceName, publicKeyBase64: "", pairedAt: Date())
                     )
@@ -482,19 +515,24 @@ extension AppState: ConnectionManagerDelegate {
                 self.isActivelyScanning = false
                 print("🤝 HelloAck(paired: true) received from \(deviceName)")
             } else {
-                if !self.discoveryEnabled {
-                    print("🔇 Discovery is stopped: Suppressing pair request to \(deviceName)")
-                } else if !TrustStore.shared.hasPairedDevice() {
-                    self.statusMessage = "Pairing with \(deviceName)..."
-                    self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
-                    print("🔐 HelloAck(paired: false) received from \(deviceName) — initiated PairRequest")
+                if !self.connectionManager.isIncoming {
+                    if !self.discoveryEnabled {
+                        print("🔇 Discovery is stopped: Suppressing pair request to \(deviceName)")
+                    } else if !TrustStore.shared.hasPairedDevice() {
+                        self.statusMessage = "Pairing request sent to \(deviceName)..."
+                        self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
+                        print("🔐 HelloAck(paired: false) received from \(deviceName) — Mac initiated PairRequest")
+                    } else {
+                        print("ℹ️ Cannot pair with \(deviceName): Already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? "")")
+                    }
                 } else {
-                    print("ℹ️ Cannot pair with \(deviceName): Already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? "")")
+                    print("ℹ️ Received HelloAck as receiver from \(deviceName) — awaiting incoming PairRequest")
                 }
             }
 
         case let .pairRequest(publicKey):
             let peerName = self.connectedDeviceName ?? "Device"
+            let peerId = self.connectedDeviceId ?? peerName
 
             // 1. If discovery is stopped, suppress notifications and reject:
             if !self.discoveryEnabled {
@@ -509,7 +547,7 @@ extension AppState: ConnectionManagerDelegate {
             }
 
             // 2. Strict 1-device policy: check if Mac is already paired with another device
-            if let paired = TrustStore.shared.getPairedDevice(), paired.deviceName != peerName {
+            if let paired = TrustStore.shared.getPairedDevice(), paired.deviceName != peerName && paired.deviceId != peerId {
                 print("⛔ Pairing request from \(peerName) rejected: Mac already paired with \(paired.deviceName)")
                 self.connectionManager.send(message: .pairResponse(
                     accepted: false,
@@ -520,7 +558,7 @@ extension AppState: ConnectionManagerDelegate {
                 return
             }
 
-            self.pairingManager.initiatePairing(peerId: peerName, peerName: peerName, peerKeyBase64: publicKey)
+            self.pairingManager.initiatePairing(peerId: peerId, peerName: peerName, peerKeyBase64: publicKey)
             var pin = ""
             if case .waitingForPin(let p) = self.pairingManager.state {
                 pin = p
@@ -542,8 +580,9 @@ extension AppState: ConnectionManagerDelegate {
 
         case let .pairResponse(accepted, publicKey, reason):
             let peerName = self.connectedDeviceName ?? "Device"
+            let peerId = self.connectedDeviceId ?? peerName
             if accepted {
-                self.pairingManager.initiatePairing(peerId: peerName, peerName: peerName, peerKeyBase64: publicKey)
+                self.pairingManager.initiatePairing(peerId: peerId, peerName: peerName, peerKeyBase64: publicKey)
                 self.pairingManager.confirmPairing()
                 self.pairingPin = nil
                 self.clipboardManager.direction = .bidirectional
@@ -570,6 +609,9 @@ extension AppState: ConnectionManagerDelegate {
         case .unpair:
             let peer = self.connectedDeviceName ?? "Device"
             print("🗑️ Peer \(peer) requested unpair")
+            self.userExplicitlyDisconnected = true
+            self.clipboardManager.direction = .disabled
+            self.transferManager.cancelAll()
             TrustStore.shared.unpairDevice()
             self.connectionManager.disconnect()
             self.connectedDeviceName = nil
@@ -578,7 +620,6 @@ extension AppState: ConnectionManagerDelegate {
 
             case .ping:
                 self.connectionManager.send(message: .pong)
-                print("🏓 Ping received — sent Pong")
 
             case .pong:
                 if let start = self.pingStartTime {

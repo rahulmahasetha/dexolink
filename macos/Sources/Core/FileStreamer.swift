@@ -10,7 +10,7 @@ public enum FileStreamerError: Error {
 }
 
 public class FileStreamer {
-    public static let chunkSize: Int = 64 * 1024 // 64 KB
+    public static let chunkSize: Int = 512 * 1024 // 512 KB high-throughput streaming
     
     // MARK: - Sender Side
     
