@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val lastPingLatency = mutableStateOf<Long?>(null)
     private val localDeviceName = mutableStateOf("")
     private val isDiscoveryScanning = mutableStateOf(true)
+    private var isManualPingRequested = false
 
     // File Sharing state
     private val activeTransfers = mutableStateListOf<TransferItem>()
@@ -204,6 +205,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                         connectionManager.rejectPairing()
                     },
                     onSendPing = {
+                        isManualPingRequested = true
                         connectionManager.sendPing()
                     },
                     onCheckClipboard = {
@@ -508,7 +510,10 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
             val latency = connectionManager.lastPingLatency
             runOnUiThread {
                 lastPingLatency.value = latency
-                Toast.makeText(this, "Pong reply: ${latency ?: 0}ms 🚀", Toast.LENGTH_SHORT).show()
+                if (isManualPingRequested) {
+                    isManualPingRequested = false
+                    Toast.makeText(this, "Pong reply: ${latency ?: 0}ms 🚀", Toast.LENGTH_SHORT).show()
+                }
             }
         } else if (message is ClipboardPushMessage) {
             lastSyncedSnippet.value = message.content
