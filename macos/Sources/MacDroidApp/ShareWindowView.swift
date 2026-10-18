@@ -4,6 +4,43 @@ import Core
 import Networking
 import Crypto
 
+// MARK: - Native macOS Share Service Picker Button
+
+struct SystemSharePickerButton: NSViewRepresentable {
+    let items: [Any]
+    let label: String
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: label, target: context.coordinator, action: #selector(Coordinator.handleClick(_:)))
+        button.bezelStyle = .rounded
+        button.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.font = .systemFont(ofSize: 11, weight: .semibold)
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        nsView.title = label
+        context.coordinator.items = items
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(items: items)
+    }
+
+    class Coordinator: NSObject, NSSharingServicePickerDelegate {
+        var items: [Any]
+        init(items: [Any]) { self.items = items }
+
+        @objc func handleClick(_ sender: NSButton) {
+            guard !items.isEmpty else { return }
+            let picker = NSSharingServicePicker(items: items)
+            picker.delegate = self
+            picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        }
+    }
+}
+
 // MARK: - Share Window Controller
 
 class ShareWindowController: NSWindowController {
@@ -17,12 +54,12 @@ class ShareWindowController: NSWindowController {
             }
 
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 440, height: 420),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "Share with DexoLink"
+            window.title = "Share Content • DexoLink & macOS"
             window.center()
             window.isReleasedWhenClosed = false
             window.level = .floating
@@ -62,6 +99,20 @@ struct ShareWindowView: View {
         appState.connectionState.isConnected
     }
 
+    private var shareItems: [Any] {
+        if !urls.isEmpty {
+            return urls
+        } else if let text = text, !text.isEmpty {
+            return [text]
+        }
+        return []
+    }
+
+    private var availableServices: [NSSharingService] {
+        guard !shareItems.isEmpty else { return [] }
+        return NSSharingService.sharingServices(forItems: shareItems)
+    }
+
     private var totalBytes: Int64 {
         urls.reduce(0) { total, url in
             if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -73,18 +124,18 @@ struct ShareWindowView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // 1. Header
             HStack(spacing: 10) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 22, weight: .bold))
+                Image(systemName: "square.and.arrow.up.circle.fill")
+                    .font(.system(size: 24, weight: .bold))
                     .foregroundColor(.blue)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("DexoLink Share")
+                    Text("Share Content")
                         .font(.headline)
                         .fontWeight(.bold)
-                    Text("Direct high-speed local transfer • Encrypted")
+                    Text("Direct transfer to Android or share via any macOS service")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -101,81 +152,11 @@ struct ShareWindowView: View {
 
             Divider()
 
-            // 2. Destination Device Card
-            if let paired = pairedDevice {
-                HStack(spacing: 12) {
-                    Image(systemName: "iphone.gen3")
-                        .font(.system(size: 28))
-                        .foregroundColor(.blue)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(paired.deviceName)
-                                .font(.system(size: 13, weight: .bold))
-                            Text("Android")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(4)
-                        }
-
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(isConnected ? Color.green : Color.red)
-                                .frame(width: 7, height: 7)
-
-                            Text(isConnected ? "Connected • Ready to receive" : "Disconnected • Phone is offline")
-                                .font(.caption2)
-                                .foregroundColor(isConnected ? .green : .red)
-                                .fontWeight(.medium)
-                        }
-                    }
-
-                    Spacer()
-
-                    if !isConnected {
-                        Button("Reconnect") {
-                            reconnect()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                        .tint(.blue)
-                    }
-                }
-                .padding(10)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(10)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(isConnected ? Color.blue.opacity(0.2) : Color.red.opacity(0.2), lineWidth: 1)
-                )
-            } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "lock.slash.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(.red)
-                    Text("No Paired Android Device")
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .foregroundColor(.red)
-                    Text("DexoLink requires an authorized paired device before sharing.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity)
-                .background(Color.red.opacity(0.08))
-                .cornerRadius(10)
-            }
-
-            // 3. Content to Share
+            // 2. Selected Content Summary
             if !urls.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("\(urls.count) item\(urls.count > 1 ? "s" : "") to send")
+                        Text("\(urls.count) item\(urls.count > 1 ? "s" : "") selected")
                             .font(.caption)
                             .fontWeight(.bold)
                             .foregroundColor(.secondary)
@@ -212,11 +193,11 @@ struct ShareWindowView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 120)
+                    .frame(maxHeight: 85)
                 }
-                .padding(10)
+                .padding(8)
                 .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
-                .cornerRadius(10)
+                .cornerRadius(8)
             } else if let text = text, !text.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Text / URL to Send:")
@@ -226,16 +207,168 @@ struct ShareWindowView: View {
 
                     Text(text)
                         .font(.caption)
-                        .lineLimit(4)
+                        .lineLimit(3)
                         .foregroundColor(.primary)
                 }
-                .padding(10)
+                .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.blue.opacity(0.08))
                 .cornerRadius(8)
             }
 
-            // 4. Progress or Status Banner
+            // 3. DexoLink Direct Transfer Card (Paired Android Device)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .foregroundColor(.blue)
+                        .font(.caption)
+                    Text("DexoLink Direct Transfer (Android)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    Spacer()
+                }
+
+                if let paired = pairedDevice {
+                    HStack(spacing: 12) {
+                        Image(systemName: "iphone.gen3")
+                            .font(.system(size: 26))
+                            .foregroundColor(.blue)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(paired.deviceName)
+                                    .font(.system(size: 13, weight: .bold))
+                                Text("Android")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Color.secondary.opacity(0.12))
+                                    .cornerRadius(4)
+                            }
+
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(isConnected ? Color.green : Color.red)
+                                    .frame(width: 7, height: 7)
+
+                                Text(isConnected ? "Connected • Ready to receive" : "Disconnected • Phone is offline")
+                                    .font(.caption2)
+                                    .foregroundColor(isConnected ? .green : .red)
+                                    .fontWeight(.medium)
+                            }
+                        }
+
+                        Spacer()
+
+                        if isConnected {
+                            Button(action: sendContent) {
+                                HStack(spacing: 4) {
+                                    Text("Send to Phone")
+                                    Image(systemName: "paperplane.fill")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(.blue)
+                            .disabled(isSending || isComplete || (urls.isEmpty && (text == nil || text!.isEmpty)))
+                        } else {
+                            Button("Reconnect") {
+                                reconnect()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.blue)
+                        }
+                    }
+                    .padding(8)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isConnected ? Color.blue.opacity(0.25) : Color.red.opacity(0.25), lineWidth: 1)
+                    )
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.slash.fill")
+                            .foregroundColor(.red)
+                        Text("No paired Android phone. Pair first from DexoLink menu.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding(8)
+                    .background(Color.red.opacity(0.06))
+                    .cornerRadius(8)
+                }
+            }
+
+            // 4. All macOS System Share Options (AirDrop, Messages, Mail, Notes...)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "applelogo")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    Text("All macOS Sharing Options")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    Spacer()
+                }
+
+                // Quick buttons for AirDrop, Messages, Mail, Notes
+                HStack(spacing: 8) {
+                    ShareServiceChip(
+                        title: "AirDrop",
+                        systemIcon: "airplayaudio",
+                        color: .blue,
+                        services: availableServices,
+                        items: shareItems,
+                        onTriggered: onDismiss
+                    )
+
+                    ShareServiceChip(
+                        title: "Messages",
+                        systemIcon: "message.fill",
+                        color: .green,
+                        services: availableServices,
+                        items: shareItems,
+                        onTriggered: onDismiss
+                    )
+
+                    ShareServiceChip(
+                        title: "Mail",
+                        systemIcon: "envelope.fill",
+                        color: .blue,
+                        services: availableServices,
+                        items: shareItems,
+                        onTriggered: onDismiss
+                    )
+
+                    ShareServiceChip(
+                        title: "Notes",
+                        systemIcon: "note.text",
+                        color: .yellow,
+                        services: availableServices,
+                        items: shareItems,
+                        onTriggered: onDismiss
+                    )
+                }
+
+                // Complete System Share Picker Button
+                HStack {
+                    SystemSharePickerButton(items: shareItems, label: "More macOS Share Options (Freeform, Reminders, Copy...)")
+                        .frame(height: 28)
+                    Spacer()
+                }
+                .padding(.top, 2)
+            }
+            .padding(8)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+            .cornerRadius(8)
+
+            // 5. Active Transfer Progress or Status Banner
             if let active = appState.activeTransfer, isSending {
                 VStack(spacing: 5) {
                     HStack {
@@ -306,39 +439,18 @@ struct ShareWindowView: View {
 
             Spacer()
 
-            // 5. Actions Footer
-            HStack(spacing: 12) {
-                Button("Cancel") {
+            // 6. Dismiss Footer
+            HStack {
+                Spacer()
+                Button("Close") {
                     onDismiss()
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.regular)
-
-                Spacer()
-
-                if isConnected {
-                    Button(action: sendContent) {
-                        HStack(spacing: 5) {
-                            Text("Send to \(pairedDevice?.deviceName ?? "Phone")")
-                            Image(systemName: "paperplane.fill")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .tint(.blue)
-                    .disabled(isSending || isComplete || (urls.isEmpty && (text == nil || text!.isEmpty)))
-                } else if pairedDevice != nil {
-                    Button("Reconnect to Send") {
-                        reconnect()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .tint(.blue)
-                }
+                .controlSize(.small)
             }
         }
-        .padding(18)
-        .frame(width: 440, height: 400)
+        .padding(14)
+        .frame(width: 460, height: 500)
     }
 
     private func sendContent() {
@@ -435,5 +547,51 @@ struct ShareWindowView: View {
         default:
             return "doc"
         }
+    }
+}
+
+// MARK: - Share Service Chip
+
+struct ShareServiceChip: View {
+    let title: String
+    let systemIcon: String
+    let color: Color
+    let services: [NSSharingService]
+    let items: [Any]
+    let onTriggered: () -> Void
+
+    private var matchingService: NSSharingService? {
+        services.first(where: { $0.title.localizedCaseInsensitiveContains(title) })
+    }
+
+    var body: some View {
+        Button(action: {
+            if let service = matchingService {
+                service.perform(withItems: items)
+                onTriggered()
+            } else if !items.isEmpty, let window = NSApp.keyWindow, let view = window.contentView {
+                let picker = NSSharingServicePicker(items: items)
+                picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+            }
+        }) {
+            HStack(spacing: 5) {
+                Image(systemName: systemIcon)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(color.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }

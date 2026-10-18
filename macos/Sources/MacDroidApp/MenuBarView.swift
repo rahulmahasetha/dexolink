@@ -224,14 +224,22 @@ struct MenuBarView: View {
                                     .font(.system(size: 10))
                                     .foregroundColor(.secondary)
 
-                                if isConnected {
-                                    Button("Choose File...") {
-                                        selectAndSendFile()
+                                HStack(spacing: 8) {
+                                    if isConnected {
+                                        Button("Send to Phone") {
+                                            selectAndSendFile()
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
                                     }
-                                    .buttonStyle(.borderedProminent)
+
+                                    Button("All Share Options...") {
+                                        selectAndShareWithSystem()
+                                    }
+                                    .buttonStyle(.bordered)
                                     .controlSize(.small)
-                                    .padding(.top, 2)
                                 }
+                                .padding(.top, 2)
                             }
                             .padding(.vertical, 12)
                         }
@@ -546,6 +554,17 @@ struct MenuBarView: View {
             for url in panel.urls {
                 appState.sendFile(url: url)
             }
+        }
+    }
+
+    private func selectAndShareWithSystem() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Share"
+        if panel.runModal() == .OK, !panel.urls.isEmpty {
+            ShareWindowController.present(appState: appState, urls: panel.urls, text: nil)
         }
     }
 
