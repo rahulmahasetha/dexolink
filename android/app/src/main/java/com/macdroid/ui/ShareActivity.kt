@@ -571,6 +571,94 @@ fun ShareDialogContent(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        // 4b. All Android Sharing Options
+        val context = androidx.compose.ui.platform.LocalContext.current
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFFF8FAFC))
+                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+                .padding(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🌐", fontSize = 14.sp)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    "All Android Sharing Options",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = Color(0xFF1E293B)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Quick App Chips
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AndroidShareAppChip(
+                    label = "Quick Share",
+                    icon = "⚡",
+                    color = Color(0xFF0066FF),
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        shareToSystemChooser(context, sharedUris, sharedText, null)
+                    }
+                )
+                AndroidShareAppChip(
+                    label = "WhatsApp",
+                    icon = "💬",
+                    color = Color(0xFF25D366),
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        shareToSystemChooser(context, sharedUris, sharedText, "com.whatsapp")
+                    }
+                )
+                AndroidShareAppChip(
+                    label = "Gmail",
+                    icon = "✉️",
+                    color = Color(0xFFEA4335),
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        shareToSystemChooser(context, sharedUris, sharedText, "com.google.android.gm")
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // More Android Share Options Button
+            OutlinedButton(
+                onClick = {
+                    shareToSystemChooser(context, sharedUris, sharedText, null)
+                },
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("📤", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "More Android Share Options (Drive, Bluetooth, Copy...)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF334155)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
         // 5. Active Transfer Progress Bar or Error message
         if (isTransferring) {
             Column(
@@ -703,5 +791,100 @@ fun ShareDialogContent(
                 }
             }
         }
+    }
+}
+
+// -------------------------------------------------------------
+// Helper UI & System Share Functions
+// -------------------------------------------------------------
+
+@Composable
+fun AndroidShareAppChip(
+    label: String,
+    icon: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(color.copy(alpha = 0.08f))
+            .border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(icon, fontSize = 15.sp)
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+fun shareToSystemChooser(
+    context: android.content.Context,
+    uris: List<Uri>,
+    text: String?,
+    targetPackage: String? = null
+) {
+    try {
+        val intent = when {
+            uris.size > 1 -> {
+                Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                    type = "*/*"
+                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    if (!text.isNullOrBlank()) {
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                }
+            }
+            uris.size == 1 -> {
+                val uri = uris.first()
+                val mimeType = context.contentResolver.getType(uri) ?: "*/*"
+                Intent(Intent.ACTION_SEND).apply {
+                    type = mimeType
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    if (!text.isNullOrBlank()) {
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                }
+            }
+            !text.isNullOrBlank() -> {
+                Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+            }
+            else -> return
+        }
+
+        if (targetPackage != null) {
+            intent.setPackage(targetPackage)
+            try {
+                context.startActivity(intent)
+                return
+            } catch (e: Exception) {
+                // package not installed, fall back to chooser
+            }
+        }
+
+        val chooser = Intent.createChooser(intent, "Share with").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Unable to open share menu: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
     }
 }

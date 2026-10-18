@@ -2434,7 +2434,7 @@ fun FilesTabContent(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Share", color = Color(0xFF0F172A)) },
+                                        text = { Text("Share with All Apps...", color = Color(0xFF0F172A)) },
                                         onClick = {
                                             showItemMenu = false
                                             onShareFile(file)
@@ -2882,7 +2882,7 @@ fun TransfersTabContent(
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("Share File", color = Color(0xFF0F172A)) },
+                                            text = { Text("Share with All Apps...", color = Color(0xFF0F172A)) },
                                             onClick = {
                                                 showItemMenu = false
                                                 onShareFile(localFile)
