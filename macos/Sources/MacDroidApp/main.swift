@@ -55,7 +55,7 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
 
         // Create the popover that shows our SwiftUI view
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 340, height: 500)
+        popover.contentSize = NSSize(width: 360, height: 520)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
             rootView: MenuBarView(appState: appState)
@@ -231,6 +231,8 @@ class AppState: ObservableObject {
     private var pingStartTime: Date?
     private var activeScanTimer: Timer?
     private var backgroundAvailabilityTimer: Timer?
+    private var heartbeatTimer: Timer?
+    private var lastDataActivityTimestamp = Date()
 
     init() {
         self.transferManager = TransferManager(connectionManager: connectionManager)
@@ -348,7 +350,34 @@ class AppState: ObservableObject {
         return address
     }
 
+    func startHeartbeat() {
+        stopHeartbeat()
+        lastDataActivityTimestamp = Date()
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.connectionState.isConnected else { return }
+            let idle = Date().timeIntervalSince(self.lastDataActivityTimestamp)
+            if idle >= 45.0 {
+                print("⚠️ No data or heartbeat received for 45s. Disconnecting stale connection...")
+                self.connectionManager.disconnect()
+            } else if idle >= 15.0 {
+                self.pingStartTime = Date()
+                self.connectionManager.send(message: .ping)
+                print("⚡ Heartbeat PING sent from macOS (idle: \(Int(idle))s)")
+            }
+        }
+        heartbeatTimer?.tolerance = 2.0
+    }
+
+    func stopHeartbeat() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+    }
+
     func connect(to device: DiscoveredDevice) {
+        if self.connectionState.isConnected {
+            print("ℹ️ Already connected, skipping connect to \(device.name)")
+            return
+        }
         userExplicitlyDisconnected = false
         print("🔗 Connecting to \(device.name)...")
         statusMessage = "Connecting to \(device.name)..."
@@ -365,6 +394,7 @@ class AppState: ObservableObject {
 
     func disconnect() {
         print("🔌 Disconnecting...")
+        stopHeartbeat()
         userExplicitlyDisconnected = true
         clipboardManager.direction = .disabled
         transferManager.cancelAll()
@@ -377,6 +407,7 @@ class AppState: ObservableObject {
     func unpair() {
         let pairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? (connectedDeviceName ?? "Device")
         print("🗑️ Unpairing from \(pairedName)...")
+        stopHeartbeat()
         userExplicitlyDisconnected = true
         clipboardManager.direction = .disabled
         transferManager.cancelAll()
@@ -408,6 +439,10 @@ class AppState: ObservableObject {
     }
 
     func connectDirect(host: String, port: Int) {
+        if self.connectionState.isConnected {
+            print("ℹ️ Already connected, skipping direct connect")
+            return
+        }
         userExplicitlyDisconnected = false
         print("🔗 Connecting directly to \(host):\(port)...")
         statusMessage = "Connecting to \(host):\(port)..."
@@ -472,7 +507,7 @@ extension AppState: DiscoveryServiceDelegate {
             // Strict 1-device policy: only auto-connect if discovery is enabled, NOT explicitly disconnected, currently disconnected, and device is online!
             if self.discoveryEnabled, !self.userExplicitlyDisconnected, case .disconnected = self.connectionState {
                 if let paired = TrustStore.shared.getPairedDevice(),
-                   let matched = self.discoveredDevices.first(where: { ($0.id == paired.deviceId || $0.name == paired.deviceName) && $0.isOnline }) {
+                   let matched = self.discoveredDevices.first(where: { ($0.id == paired.deviceId || $0.name.caseInsensitiveCompare(paired.deviceName) == .orderedSame) && $0.isOnline }) {
                     print("🔄 Discovered paired online device: \(matched.name), auto-connecting...")
                     self.connect(to: matched)
                 }
@@ -483,6 +518,11 @@ extension AppState: DiscoveryServiceDelegate {
     func discoveryService(_ service: DiscoveryService, didReceiveIncomingConnection connection: NWConnection) {
         if self.userExplicitlyDisconnected {
             print("⛔ Rejecting incoming connection because user explicitly disconnected")
+            connection.cancel()
+            return
+        }
+        if self.connectionState.isConnected {
+            print("ℹ️ Ignoring redundant incoming connection from \(connection.endpoint) because active session is already connected")
             connection.cancel()
             return
         }
@@ -497,12 +537,14 @@ extension AppState: ConnectionManagerDelegate {
             self.connectionState = state
             switch state {
             case .connected:
+                self.startHeartbeat()
                 self.statusMessage = "Connected. Handshaking..."
                 let myName = Host.current().localizedName ?? "MacBook"
                 let hello = ProtocolMessage.hello(version: 2, deviceId: CryptoService.shared.deviceId, deviceName: myName)
                 self.connectionManager.send(message: hello)
                 self.clipboardManager.direction = .bidirectional
             case .authenticated:
+                self.startHeartbeat()
                 self.clipboardManager.direction = .bidirectional
                 self.statusMessage = "Connected to \(self.connectedDeviceName ?? "Device") (Paired)"
                 // Automatically stop discovery, beacons, and scanning once connected & authenticated to save battery
@@ -512,6 +554,7 @@ extension AppState: ConnectionManagerDelegate {
             case .transferring:
                 self.statusMessage = "Transferring..."
             case .disconnected:
+                self.stopHeartbeat()
                 self.connectedDeviceName = nil
                 self.connectedDeviceId = nil
                 self.pairingPin = nil
@@ -527,6 +570,7 @@ extension AppState: ConnectionManagerDelegate {
                     }
                 }
             case .failed(let err):
+                self.stopHeartbeat()
                 self.connectedDeviceId = nil
                 self.pairingPin = nil
                 self.incomingPairingRequest = nil
@@ -552,6 +596,7 @@ extension AppState: ConnectionManagerDelegate {
     }
 
     private func handleProtocolMessage(_ message: ProtocolMessage) {
+        self.lastDataActivityTimestamp = Date()
         switch message {
         case let .hello(_, deviceId, deviceName):
             self.connectedDeviceName = deviceName

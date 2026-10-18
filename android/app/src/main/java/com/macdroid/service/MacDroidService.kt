@@ -287,10 +287,12 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
 
         when (state) {
             is ConnectionState.Authenticated, is ConnectionState.Connected -> {
+                acquireWifiLock()
                 // Power saving: pause discovery & beacons while connected over TCP
                 discoveryService.pauseForActiveConnection()
             }
             is ConnectionState.Disconnected, is ConnectionState.Failed -> {
+                releaseLocks()
                 // Resume discovery burst if connection is lost
                 discoveryService.resumeAfterDisconnect()
             }
@@ -346,10 +348,27 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
 
     // --- Power & Wifi Locks ---
 
-    private fun acquireLocks() {
-        // Power-saving optimization: Idle connection relies on Android Foreground Service
-        // without holding a continuous CPU WakeLock, allowing the device to enter Doze mode.
-        // Active transfers acquire a dedicated transient WakeLock via TransferManager.
+    private fun acquireWifiLock() {
+        if (wifiLock == null) {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = wifiManager?.createWifiLock(mode, "DexoLink:WifiConnectionLock")?.apply {
+                setReferenceCounted(false)
+            }
+        }
+        try {
+            if (wifiLock?.isHeld == false) {
+                wifiLock?.acquire()
+                Log.d(TAG, "Acquired WifiLock for stable DexoLink connection")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire WifiLock: ${e.message}")
+        }
     }
 
     private fun releaseLocks() {

@@ -89,11 +89,14 @@ public class DiscoveryService {
         queue.async { [weak self] in
             guard let self = self else { return }
 
-            let isPaired = TrustStore.shared.isTrusted(deviceId: deviceId) ||
-                           TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == deviceName })
+            let isPaired = TrustStore.shared.isPaired(deviceId: deviceId, deviceName: deviceName)
             let endpoint = NWEndpoint.hostPort(host: .init(host), port: .init(integerLiteral: UInt16(port)))
 
-            if let index = self.discoveredDevices.firstIndex(where: { $0.id == deviceId || $0.name == deviceName }) {
+            if let index = self.discoveredDevices.firstIndex(where: {
+                $0.id == deviceId ||
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+                ($0.host != nil && $0.host == host && $0.port == port)
+            }) {
                 var existing = self.discoveredDevices[index]
                 existing.name = deviceName
                 existing.endpoint = endpoint
@@ -120,6 +123,7 @@ public class DiscoveryService {
                 self.discoveredDevices.append(newDevice)
             }
 
+            self.deduplicateDevices()
             self.ensurePairedDeviceIncluded()
             self.persistCachedDevices()
 
@@ -261,10 +265,14 @@ public class DiscoveryService {
                     devType = "android"
                 }
                 
-                let isPaired = TrustStore.shared.isTrusted(deviceId: deviceId) ||
-                               TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == deviceName })
+                let isPaired = TrustStore.shared.isPaired(deviceId: deviceId, deviceName: deviceName)
                 
-                if let index = self.discoveredDevices.firstIndex(where: { $0.id == deviceId || $0.name == deviceName || ($0.serviceName != nil && $0.serviceName == name) }) {
+                if let index = self.discoveredDevices.firstIndex(where: {
+                    $0.id == deviceId ||
+                    $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+                    ($0.serviceName != nil && $0.serviceName == name) ||
+                    (host != nil && $0.host != nil && $0.host == host && $0.port == port)
+                }) {
                     var existing = self.discoveredDevices[index]
                     existing.name = deviceName
                     existing.serviceName = name
@@ -302,6 +310,7 @@ public class DiscoveryService {
             }
         }
         
+        self.deduplicateDevices()
         self.ensurePairedDeviceIncluded()
         self.persistCachedDevices()
         
@@ -324,8 +333,7 @@ public class DiscoveryService {
         }
         
         for c in cached {
-            let isPaired = TrustStore.shared.isTrusted(deviceId: c.id) ||
-                           TrustStore.shared.getTrustedDevices().contains(where: { $0.deviceName == c.name })
+            let isPaired = TrustStore.shared.isPaired(deviceId: c.id, deviceName: c.name)
             let endpoint: NWEndpoint?
             if let host = c.host, let port = c.port {
                 endpoint = .hostPort(host: .init(host), port: .init(integerLiteral: UInt16(port)))
@@ -347,10 +355,15 @@ public class DiscoveryService {
                 port: c.port,
                 deviceType: c.deviceType
             )
-            if !discoveredDevices.contains(where: { $0.id == dev.id || $0.name == dev.name }) {
+            if !discoveredDevices.contains(where: {
+                $0.id == dev.id ||
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(dev.name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+                ($0.host != nil && dev.host != nil && $0.host == dev.host && $0.port == dev.port)
+            }) {
                 discoveredDevices.append(dev)
             }
         }
+        deduplicateDevices()
     }
     
     private func persistCachedDevices() {
@@ -385,7 +398,10 @@ public class DiscoveryService {
     
     private func ensurePairedDeviceIncluded() {
         if let paired = TrustStore.shared.getPairedDevice() {
-            if let idx = discoveredDevices.firstIndex(where: { $0.id == paired.deviceId || $0.name == paired.deviceName }) {
+            if let idx = discoveredDevices.firstIndex(where: {
+                $0.id == paired.deviceId ||
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+            }) {
                 discoveredDevices[idx].isPaired = true
             } else {
                 let pairedDev = DiscoveredDevice(
@@ -400,6 +416,68 @@ public class DiscoveryService {
                 discoveredDevices.insert(pairedDev, at: 0)
             }
         }
+        deduplicateDevices()
+    }
+
+    public func deduplicateDevices() {
+        var unique: [DiscoveredDevice] = []
+        let paired = TrustStore.shared.getPairedDevice()
+
+        for dev in discoveredDevices {
+            if let existingIdx = unique.firstIndex(where: { existing in
+                existing.id == dev.id ||
+                existing.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(dev.name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+                (existing.host != nil && dev.host != nil && existing.host == dev.host && existing.port == dev.port) ||
+                (paired != nil && (
+                    (existing.id == paired!.deviceId || existing.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame) &&
+                    (dev.id == paired!.deviceId || dev.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame)
+                ))
+            }) {
+                var existing = unique[existingIdx]
+                if dev.isOnline { existing.isOnline = true }
+                if dev.lastSeen > existing.lastSeen { existing.lastSeen = dev.lastSeen }
+                if existing.host == nil && dev.host != nil { existing.host = dev.host }
+                if existing.port == nil && dev.port != nil { existing.port = dev.port }
+                if existing.endpoint == nil && dev.endpoint != nil { existing.endpoint = dev.endpoint }
+                if dev.isPaired { existing.isPaired = true }
+                unique[existingIdx] = existing
+            } else {
+                unique.append(dev)
+            }
+        }
+
+        if let paired = paired {
+            var foundPaired = false
+            for i in 0..<unique.count {
+                let matches = unique[i].id == paired.deviceId ||
+                              unique[i].name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                if matches {
+                    if !foundPaired {
+                        unique[i].isPaired = true
+                        foundPaired = true
+                    } else {
+                        unique[i].isPaired = false
+                    }
+                }
+            }
+            if foundPaired {
+                var first = true
+                unique.removeAll { dev in
+                    let matches = dev.id == paired.deviceId ||
+                                  dev.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                    if matches {
+                        if first {
+                            first = false
+                            return false
+                        }
+                        return true
+                    }
+                    return false
+                }
+            }
+        }
+
+        discoveredDevices = unique
     }
     
     // MARK: - Advertiser

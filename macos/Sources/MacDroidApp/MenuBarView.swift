@@ -110,48 +110,55 @@ struct MenuBarView: View {
 
                     // MARK: - Strict 1-Device Pairing Status Card
                     if let paired = TrustStore.shared.getPairedDevice() {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             Image(systemName: isConnected ? "checkmark.seal.fill" : "lock.shield.fill")
                                 .foregroundColor(isConnected ? .green : .blue)
                                 .font(.title2)
 
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
                                     Text(paired.deviceName)
                                         .font(.subheadline)
                                         .fontWeight(.bold)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
                                     Text(isConnected ? "Connected" : "★ Paired")
                                         .font(.system(size: 9, weight: .bold))
                                         .foregroundColor(isConnected ? .green : .cyan)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
                                         .background((isConnected ? Color.green : Color.cyan).opacity(0.18))
                                         .cornerRadius(4)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: true)
                                 }
                                 Text("Strict 1-Device Policy • Keychain Protected")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
+                                    .lineLimit(1)
                             }
 
-                            Spacer()
+                            Spacer(minLength: 4)
 
-                            if isConnected {
-                                Button("Disconnect") {
-                                    appState.disconnect()
+                            HStack(spacing: 6) {
+                                if isConnected {
+                                    Button("Disconnect") {
+                                        appState.disconnect()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .tint(.orange)
+                                    .help("Disconnect active session while preserving pairing")
+                                }
+
+                                Button("Unpair") {
+                                    appState.unpair()
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .tint(.orange)
-                                .help("Disconnect active session while preserving pairing")
+                                .tint(.red)
+                                .help("Unpair to allow pairing another device")
                             }
-
-                            Button("Unpair") {
-                                appState.unpair()
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(.red)
-                            .help("Unpair to allow pairing another device")
                         }
                         .padding(10)
                         .background(Color.green.opacity(0.08))
@@ -496,7 +503,7 @@ struct MenuBarView: View {
             .padding(.vertical, 4)
             .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(width: 340, height: 500)
+        .frame(width: 360, height: 520)
         .sheet(isPresented: $showManualIPSheet) {
             ManualIPSheet(
                 isPresented: $showManualIPSheet,
@@ -616,7 +623,10 @@ struct DeviceRow: View {
 
     var body: some View {
         let pairedDevice = TrustStore.shared.getPairedDevice()
-        let isPaired = (pairedDevice != nil && (device.id == pairedDevice!.deviceId || device.name == pairedDevice!.deviceName))
+        let isPaired = (pairedDevice != nil && (
+            device.id == pairedDevice!.deviceId ||
+            device.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(pairedDevice!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+        ))
         let isCurrentConnected = isPaired && (appState.connectionState.isConnected)
         let anotherDevicePaired = (pairedDevice != nil && !isPaired)
 

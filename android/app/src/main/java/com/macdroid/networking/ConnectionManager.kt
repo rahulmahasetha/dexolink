@@ -139,6 +139,16 @@ class ConnectionManager(private val context: Context) {
                 while (isActive) {
                     try {
                         val client = serverSocket?.accept() ?: break
+                        if (userExplicitlyDisconnected) {
+                            log("Rejecting incoming connection from ${client.inetAddress.hostAddress}: User explicitly disconnected")
+                            try { client.close() } catch (e: Exception) {}
+                            continue
+                        }
+                        if (isConnected() && state is ConnectionState.Authenticated) {
+                            log("Ignoring incoming connection from ${client.inetAddress.hostAddress}: Active authenticated session already exists")
+                            try { client.close() } catch (e: Exception) {}
+                            continue
+                        }
                         log("Accepted connection from ${client.inetAddress.hostAddress}")
                         handleNewSocket(client, isIncoming = true)
                     } catch (e: Exception) {
@@ -156,6 +166,13 @@ class ConnectionManager(private val context: Context) {
     }
 
     fun connect(host: String, port: Int) {
+        if (isConnected() && (state is ConnectionState.Authenticated || state is ConnectionState.Connected)) {
+            if (activeSocket?.inetAddress?.hostAddress == host) {
+                log("Already connected to $host:$port, skipping redundant connect request")
+                return
+            }
+        }
+
         userExplicitlyDisconnected = false
         autoReconnect = true
         lastConnectedHost = host
@@ -192,14 +209,28 @@ class ConnectionManager(private val context: Context) {
             try { socket.close() } catch (e: Exception) {}
             return
         }
+        if (isIncoming && isConnected() && state is ConnectionState.Authenticated) {
+            log("Ignoring incoming connection from ${socket.inetAddress?.hostAddress}: Already active and authenticated with ${currentPeerName ?: "Mac"}")
+            try { socket.close() } catch (e: Exception) {}
+            return
+        }
         if (!isIncoming) {
             userExplicitlyDisconnected = false
         }
         isIncomingConnection = isIncoming
         reconnectJob?.cancel()
+
+        // Clean up previous active socket cleanly without triggering teardown cascades
+        val previousSocket = activeSocket
+        if (previousSocket != null && previousSocket != socket && !previousSocket.isClosed) {
+            log("Closing superseded socket (new incoming: $isIncoming)")
+            try { previousSocket.close() } catch (e: Exception) {}
+        }
+
         activeSocket = socket
         socket.tcpNoDelay = true
         socket.keepAlive = true
+        socket.soTimeout = 45000 // 45s socket read timeout to detect dead links
         socket.sendBufferSize = 2 * 1024 * 1024
         socket.receiveBufferSize = 2 * 1024 * 1024
         dataInputStream = DataInputStream(java.io.BufferedInputStream(socket.getInputStream(), 512 * 1024))
@@ -257,27 +288,22 @@ class ConnectionManager(private val context: Context) {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (isActive) {
-                // Adaptive heartbeat interval:
-                // Active/recent data exchange (< 1 min): check after 35s
-                // Mild idle (1 - 5 mins): check after 50s
-                // Deep idle (> 5 mins): check after 60s
-                val idleDuration = System.currentTimeMillis() - lastDataActivityTimestamp
-                val checkDelay = when {
-                    idleDuration < 60_000L -> 35_000L
-                    idleDuration < 300_000L -> 50_000L
-                    else -> 60_000L
-                }
-
-                delay(checkDelay)
+                delay(15_000L) // Active heartbeat interval: 15s
 
                 val socket = activeSocket
                 if (socket != null && socket.isConnected && !socket.isClosed) {
                     val timeSinceActivity = System.currentTimeMillis() - lastDataActivityTimestamp
-                    // If regular data (files, clipboard, acks) was sent/received within the last 35s,
-                    // TCP socket liveness is already proven; skip ping entirely to save radio power!
-                    if (timeSinceActivity >= ACTIVITY_EXPIRY_THRESHOLD_MS) {
+                    if (timeSinceActivity >= 45_000L) {
+                        log("⚠️ No heartbeat or data received for 45s. Connection lost, auto-reconnecting...")
+                        disconnectInternal(disableAutoReconnect = false, targetSocket = socket)
+                        if (autoReconnect && !userExplicitlyDisconnected && lastConnectedHost != null && lastConnectedPort > 0) {
+                            scheduleReconnect()
+                        }
+                        break
+                    } else if (timeSinceActivity >= 15_000L) {
                         pingStartTime = System.currentTimeMillis()
                         sendMessage(PingMessage)
+                        log("⚡ Heartbeat PING sent (idle: ${timeSinceActivity / 1000}s)")
                     }
                 } else {
                     break
@@ -289,28 +315,42 @@ class ConnectionManager(private val context: Context) {
     private suspend fun receiveLoop(socket: Socket) {
         val stream = dataInputStream ?: return
         try {
-            while (scope.isActive && !socket.isClosed) {
-                val length = stream.readInt()
-                if (length <= 0 || length > ProtocolCodec.MAX_MESSAGE_SIZE) {
-                    throw IllegalArgumentException("Invalid message length: $length")
+            while (scope.isActive && !socket.isClosed && activeSocket == socket) {
+                try {
+                    val length = stream.readInt()
+                    if (length <= 0 || length > ProtocolCodec.MAX_MESSAGE_SIZE) {
+                        throw IllegalArgumentException("Invalid message length: $length")
+                    }
+
+                    val payload = ByteArray(length)
+                    stream.readFully(payload)
+
+                    val message = codec.decodeMessage(payload)
+                    lastDataActivityTimestamp = System.currentTimeMillis()
+                    handleIncomingMessage(message)
+                } catch (e: java.net.SocketTimeoutException) {
+                    if (socket.isClosed || activeSocket != socket) break
+                    val idle = System.currentTimeMillis() - lastDataActivityTimestamp
+                    if (idle >= 45_000L) {
+                        log("Socket read timeout: idle for ${idle / 1000}s, probing connection with PING...")
+                        sendMessage(PingMessage)
+                    }
                 }
-
-                val payload = ByteArray(length)
-                stream.readFully(payload)
-
-                val message = codec.decodeMessage(payload)
-                lastDataActivityTimestamp = System.currentTimeMillis()
-                handleIncomingMessage(message)
             }
         } catch (e: Exception) {
-            if (scope.isActive && !socket.isClosed) {
+            if (scope.isActive && !socket.isClosed && activeSocket == socket) {
                 log("Socket read ended: ${e.message}")
             }
         } finally {
-            log("Connection dropped, checking auto-reconnect...")
-            disconnectInternal(disableAutoReconnect = false)
-            if (autoReconnect && lastConnectedHost != null && lastConnectedPort > 0) {
-                scheduleReconnect()
+            if (activeSocket == socket) {
+                log("Active socket dropped, checking auto-reconnect...")
+                disconnectInternal(disableAutoReconnect = false, targetSocket = socket)
+                if (autoReconnect && !userExplicitlyDisconnected && lastConnectedHost != null && lastConnectedPort > 0) {
+                    scheduleReconnect()
+                }
+            } else {
+                log("Stale socket closed, active socket is intact. Skipping teardown.")
+                try { socket.close() } catch (e: Exception) {}
             }
         }
     }
@@ -333,7 +373,7 @@ class ConnectionManager(private val context: Context) {
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             var attempt = 1
-            while (isActive && autoReconnect && (activeSocket == null || activeSocket?.isClosed == true)) {
+            while (isActive && autoReconnect && !userExplicitlyDisconnected && (activeSocket == null || activeSocket?.isClosed == true)) {
                 // Adaptive backoff: quick retry for transient drops, capped at 30s when Mac is offline
                 val delayMs = when {
                     attempt <= 2 -> 2000L
@@ -345,7 +385,7 @@ class ConnectionManager(private val context: Context) {
                 log("Auto-reconnecting in ${delayMs / 1000}s (attempt $attempt)...")
                 delay(delayMs)
 
-                if (!isActive || !autoReconnect) break
+                if (!isActive || !autoReconnect || userExplicitlyDisconnected) break
 
                 try {
                     log("Attempting socket connect to $host:$port...")
@@ -695,7 +735,13 @@ class ConnectionManager(private val context: Context) {
         disconnectInternal(disableAutoReconnect)
     }
 
-    private fun disconnectInternal(disableAutoReconnect: Boolean) {
+    private fun disconnectInternal(disableAutoReconnect: Boolean, targetSocket: Socket? = null) {
+        if (targetSocket != null && activeSocket != null && activeSocket != targetSocket) {
+            // Teardown call from a stale/superseded socket. Close targetSocket only, leave activeSocket untouched!
+            try { targetSocket.close() } catch (e: Exception) {}
+            return
+        }
+
         heartbeatJob?.cancel()
         sendJob?.cancel()
         sendJob = null

@@ -71,7 +71,7 @@ class TrustStore(context: Context) {
         if (deviceId.isBlank() && deviceName.isNullOrBlank()) return false
         val paired = getPairedDevice() ?: return false
         if (deviceId.isNotBlank() && paired.deviceId == deviceId) return true
-        if (!deviceName.isNullOrBlank() && paired.deviceName == deviceName) return true
+        if (!deviceName.isNullOrBlank() && paired.deviceName.trim().equals(deviceName.trim(), ignoreCase = true)) return true
         return false
     }
 
