@@ -96,10 +96,15 @@ public class TransferManager {
         var hasher: SHA256
         let expectedSize: Int64
         var receivedBytes: Int64
+        var lastProgressReportBytes: Int64 = 0
+        var lastNotifyTimestamp: Date = Date()
     }
     private var activeReceivers: [String: ReceiverContext] = [:]
     private var senderCancelTokens: Set<String> = []
     private var pausedTransferIds: Set<String> = []
+    // Sender flow control & progress tracking: transferId -> last acknowledged bytes received by peer
+    private var peerProgressBytes: [String: Int64] = [:]
+    private var peerProgressTimestamps: [String: Date] = [:]
     private let historyKey = "com.dexolink.transfer_history"
 
     private struct CachedTransferItem: Codable {
@@ -122,7 +127,7 @@ public class TransferManager {
                 options: [.userInitiated, .idleSystemSleepDisabled],
                 reason: "Active DexoLink File Transfer"
             )
-            print("⚡ [Power Management] Acquired macOS userInitiated transfer activity (App Nap disabled during transfer)")
+            print("[Power Management] Acquired macOS userInitiated transfer activity (App Nap disabled during transfer)")
         }
     }
     
@@ -130,7 +135,7 @@ public class TransferManager {
         if activeTransfers.isEmpty && activeReceivers.isEmpty, let token = transferActivityToken {
             ProcessInfo.processInfo.endActivity(token)
             transferActivityToken = nil
-            print("💤 [Power Management] Released macOS transfer activity (idle)")
+            print("[Power Management] Released macOS transfer activity (idle)")
         }
     }
 
@@ -204,7 +209,7 @@ public class TransferManager {
         queue.async { [weak self] in
             guard let self = self else { return }
             guard self.connectionManager.state.isConnected else {
-                print("⛔ [Quick File Sharing] Cannot send file: Device not connected")
+                print("[Quick File Sharing] Cannot send file: Device not connected")
                 return
             }
             
@@ -245,10 +250,10 @@ public class TransferManager {
                     totalSize: size
                 )
                 self.connectionManager.send(message: request)
-                print("📤 [Quick File Sharing] Transfer request sent for \(filename) (\(size) bytes, id: \(transferId))")
+                print("[Quick File Sharing] Transfer request sent for \(filename) (\(size) bytes, id: \(transferId))")
             } catch {
                 let errDesc = error.localizedDescription
-                print("❌ [Transfer Error] Failed initiating transfer: \(errDesc)")
+                print("[Transfer Error] Failed initiating transfer: \(errDesc)")
             }
         }
     }
@@ -257,6 +262,8 @@ public class TransferManager {
         queue.async { [weak self] in
             guard let self = self else { return }
             self.senderCancelTokens.insert(id)
+            self.peerProgressBytes.removeValue(forKey: id)
+            self.peerProgressTimestamps.removeValue(forKey: id)
             self.connectionManager.send(message: .cancel(transferId: id))
             
             if var item = self.activeTransfers[id] {
@@ -272,7 +279,7 @@ public class TransferManager {
                 try? FileManager.default.removeItem(at: ctx.destinationURL)
                 self.activeReceivers.removeValue(forKey: fId)
             }
-            print("🚫 [Quick File Sharing] Cancelled transfer \(id)")
+            print("[Quick File Sharing] Cancelled transfer \(id)")
             self.releaseTransferActivityIfNeeded()
         }
     }
@@ -294,7 +301,7 @@ public class TransferManager {
                item.isOutgoing, let url = item.localURL {
                 self.completedTransfers.removeAll(where: { $0.id == id })
                 self.persistCompletedTransfers()
-                print("🔄 [Quick File Sharing] Resuming transfer for \(item.name)")
+                print("[Quick File Sharing] Resuming transfer for \(item.name)")
                 self.sendFile(url: url)
             }
         }
@@ -309,7 +316,7 @@ public class TransferManager {
                 item.state = .paused(progress: item.progress)
                 self.activeTransfers[id] = item
                 self.notifyDelegate(item)
-                print("⏸️ [Quick File Sharing] Paused transfer \(id) at \(Int(item.progress * 100))%")
+                print("[Quick File Sharing] Paused transfer \(id) at \(Int(item.progress * 100))%")
             }
         }
     }
@@ -323,7 +330,7 @@ public class TransferManager {
                 item.state = .transferring(progress: item.progress)
                 self.activeTransfers[id] = item
                 self.notifyDelegate(item)
-                print("▶️ [Quick File Sharing] Resumed transfer \(id) from \(Int(item.progress * 100))%")
+                print("[Quick File Sharing] Resumed transfer \(id) from \(Int(item.progress * 100))%")
             }
         }
     }
@@ -334,7 +341,7 @@ public class TransferManager {
             guard let self = self else { return }
             self.completedTransfers.removeAll(where: { $0.id == id })
             self.persistCompletedTransfers()
-            print("🗑️ Removed transfer \(id) from history (file preserved)")
+            print("Removed transfer \(id) from history (file preserved)")
         }
     }
 
@@ -343,7 +350,7 @@ public class TransferManager {
             guard let self = self else { return }
             self.completedTransfers.removeAll(where: { ids.contains($0.id) })
             self.persistCompletedTransfers()
-            print("🗑️ Removed \(ids.count) transfers from history (files preserved)")
+            print("Removed \(ids.count) transfers from history (files preserved)")
         }
     }
 
@@ -352,7 +359,7 @@ public class TransferManager {
             guard let self = self else { return }
             self.completedTransfers.removeAll()
             self.persistCompletedTransfers()
-            print("🗑️ Cleared all transfer history (files preserved)")
+            print("Cleared all transfer history (files preserved)")
         }
     }
     
@@ -366,14 +373,14 @@ public class TransferManager {
             case let .transferRequest(transferId, _, totalSize):
                 // Security check 1: Enforce connection or paired authorization
                 guard self.connectionManager.state.isConnected || TrustStore.shared.hasPairedDevice() else {
-                    print("⛔ [Access Control] Rejected transferRequest: Device not connected")
+                    print("[Access Control] Rejected transferRequest: Device not connected")
                     self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: false))
                     return
                 }
                 
                 // Security check 2: Validate size constraint
                 guard totalSize > 0 && totalSize <= Self.maxFileSize else {
-                    print("⛔ [Validation] Rejected transferRequest: Invalid size \(totalSize)")
+                    print("[Validation] Rejected transferRequest: Invalid size \(totalSize)")
                     self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: false))
                     return
                 }
@@ -382,7 +389,7 @@ public class TransferManager {
                 if let values = try? self.downloadDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
                    let freeBytes = values.volumeAvailableCapacityForImportantUsage {
                     if freeBytes < totalSize + (100 * 1024 * 1024) {
-                        print("⛔ [Storage] Insufficient disk space on Mac: required \(totalSize), available \(freeBytes)")
+                        print("[Storage] Insufficient disk space on Mac: required \(totalSize), available \(freeBytes)")
                         self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: false))
                         return
                     }
@@ -402,7 +409,7 @@ public class TransferManager {
                 self.notifyDelegate(item)
                 
                 self.connectionManager.send(message: .transferResponse(transferId: transferId, accepted: true))
-                print("📥 [Quick File Sharing] Accepted transfer request \(transferId) (\(totalSize) bytes)")
+                print("[Quick File Sharing] Accepted transfer request \(transferId) (\(totalSize) bytes)")
                 
             case let .transferResponse(transferId, accepted):
                 guard var item = self.activeTransfers[transferId] else { return }
@@ -422,7 +429,7 @@ public class TransferManager {
                     self.completedTransfers.insert(item, at: 0)
                     self.releaseTransferActivityIfNeeded()
                     self.notifyDelegate(item)
-                    print("⛔ [Quick File Sharing] Peer rejected transfer \(transferId)")
+                    print("[Quick File Sharing] Peer rejected transfer \(transferId)")
                 }
                 
             case let .fileMeta(transferId, fileId, name, size, _):
@@ -478,9 +485,9 @@ public class TransferManager {
                     )
                     self.activeTransfers[transferId] = item
                     self.notifyDelegate(item)
-                    print("📁 [Quick File Sharing] Receiving file \(cleanName) -> \(destURL.lastPathComponent)")
+                    print("[Quick File Sharing] Receiving file \(cleanName) -> \(destURL.lastPathComponent)")
                 } catch {
-                    print("❌ [File Error] Failed creating destination file: \(error.localizedDescription)")
+                    print("[File Error] Failed creating destination file: \(error.localizedDescription)")
                     self.connectionManager.send(message: .cancel(transferId: transferId))
                 }
                 
@@ -490,7 +497,7 @@ public class TransferManager {
                 
                 // Security: Prevent buffer overflow beyond expectedSize
                 if ctx.receivedBytes + Int64(chunkData.count) > ctx.expectedSize {
-                    print("⚠️ [Security Violation] Received more bytes than declared! Aborting.")
+                    print("[Security Violation] Received more bytes than declared! Aborting.")
                     try? ctx.fileHandle.close()
                     try? FileManager.default.removeItem(at: ctx.destinationURL)
                     self.activeReceivers.removeValue(forKey: fileId)
@@ -515,10 +522,23 @@ public class TransferManager {
                             item.speedBytesPerSec = Double(ctx.receivedBytes) / elapsed
                         }
                         self.activeTransfers[ctx.transferId] = item
-                        self.notifyDelegate(item)
+                        
+                        let now = Date()
+                        if now.timeIntervalSince(ctx.lastNotifyTimestamp) >= 0.1 || ctx.receivedBytes >= ctx.expectedSize {
+                            ctx.lastNotifyTimestamp = now
+                            self.activeReceivers[fileId] = ctx
+                            self.notifyDelegate(item)
+                        }
+                    }
+
+                    // Acknowledge progress to peer every 2 MB or upon completion
+                    if ctx.receivedBytes - ctx.lastProgressReportBytes >= 2 * 1024 * 1024 || ctx.receivedBytes >= ctx.expectedSize {
+                        ctx.lastProgressReportBytes = ctx.receivedBytes
+                        self.activeReceivers[fileId] = ctx
+                        self.connectionManager.send(message: .progress(transferId: ctx.transferId, fileId: fileId, bytesReceived: ctx.receivedBytes))
                     }
                 } catch {
-                    print("❌ [Write Error] Failed writing chunk: \(error.localizedDescription)")
+                    print("[Write Error] Failed writing chunk: \(error.localizedDescription)")
                 }
                 
             case let .fileComplete(fileId, declaredSHA256):
@@ -530,7 +550,7 @@ public class TransferManager {
                 if !verified, FileManager.default.fileExists(atPath: ctx.destinationURL.path) {
                     if let diskHash = try? FileStreamer.computeSHA256(url: ctx.destinationURL),
                        diskHash.lowercased() == declaredSHA256.lowercased() {
-                        print("✅ [File Verified] Verified via disk stream: \(diskHash)")
+                        print("[File Verified] Verified via disk stream: \(diskHash)")
                         verified = true
                     }
                 }
@@ -550,7 +570,7 @@ public class TransferManager {
                             guard let self = self else { return }
                             self.delegate?.transferManager(self, didCompleteItem: item)
                         }
-                        print("✅ [File Verified] Successfully received and verified \(item.name) (SHA-256 match)")
+                        print("[File Verified] Successfully received and verified \(item.name) (SHA-256 match)")
                     } else {
                         // Integrity violation: discard corrupted file
                         try? FileManager.default.removeItem(at: ctx.destinationURL)
@@ -562,7 +582,7 @@ public class TransferManager {
                             guard let self = self else { return }
                             self.delegate?.transferManager(self, didFailItem: item, error: "SHA-256 mismatch")
                         }
-                        print("❌ [Integrity Failure] SHA-256 mismatch for \(item.name). Discarding corrupted file.")
+                        print("[Integrity Failure] SHA-256 mismatch for \(item.name). Discarding corrupted file.")
                     }
                 }
                 
@@ -570,6 +590,8 @@ public class TransferManager {
                 // Find sender transfer matching fileId
                 for (tId, var item) in self.activeTransfers where item.fileId == fileId {
                     self.activeTransfers.removeValue(forKey: tId)
+                    self.peerProgressBytes.removeValue(forKey: tId)
+                    self.peerProgressTimestamps.removeValue(forKey: tId)
                     self.releaseTransferActivityIfNeeded()
                     if verified {
                         item.state = .completed
@@ -582,7 +604,7 @@ public class TransferManager {
                             guard let self = self else { return }
                             self.delegate?.transferManager(self, didCompleteItem: item)
                         }
-                        print("🎉 [Transfer Complete] Peer verified receipt of \(item.name)!")
+                        print("[Transfer Complete] Peer verified receipt of \(item.name)!")
                     } else {
                         item.state = .failed("Peer reported checksum verification failed")
                         self.completedTransfers.insert(item, at: 0)
@@ -596,7 +618,23 @@ public class TransferManager {
                     break
                 }
                 
+            case let .progress(transferId, _, bytesReceived):
+                self.peerProgressBytes[transferId] = bytesReceived
+                self.peerProgressTimestamps[transferId] = Date()
+                if var item = self.activeTransfers[transferId], item.isOutgoing {
+                    item.bytesTransferred = bytesReceived
+                    item.progress = item.size > 0 ? min(0.99, Double(bytesReceived) / Double(item.size)) : 0
+                    let elapsed = Date().timeIntervalSince(item.startTime)
+                    if elapsed > 0.1 {
+                        item.speedBytesPerSec = Double(bytesReceived) / elapsed
+                    }
+                    self.activeTransfers[transferId] = item
+                    self.notifyDelegate(item)
+                }
+
             case let .cancel(transferId):
+                self.peerProgressBytes.removeValue(forKey: transferId)
+                self.peerProgressTimestamps.removeValue(forKey: transferId)
                 if var item = self.activeTransfers.removeValue(forKey: transferId) {
                     item.state = .cancelled
                     self.completedTransfers.insert(item, at: 0)
@@ -608,7 +646,7 @@ public class TransferManager {
                     try? FileManager.default.removeItem(at: ctx.destinationURL)
                     self.activeReceivers.removeValue(forKey: fId)
                 }
-                print("🚫 [Quick File Sharing] Transfer \(transferId) cancelled by peer")
+                print("[Quick File Sharing] Transfer \(transferId) cancelled by peer")
                 self.releaseTransferActivityIfNeeded()
 
             case let .pause(transferId):
@@ -618,7 +656,7 @@ public class TransferManager {
                     self.activeTransfers[transferId] = item
                     self.notifyDelegate(item)
                 }
-                print("⏸️ [Quick File Sharing] Transfer \(transferId) paused by peer")
+                print("[Quick File Sharing] Transfer \(transferId) paused by peer")
 
             case let .resume(transferId):
                 self.pausedTransferIds.remove(transferId)
@@ -627,7 +665,7 @@ public class TransferManager {
                     self.activeTransfers[transferId] = item
                     self.notifyDelegate(item)
                 }
-                print("▶️ [Quick File Sharing] Transfer \(transferId) resumed by peer")
+                print("[Quick File Sharing] Transfer \(transferId) resumed by peer")
                 
             default:
                 break
@@ -661,11 +699,17 @@ public class TransferManager {
                 var offset: Int64 = 0
                 var hasher = SHA256()
                 let chunkSize = FileStreamer.chunkSize
+                let maxInFlightBytes: Int64 = 8 * 1024 * 1024 // 8 MB sliding window
+                self.peerProgressBytes[transferId] = 0
+                self.peerProgressTimestamps[transferId] = Date()
+                var lastUiNotifyTimestamp = Date()
                 
                 while offset < declaredSize {
                     if self.senderCancelTokens.contains(transferId) {
                         self.senderCancelTokens.remove(transferId)
-                        print("⏹️ Sender loop aborted due to cancel")
+                        self.peerProgressBytes.removeValue(forKey: transferId)
+                        self.peerProgressTimestamps.removeValue(forKey: transferId)
+                        print("Sender loop aborted due to cancel")
                         self.releaseTransferActivityIfNeeded()
                         return
                     }
@@ -675,10 +719,24 @@ public class TransferManager {
                         if self.senderCancelTokens.contains(transferId) {
                             self.senderCancelTokens.remove(transferId)
                             self.pausedTransferIds.remove(transferId)
+                            self.peerProgressBytes.removeValue(forKey: transferId)
+                            self.peerProgressTimestamps.removeValue(forKey: transferId)
                             self.releaseTransferActivityIfNeeded()
                             return
                         }
                         usleep(100_000)
+                    }
+
+                    // Adaptive flow control backpressure:
+                    // Pace sending so in-flight unacknowledged bytes do not overwhelm network or memory.
+                    while offset - (self.peerProgressBytes[transferId] ?? 0) > maxInFlightBytes {
+                        if self.senderCancelTokens.contains(transferId) { break }
+                        let lastUpdate = self.peerProgressTimestamps[transferId] ?? Date()
+                        if Date().timeIntervalSince(lastUpdate) > 0.35 {
+                            // Safety fallback: advance if peer hasn't reported progress within 350ms
+                            break
+                        }
+                        usleep(10_000) // 10ms yield
                     }
                     
                     try fileHandle.seek(toOffset: UInt64(offset))
@@ -699,20 +757,28 @@ public class TransferManager {
                     offset += Int64(chunk.count)
                     
                     if var item = self.activeTransfers[transferId] {
-                        item.bytesTransferred = offset
-                        item.progress = declaredSize > 0 ? Double(offset) / Double(declaredSize) : 0
+                        let peerBytes = self.peerProgressBytes[transferId] ?? 0
+                        if peerBytes > 0 {
+                            item.bytesTransferred = peerBytes
+                            item.progress = declaredSize > 0 ? min(0.99, Double(peerBytes) / Double(declaredSize)) : 0
+                        } else {
+                            item.bytesTransferred = min(offset, maxInFlightBytes)
+                            item.progress = declaredSize > 0 ? min(0.15, Double(item.bytesTransferred) / Double(declaredSize)) : 0
+                        }
                         let elapsed = Date().timeIntervalSince(item.startTime)
                         if elapsed > 0.1 {
-                            item.speedBytesPerSec = Double(offset) / elapsed
+                            item.speedBytesPerSec = Double(item.bytesTransferred) / elapsed
                         }
                         self.activeTransfers[transferId] = item
-                        self.notifyDelegate(item)
+
+                        let now = Date()
+                        if now.timeIntervalSince(lastUiNotifyTimestamp) >= 0.1 || offset >= declaredSize {
+                            lastUiNotifyTimestamp = now
+                            self.notifyDelegate(item)
+                        }
                     }
                     
-                    // Minimal yield every 4 MB to keep runloop responsive without artificial latency
-                    if offset % (Int64(chunkSize) * 8) == 0 {
-                        usleep(50)
-                    }
+                    usleep(1000) // 1ms cooperative yield between chunks
                 }
                 
                 let sha256 = hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -723,9 +789,9 @@ public class TransferManager {
                     self.activeTransfers[transferId] = item
                     self.notifyDelegate(item)
                 }
-                print("📤 [File Sent] Finished transmitting \(filename) (SHA-256: \(sha256.prefix(10))...). Awaiting ACK...")
+                print("[File Sent] Finished transmitting \(filename) (SHA-256: \(sha256.prefix(10))...). Awaiting ACK...")
             } catch {
-                print("❌ [Streaming Error] Failed streaming file: \(error.localizedDescription)")
+                print("[Streaming Error] Failed streaming file: \(error.localizedDescription)")
                 if var item = self.activeTransfers.removeValue(forKey: transferId) {
                     item.state = .failed(error.localizedDescription)
                     self.completedTransfers.insert(item, at: 0)

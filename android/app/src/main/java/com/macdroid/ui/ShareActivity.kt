@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -211,7 +212,7 @@ class ShareActivity : ComponentActivity(), ConnectionEventListener, TransferEven
             connectionManager.sendClipboard(text, force = true)
             transferComplete.value = true
             isTransferring.value = false
-            Toast.makeText(this, "Text sent to ${pairedDevice.value?.deviceName ?: "Mac"}! 📋", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Text sent to ${pairedDevice.value?.deviceName ?: "Mac"}", Toast.LENGTH_SHORT).show()
             window.decorView.postDelayed({ finish() }, 1200)
             return
         }
@@ -280,7 +281,7 @@ class ShareActivity : ComponentActivity(), ConnectionEventListener, TransferEven
             transferComplete.value = true
             isTransferring.value = false
             transferProgress.value = 1.0f
-            Toast.makeText(this, "Sent ${item.name} to ${pairedDevice.value?.deviceName ?: "Mac"}! 🎉", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Sent ${item.name} to ${pairedDevice.value?.deviceName ?: "Mac"}", Toast.LENGTH_SHORT).show()
             window.decorView.postDelayed({ finish() }, 1400)
         }
     }
@@ -294,10 +295,7 @@ class ShareActivity : ComponentActivity(), ConnectionEventListener, TransferEven
     }
 }
 
-// -------------------------------------------------------------
-// Share Dialog Content Composable
-// -------------------------------------------------------------
-
+// Share dialog UI
 @Composable
 fun ShareDialogContent(
     connectionState: ConnectionState,
@@ -349,7 +347,12 @@ fun ShareDialogContent(
                 onClick = onDismiss,
                 modifier = Modifier.size(28.dp)
             ) {
-                Text("✕", fontSize = 16.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                DexoIcon(
+                    imageVector = DexoIcons.Close,
+                    contentDescription = "Close",
+                    tint = Color(0xFF94A3B8),
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
 
@@ -366,7 +369,20 @@ fun ShareDialogContent(
                     .padding(16.dp)
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("🔒", fontSize = 28.sp)
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFEE2E2)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(
+                            imageVector = DexoIcons.Lock,
+                            contentDescription = null,
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         "No Paired Mac Found",
@@ -502,7 +518,12 @@ fun ShareDialogContent(
                             val name = streamer.getFileName(uri)
                             val (size, _) = streamer.getFileMetadata(uri)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("📄", fontSize = 14.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.CategoryDoc,
+                                    contentDescription = null,
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(16.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     name,
@@ -585,7 +606,12 @@ fun ShareDialogContent(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("🌐", fontSize = 14.sp)
+                DexoIcon(
+                    imageVector = DexoIcons.Globe,
+                    contentDescription = null,
+                    tint = Color(0xFF0066FF),
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     "All Android Sharing Options",
@@ -604,7 +630,7 @@ fun ShareDialogContent(
             ) {
                 AndroidShareAppChip(
                     label = "Quick Share",
-                    icon = "⚡",
+                    icon = DexoIcons.Flash,
                     color = Color(0xFF0066FF),
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -613,7 +639,7 @@ fun ShareDialogContent(
                 )
                 AndroidShareAppChip(
                     label = "WhatsApp",
-                    icon = "💬",
+                    icon = DexoIcons.Message,
                     color = Color(0xFF25D366),
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -622,7 +648,7 @@ fun ShareDialogContent(
                 )
                 AndroidShareAppChip(
                     label = "Gmail",
-                    icon = "✉️",
+                    icon = DexoIcons.Send,
                     color = Color(0xFFEA4335),
                     modifier = Modifier.weight(1f),
                     onClick = {
@@ -645,7 +671,12 @@ fun ShareDialogContent(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("📤", fontSize = 12.sp)
+                    DexoIcon(
+                        imageVector = DexoIcons.Send,
+                        contentDescription = null,
+                        tint = Color(0xFF334155),
+                        modifier = Modifier.size(14.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "More Android Share Options (Drive, Bluetooth, Copy...)",
@@ -730,7 +761,7 @@ fun ShareDialogContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Transfer Complete! 🎉",
+                    "Transfer Complete",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
                     color = Color(0xFF16A34A)
@@ -778,7 +809,16 @@ fun ShareDialogContent(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1.3f)
                 ) {
-                    Text("Send to Mac 🚀", fontWeight = FontWeight.Bold, color = Color.White)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        DexoIcon(
+                            imageVector = DexoIcons.Send,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Send to Mac", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
                 }
             } else {
                 Button(
@@ -787,21 +827,29 @@ fun ShareDialogContent(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1.3f)
                 ) {
-                    Text(if (isConnecting) "Connecting..." else "⚡ Reconnect", fontWeight = FontWeight.Bold, color = Color.White)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!isConnecting) {
+                            DexoIcon(
+                                imageVector = DexoIcons.Sync,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text(if (isConnecting) "Connecting..." else "Reconnect", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
                 }
             }
         }
     }
 }
 
-// -------------------------------------------------------------
-// Helper UI & System Share Functions
-// -------------------------------------------------------------
-
+// System share helpers
 @Composable
 fun AndroidShareAppChip(
     label: String,
-    icon: String,
+    icon: ImageVector,
     color: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
@@ -816,7 +864,12 @@ fun AndroidShareAppChip(
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(icon, fontSize = 15.sp)
+            DexoIcon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = color,
+                modifier = Modifier.size(16.dp)
+            )
             Spacer(modifier = Modifier.height(3.dp))
             Text(
                 label,

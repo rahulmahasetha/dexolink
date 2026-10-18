@@ -230,7 +230,7 @@ class ConnectionManager(private val context: Context) {
         activeSocket = socket
         socket.tcpNoDelay = true
         socket.keepAlive = true
-        socket.soTimeout = 45000 // 45s socket read timeout to detect dead links
+        socket.soTimeout = 90000 // 90s socket read timeout aligned with 30s heartbeat & 90s stale timeout
         socket.sendBufferSize = 2 * 1024 * 1024
         socket.receiveBufferSize = 2 * 1024 * 1024
         dataInputStream = DataInputStream(java.io.BufferedInputStream(socket.getInputStream(), 512 * 1024))
@@ -288,23 +288,26 @@ class ConnectionManager(private val context: Context) {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             while (isActive) {
-                delay(15_000L) // Active heartbeat interval: 15s
+                delay(30_000L) // Optimized heartbeat interval: 30s (was 15s) for lower CPU/battery
 
                 val socket = activeSocket
                 if (socket != null && socket.isConnected && !socket.isClosed) {
                     val timeSinceActivity = System.currentTimeMillis() - lastDataActivityTimestamp
-                    if (timeSinceActivity >= 45_000L) {
-                        log("⚠️ No heartbeat or data received for 45s. Connection lost, auto-reconnecting...")
+                    if (timeSinceActivity >= 90_000L) {
+                        // Stale connection: 90s with no data (was 45s)
+                        log("No heartbeat or data received for 90s. Connection lost, auto-reconnecting...")
                         disconnectInternal(disableAutoReconnect = false, targetSocket = socket)
                         if (autoReconnect && !userExplicitlyDisconnected && lastConnectedHost != null && lastConnectedPort > 0) {
                             scheduleReconnect()
                         }
                         break
-                    } else if (timeSinceActivity >= 15_000L) {
+                    } else if (timeSinceActivity >= 25_000L) {
+                        // Only PING if truly idle (25s threshold accounts for delay jitter)
                         pingStartTime = System.currentTimeMillis()
                         sendMessage(PingMessage)
-                        log("⚡ Heartbeat PING sent (idle: ${timeSinceActivity / 1000}s)")
+                        log("Heartbeat PING sent (idle: ${timeSinceActivity / 1000}s)")
                     }
+                    // If timeSinceActivity < 25s, recent data means connection is alive — skip PING
                 } else {
                     break
                 }
@@ -331,7 +334,7 @@ class ConnectionManager(private val context: Context) {
                 } catch (e: java.net.SocketTimeoutException) {
                     if (socket.isClosed || activeSocket != socket) break
                     val idle = System.currentTimeMillis() - lastDataActivityTimestamp
-                    if (idle >= 45_000L) {
+                    if (idle >= 90_000L) {
                         log("Socket read timeout: idle for ${idle / 1000}s, probing connection with PING...")
                         sendMessage(PingMessage)
                     }
@@ -436,7 +439,7 @@ class ConnectionManager(private val context: Context) {
                         paired = false
                     )
                     sendMessage(ack)
-                    log("🤝 Sent HelloAck(paired = false) to ${message.deviceName}")
+                    log("Sent HelloAck(paired = false) to ${message.deviceName}")
                 }
             }
 
@@ -465,10 +468,10 @@ class ConnectionManager(private val context: Context) {
                             state = ConnectionState.Connecting("Pairing request sent to ${message.deviceName}...")
                             sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
                         } else {
-                            log("ℹ️ Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}'")
+                            log("Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}'")
                         }
                     } else {
-                        log("ℹ️ Received HelloAck as receiver from ${message.deviceName} — awaiting incoming PairRequest")
+                        log("Received HelloAck as receiver from ${message.deviceName} — awaiting incoming PairRequest")
                     }
                 }
             }
@@ -489,7 +492,7 @@ class ConnectionManager(private val context: Context) {
                 // Strict 1-device policy: check if phone is already paired with another device!
                 val existingPaired = trustStore.getPairedDevice()
                 if (existingPaired != null && existingPaired.deviceId != peerId && existingPaired.deviceName != peerName) {
-                    log("⛔ Auto-rejecting PAIR_REQUEST from $peerName: Already paired with '${existingPaired.deviceName}'")
+                    log("Auto-rejecting PAIR_REQUEST from $peerName: Already paired with '${existingPaired.deviceName}'")
                     sendMessage(
                         PairResponseMessage(
                             accepted = false,
@@ -537,7 +540,7 @@ class ConnectionManager(private val context: Context) {
                     }
                 } else {
                     val reason = if (message.reason.isNotBlank()) message.reason else "Pairing rejected by peer"
-                    log("⛔ Pairing rejected: $reason")
+                    log("Pairing rejected: $reason")
                     state = ConnectionState.Failed(reason)
                     disconnect(disableAutoReconnect = true)
 
@@ -552,7 +555,7 @@ class ConnectionManager(private val context: Context) {
             }
 
             is UnpairMessage -> {
-                log("🗑️ Received UNPAIR from peer. Clearing paired trust store...")
+                log("Received UNPAIR from peer. Clearing paired trust store...")
                 trustStore.unpairDevice()
                 pairingManager.unpair()
                 userExplicitlyDisconnected = true
@@ -572,9 +575,9 @@ class ConnectionManager(private val context: Context) {
                 val latency = if (pingStartTime > 0L) System.currentTimeMillis() - pingStartTime else -1L
                 if (latency >= 0L) {
                     lastPingLatency = latency
-                    log("🏓 Pong received in ${latency}ms")
+                    log("Pong received in ${latency}ms")
                 } else {
-                    log("🏓 Pong heartbeat received")
+                    log("Pong heartbeat received")
                 }
             }
 
@@ -608,9 +611,11 @@ class ConnectionManager(private val context: Context) {
             }
         }
 
-        mainHandler.post {
-            for (listener in listeners) {
-                listener.onMessageReceived(message)
+        if (message !is FileChunkMessage) {
+            mainHandler.post {
+                for (listener in listeners) {
+                    listener.onMessageReceived(message)
+                }
             }
         }
     }
@@ -680,7 +685,7 @@ class ConnectionManager(private val context: Context) {
 
     fun sendPing() {
         pingStartTime = System.currentTimeMillis()
-        log("⚡ Sending PING...")
+        log("Sending PING...")
         sendMessage(PingMessage)
     }
 

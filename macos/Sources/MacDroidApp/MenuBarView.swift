@@ -134,7 +134,7 @@ struct MenuBarView: View {
                                         .fontWeight(.bold)
                                         .lineLimit(1)
                                         .truncationMode(.tail)
-                                    Text(isConnected ? "Connected" : "★ Paired")
+                                    Text(isConnected ? "Connected" : "Paired")
                                         .font(.system(size: 9, weight: .bold))
                                         .foregroundColor(isConnected ? .green : .cyan)
                                         .padding(.horizontal, 6)
@@ -734,7 +734,7 @@ struct DeviceRow: View {
                         .foregroundColor(device.isOnline ? .primary : .secondary)
 
                     if isCurrentConnected {
-                        Text("★ Paired")
+                        Text("Paired")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(.green)
                             .padding(.horizontal, 4)
@@ -749,7 +749,7 @@ struct DeviceRow: View {
                             .background(Color.green.opacity(0.18))
                             .cornerRadius(4)
                     } else if isPaired {
-                        Text("★ Paired")
+                        Text("Paired")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(.cyan)
                             .padding(.horizontal, 4)

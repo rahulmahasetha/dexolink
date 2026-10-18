@@ -474,7 +474,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                 if (connectionManager.isConnected()) {
                     connectionManager.sendClipboard(text, force = true)
                     lastSyncedSnippet.value = text
-                    Toast.makeText(this, "Copied text synced to Mac! 📋", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Copied text synced to Mac", Toast.LENGTH_SHORT).show()
                 } else {
                     log("[Clipboard Stored] Mac not connected right now")
                 }
@@ -512,7 +512,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                 lastPingLatency.value = latency
                 if (isManualPingRequested) {
                     isManualPingRequested = false
-                    Toast.makeText(this, "Pong reply: ${latency ?: 0}ms 🚀", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Ping reply: ${latency ?: 0}ms", Toast.LENGTH_SHORT).show()
                 }
             }
         } else if (message is ClipboardPushMessage) {
@@ -572,7 +572,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                 completedTransfers.add(0, item)
             }
             refreshReceivedFiles()
-            Toast.makeText(this, "File transfer completed: ${item.name} ✅", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "File transfer completed: ${item.name}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -585,7 +585,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
             } else {
                 completedTransfers.add(0, item)
             }
-            Toast.makeText(this, "Transfer failed: $error ⚠️", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Transfer failed: $error", Toast.LENGTH_LONG).show()
         }
     }
 

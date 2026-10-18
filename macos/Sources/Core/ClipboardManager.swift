@@ -102,19 +102,19 @@ public class ClipboardManager {
     public func deleteItem(id: String) {
         history.removeAll(where: { $0.id == id })
         persistHistory()
-        print("🗑️ Removed clipboard item \(id) from history")
+        print("Removed clipboard item \(id) from history")
     }
 
     public func deleteItems(ids: Set<String>) {
         history.removeAll(where: { ids.contains($0.id) })
         persistHistory()
-        print("🗑️ Removed \(ids.count) clipboard items from history")
+        print("Removed \(ids.count) clipboard items from history")
     }
 
     public func clearHistory() {
         history.removeAll()
         persistHistory()
-        print("🗑️ Cleared all clipboard history")
+        print("Cleared all clipboard history")
     }
     
     public func setConnectionManager(_ manager: ConnectionManager?) {
@@ -152,13 +152,24 @@ public class ClipboardManager {
 
     private func scheduleAdaptiveTimer(fast: Bool) {
         timer?.invalidate()
-        let interval: TimeInterval = fast ? 1.0 : 3.0
-        let tolerance: TimeInterval = fast ? 0.3 : 0.8
+        // Optimized: 2s fast (was 1s), 5s idle (was 3s) — fewer wakeups, lower CPU
+        let interval: TimeInterval = fast ? 2.0 : 5.0
+        let tolerance: TimeInterval = fast ? 0.5 : 1.5  // Generous tolerance for CPU coalescing
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, self.direction == .sendOnly || self.direction == .bidirectional else { return }
             let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
+                // Short-circuit: skip hash computation if pasteboard changeCount hasn't changed
+                let currentCount = self.pasteboard.changeCount
+                if currentCount == self.lastChangeCount {
+                    self.idleCheckCount += 1
+                    if fast && self.idleCheckCount > 6 {
+                        // Throttle to 5s after 6 idle checks (~12s) to conserve battery
+                        self.scheduleAdaptiveTimer(fast: false)
+                    }
+                    return
+                }
                 let hadChange = self.checkForChanges()
                 if hadChange {
                     self.idleCheckCount = 0
@@ -167,8 +178,7 @@ public class ClipboardManager {
                     }
                 } else {
                     self.idleCheckCount += 1
-                    if fast && self.idleCheckCount > 10 {
-                        // Throttle to 3s when idle to conserve battery
+                    if fast && self.idleCheckCount > 6 {
                         self.scheduleAdaptiveTimer(fast: false)
                     }
                 }
@@ -209,8 +219,8 @@ public class ClipboardManager {
     
     private func sendClipboardText(_ text: String) {
         sequenceNumber += 1
-        print("📤 [macOS Clipboard Detect] Local pasteboard copied: \"\(text.prefix(35))...\" (\(text.count) chars, seq: \(sequenceNumber))")
-        print("📤 [macOS Clipboard Send] Transmitting to Android (mode: \(direction))...")
+        print("[macOS Clipboard Detect] Local pasteboard copied: \"\(text.prefix(35))...\" (\(text.count) chars, seq: \(sequenceNumber))")
+        print("[macOS Clipboard Send] Transmitting to Android (mode: \(direction))...")
         addToHistory(text: text, isOutgoing: true)
         let message = ProtocolMessage.clipboardPush(sequenceNumber: sequenceNumber, content: text)
         connectionManager?.send(message: message)
@@ -223,9 +233,9 @@ public class ClipboardManager {
     public func handleMessage(_ message: ProtocolMessage) {
         switch message {
         case let .clipboardPush(seq, content):
-            print("📥 [macOS Clipboard Receive] Received from Android (seq: \(seq), chars: \(content.count), current mode: \(direction))")
+            print("[macOS Clipboard Receive] Received from Android (seq: \(seq), chars: \(content.count), current mode: \(direction))")
             guard direction == .receiveOnly || direction == .bidirectional else {
-                print("🚫 [macOS Clipboard Sync] Dropped push: direction is \(direction), reverse sync prohibited")
+                print("[macOS Clipboard Sync] Dropped push: direction is \(direction), reverse sync prohibited")
                 let ack = ProtocolMessage.clipboardAck(sequenceNumber: seq)
                 self.connectionManager?.send(message: ack)
                 return
@@ -244,9 +254,9 @@ public class ClipboardManager {
                     self.lastChangeCount = self.pasteboard.changeCount
                     
                     if success {
-                        print("✅ [macOS Clipboard Applied] Successfully wrote text to NSPasteboard: \"\(content.prefix(35))...\"")
+                        print("[macOS Clipboard Applied] Successfully wrote text to NSPasteboard: \"\(content.prefix(35))...\"")
                     } else {
-                        print("❌ [macOS Clipboard Error] NSPasteboard.setString returned false")
+                        print("[macOS Clipboard Error] NSPasteboard.setString returned false")
                     }
                     
                     self.delegate?.clipboardManager(self, didReceiveText: content)
@@ -256,14 +266,14 @@ public class ClipboardManager {
                     self.connectionManager?.send(message: ack)
                 }
             } else {
-                print("🔁 [macOS Clipboard Loop Prevention] Ignored duplicate/echo text (hash: \(hash.prefix(8)))")
+                print("[macOS Clipboard Loop Prevention] Ignored duplicate/echo text (hash: \(hash.prefix(8)))")
                 // Acknowledge receipt even if duplicate to avoid peer retries
                 let ack = ProtocolMessage.clipboardAck(sequenceNumber: seq)
                 self.connectionManager?.send(message: ack)
             }
             
         case let .clipboardAck(seq):
-            print("📬 [macOS Clipboard ACK] Push acknowledged by peer (seq: \(seq))")
+            print("[macOS Clipboard ACK] Push acknowledged by peer (seq: \(seq))")
             
         default:
             break

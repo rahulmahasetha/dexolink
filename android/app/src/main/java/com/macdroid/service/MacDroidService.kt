@@ -237,7 +237,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
                     device.name == paired.deviceName
 
             if (isMyPairedDevice && connectionManager.autoReconnect && !connectionManager.userExplicitlyDisconnected) {
-                Log.d(TAG, "⚡ Automatic reconnection to paired device: ${device.name} (${device.host}:${device.port})")
+                Log.d(TAG, "Automatic reconnection to paired device: ${device.name} (${device.host}:${device.port})")
                 connectionManager.connect(device.host, device.port)
             }
         } else if (connectionManager.isConnected()) {
@@ -271,7 +271,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
         if (!currentText.isNullOrBlank()) {
             if (connectionManager.isConnected()) {
                 connectionManager.sendClipboard(currentText)
-                Toast.makeText(this, "Sent clipboard to Mac! 📋", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Sent clipboard to Mac", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "Not connected to Mac", Toast.LENGTH_SHORT).show()
             }
@@ -504,7 +504,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
         } else if (state is ConnectionState.Authenticated || state is ConnectionState.Connected) {
             builder.addAction(
                 android.R.drawable.ic_menu_send,
-                "📋 Send Clip",
+                "Send Clip",
                 sendClipPendingIntent
             )
             builder.addAction(

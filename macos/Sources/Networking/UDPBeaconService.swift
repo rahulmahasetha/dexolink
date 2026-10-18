@@ -45,7 +45,7 @@ public final class UDPBeaconService {
             self.burstCount = 0
             self.startAdaptiveBeaconTimer()
             self.sendBeacon()
-            print("📡 UDP Beacon Service started on port \(UDPBeaconService.beaconPort) (adaptive power-saving enabled)")
+            print("UDP Beacon Service started on port \(UDPBeaconService.beaconPort) (adaptive power-saving enabled)")
         }
     }
 
@@ -56,7 +56,7 @@ public final class UDPBeaconService {
             self.isBroadcastingPaused = true
             self.timerSource?.cancel()
             self.timerSource = nil
-            print("💤 [UDP Beacon] Broadcasting paused to conserve battery")
+            print("[UDP Beacon] Broadcasting paused to conserve battery")
         }
     }
 
@@ -67,7 +67,7 @@ public final class UDPBeaconService {
             self.burstCount = activeBurst ? 0 : self.maxBurstCount
             self.startAdaptiveBeaconTimer()
             self.sendBeacon()
-            print("⚡ [UDP Beacon] Broadcasting resumed (activeBurst: \(activeBurst))")
+            print("[UDP Beacon] Broadcasting resumed (activeBurst: \(activeBurst))")
         }
     }
 
@@ -89,7 +89,7 @@ public final class UDPBeaconService {
                 self.socketFD = -1
             }
 
-            print("📡 UDP Beacon Service stopped")
+            print("UDP Beacon Service stopped")
         }
     }
 
@@ -101,7 +101,7 @@ public final class UDPBeaconService {
 
         let fd = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
         guard fd >= 0 else {
-            print("❌ Failed to create UDP socket: \(errno)")
+            print("Failed to create UDP socket: \(errno)")
             return
         }
 
@@ -123,7 +123,7 @@ public final class UDPBeaconService {
         }
 
         if bindResult < 0 {
-            print("❌ Failed to bind UDP beacon socket to port \(UDPBeaconService.beaconPort): \(errno)")
+            print("Failed to bind UDP beacon socket to port \(UDPBeaconService.beaconPort): \(errno)")
             Darwin.close(fd)
             return
         }
@@ -171,8 +171,11 @@ public final class UDPBeaconService {
         guard !isBroadcastingPaused, isRunning else { return }
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        let interval: TimeInterval = (burstCount < maxBurstCount) ? 1.5 : 30.0
-        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(500))
+        let isBursting = burstCount < maxBurstCount
+        let interval: TimeInterval = isBursting ? 1.5 : 30.0
+        // Optimized: 2s leeway in idle mode (was 500ms) for CPU coalescing
+        let leeway: DispatchTimeInterval = isBursting ? .milliseconds(500) : .seconds(2)
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: leeway)
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             self.burstCount += 1

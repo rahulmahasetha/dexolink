@@ -509,7 +509,7 @@ public class DiscoveryService {
             DispatchQueue.main.async {
                 self.updateDelegate()
             }
-            print("🗑️ Removed discovered device \(id)")
+            print("Removed discovered device \(id)")
         }
     }
     
@@ -541,7 +541,7 @@ public class DiscoveryService {
             listener?.stateUpdateHandler = { [weak self] state in
                 if case .ready = state, let rawPort = self?.listener?.port?.rawValue {
                     self?.listeningPort = rawPort
-                    print("📡 MacDroid listening on port \(rawPort)")
+                    print("MacDroid listening on port \(rawPort)")
                     let myName = Host.current().localizedName ?? "MacBook"
                     UDPBeaconService.shared.start(
                         deviceId: CryptoService.shared.deviceId,

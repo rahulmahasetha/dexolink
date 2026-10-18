@@ -102,9 +102,12 @@ class TransferManager(
         val transferId: String,
         val destinationFile: File,
         val raf: java.io.RandomAccessFile,
+        val channel: java.nio.channels.FileChannel,
         val digest: MessageDigest,
         val expectedSize: Long,
-        var receivedBytes: Long = 0L
+        var receivedBytes: Long = 0L,
+        var lastProgressReportBytes: Long = 0L,
+        var lastNotifyTimeMs: Long = 0L
     )
 
     private val activeReceivers = ConcurrentHashMap<String, ReceiverContext>()
@@ -130,7 +133,7 @@ class TransferManager(
             if (transferWakeLock?.isHeld != true) {
                 // Safety cap of 30 minutes prevents indefinite battery drain if peer crashes
                 transferWakeLock?.acquire(30 * 60 * 1000L)
-                Log.d(TAG, "⚡ Acquired transfer WakeLock (30-min safety cap)")
+                Log.d(TAG, "Acquired transfer WakeLock (30-min safety cap)")
             }
 
             if (transferWifiLock == null) {
@@ -148,7 +151,7 @@ class TransferManager(
             }
             if (transferWifiLock?.isHeld != true) {
                 transferWifiLock?.acquire()
-                Log.d(TAG, "⚡ Acquired transfer WifiLock")
+                Log.d(TAG, "Acquired transfer WifiLock")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not acquire transfer locks: ${e.message}")
@@ -161,11 +164,11 @@ class TransferManager(
             try {
                 if (transferWakeLock?.isHeld == true) {
                     transferWakeLock?.release()
-                    Log.d(TAG, "💤 Released transfer WakeLock (all transfers finished)")
+                    Log.d(TAG, "Released transfer WakeLock (all transfers finished)")
                 }
                 if (transferWifiLock?.isHeld == true) {
                     transferWifiLock?.release()
-                    Log.d(TAG, "💤 Released transfer WifiLock (all transfers finished)")
+                    Log.d(TAG, "Released transfer WifiLock (all transfers finished)")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Could not release transfer locks: ${e.message}")
@@ -347,14 +350,14 @@ class TransferManager(
                 is TransferRequestMessage -> {
                     // Security 1: Enforce connection or pairing authorization
                     if (!trustStore.hasPairedDevice() && !isConnectionActive()) {
-                        Log.w(TAG, "⛔ Rejecting TransferRequest: Device not paired or connected")
+                        Log.w(TAG, "Rejecting TransferRequest: Device not paired or connected")
                         sendCallback(TransferResponseMessage(message.transferId, accepted = false))
                         return@launch
                     }
 
                     // Security 2: Size limits
                     if (message.totalSize <= 0 || message.totalSize > MAX_FILE_SIZE) {
-                        Log.w(TAG, "⛔ Rejecting TransferRequest: Invalid size ${message.totalSize}")
+                        Log.w(TAG, "Rejecting TransferRequest: Invalid size ${message.totalSize}")
                         sendCallback(TransferResponseMessage(message.transferId, accepted = false))
                         return@launch
                     }
@@ -364,7 +367,7 @@ class TransferManager(
                         val stat = android.os.StatFs(downloadDirectory.absolutePath)
                         val freeBytes = stat.availableBytes
                         if (freeBytes < message.totalSize + (100L * 1024 * 1024)) {
-                            Log.w(TAG, "⛔ Rejecting TransferRequest: Insufficient device storage (needs ${message.totalSize}, available $freeBytes)")
+                            Log.w(TAG, "Rejecting TransferRequest: Insufficient device storage (needs ${message.totalSize}, available $freeBytes)")
                             sendCallback(TransferResponseMessage(message.transferId, accepted = false))
                             return@launch
                         }
@@ -425,15 +428,19 @@ class TransferManager(
 
                         val raf = java.io.RandomAccessFile(destination, "rw")
                         raf.setLength(0) // Start fresh
+                        val channel = raf.channel
                         val digest = MessageDigest.getInstance("SHA-256")
 
                         val ctx = ReceiverContext(
                             transferId = message.transferId,
                             destinationFile = destination,
                             raf = raf,
+                            channel = channel,
                             digest = digest,
                             expectedSize = message.size,
-                            receivedBytes = 0L
+                            receivedBytes = 0L,
+                            lastProgressReportBytes = 0L,
+                            lastNotifyTimeMs = System.currentTimeMillis()
                         )
                         activeReceivers[message.fileId] = ctx
                         acquireTransferLocks()
@@ -468,6 +475,7 @@ class TransferManager(
                     if (ctx.receivedBytes + chunkData.size > ctx.expectedSize) {
                         Log.w(TAG, "Security alert: Received bytes exceed expected size! Aborting.")
                         try {
+                            ctx.channel.close()
                             ctx.raf.close()
                             ctx.destinationFile.delete()
                         } catch (e: Exception) {}
@@ -477,8 +485,8 @@ class TransferManager(
                     }
 
                     try {
-                        ctx.raf.seek(message.offset)
-                        ctx.raf.write(chunkData)
+                        val buffer = java.nio.ByteBuffer.wrap(chunkData)
+                        ctx.channel.write(buffer, message.offset)
                         ctx.digest.update(chunkData)
                         ctx.receivedBytes += chunkData.size
 
@@ -491,7 +499,19 @@ class TransferManager(
                             if (elapsedSec > 0.1) {
                                 item.speedBytesPerSec = ctx.receivedBytes / elapsedSec
                             }
-                            notifyUpdate(item)
+
+                            // Throttle UI updates to at most once per 100ms or on completion
+                            val now = System.currentTimeMillis()
+                            if (now - ctx.lastNotifyTimeMs >= 100L || ctx.receivedBytes >= ctx.expectedSize) {
+                                ctx.lastNotifyTimeMs = now
+                                notifyUpdate(item)
+                            }
+                        }
+
+                        // Send progress feedback to macOS every 2 MB or upon completion
+                        if (ctx.receivedBytes - ctx.lastProgressReportBytes >= 2 * 1024 * 1024 || ctx.receivedBytes >= ctx.expectedSize) {
+                            ctx.lastProgressReportBytes = ctx.receivedBytes
+                            sendCallback(ProgressMessage(ctx.transferId, message.fileId, ctx.receivedBytes))
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed writing chunk: ${e.message}", e)
@@ -501,7 +521,8 @@ class TransferManager(
                 is FileCompleteMessage -> {
                     val ctx = activeReceivers.remove(message.fileId) ?: return@launch
                     try {
-                        ctx.raf.fd.sync()
+                        ctx.channel.force(true)
+                        ctx.channel.close()
                         ctx.raf.close()
                     } catch (e: Exception) {}
 
@@ -555,7 +576,7 @@ class TransferManager(
                             } catch (e: Exception) {
                                 Log.w(TAG, "Media scanner indexing error: ${e.message}")
                             }
-                            Log.d(TAG, "✅ File verified & completed: ${item.name} (${item.size} bytes)")
+                            Log.d(TAG, "File verified & completed: ${item.name} (${item.size} bytes)")
                         } else {
                             // Discard corrupt file
                             ctx.destinationFile.delete()
@@ -564,7 +585,7 @@ class TransferManager(
                             completedTransfers.add(0, item)
                             notifyUpdate(item)
                             notifyFailed(item, "SHA-256 checksum mismatch")
-                            Log.e(TAG, "❌ SHA-256 mismatch for ${item.name}. Corrupt file discarded.")
+                            Log.e(TAG, "SHA-256 mismatch for ${item.name}. Corrupt file discarded.")
                         }
                     }
                 }
@@ -581,7 +602,7 @@ class TransferManager(
                                 completedTransfers.add(0, item)
                                 notifyUpdate(item)
                                 notifyCompleted(item)
-                                Log.d(TAG, "🎉 Peer confirmed receipt of ${item.name}!")
+                                Log.d(TAG, "Peer confirmed receipt of ${item.name}!")
                             } else {
                                 item.state = TransferStatus.FAILED
                                 item.errorMessage = "Peer verification failed"
@@ -604,6 +625,7 @@ class TransferManager(
                     for ((fId, ctx) in activeReceivers) {
                         if (ctx.transferId == message.transferId) {
                             try {
+                                ctx.channel.close()
                                 ctx.raf.close()
                                 ctx.destinationFile.delete()
                             } catch (e: Exception) {}
@@ -612,6 +634,19 @@ class TransferManager(
                     }
                     Log.d(TAG, "Transfer ${message.transferId} cancelled by peer")
                     releaseTransferLocksIfNeeded()
+                }
+
+                is ProgressMessage -> {
+                    val item = activeTransfers[message.transferId]
+                    if (item != null && item.isOutgoing) {
+                        item.bytesTransferred = message.bytesReceived
+                        item.progress = if (item.size > 0) minOf(0.99f, message.bytesReceived.toFloat() / item.size) else 0f
+                        val elapsedSec = (System.currentTimeMillis() - item.startTime) / 1000.0
+                        if (elapsedSec > 0.1) {
+                            item.speedBytesPerSec = message.bytesReceived / elapsedSec
+                        }
+                        notifyUpdate(item)
+                    }
                 }
 
                 is PauseMessage -> {
@@ -664,6 +699,7 @@ class TransferManager(
                 val buffer = ByteArray(FileStreamer.CHUNK_SIZE)
                 var offset = 0L
                 val digest = MessageDigest.getInstance("SHA-256")
+                var lastUiNotifyMs = System.currentTimeMillis()
 
                 inputStream.use { stream ->
                     var bytesRead: Int
@@ -702,12 +738,16 @@ class TransferManager(
                         val item = activeTransfers[transferId]
                         if (item != null) {
                             item.bytesTransferred = offset
-                            item.progress = if (declaredSize > 0) offset.toFloat() / declaredSize else 0f
+                            item.progress = if (declaredSize > 0) minOf(0.99f, offset.toFloat() / declaredSize) else 0f
                             val elapsedSec = (System.currentTimeMillis() - item.startTime) / 1000.0
                             if (elapsedSec > 0.1) {
                                 item.speedBytesPerSec = offset / elapsedSec
                             }
-                            notifyUpdate(item)
+                            val now = System.currentTimeMillis()
+                            if (now - lastUiNotifyMs >= 100L || offset >= declaredSize) {
+                                lastUiNotifyMs = now
+                                notifyUpdate(item)
+                            }
                         }
 
                         // Cooperative yield every 4 MB to keep coroutine responsive without artificial sleep

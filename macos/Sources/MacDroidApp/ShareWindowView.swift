@@ -413,7 +413,7 @@ struct ShareWindowView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                    Text("Sent Successfully to \(pairedDevice?.deviceName ?? "Device")! 🎉")
+                    Text("Sent Successfully to \(pairedDevice?.deviceName ?? "Device")")
                         .font(.caption)
                         .fontWeight(.bold)
                         .foregroundColor(.green)

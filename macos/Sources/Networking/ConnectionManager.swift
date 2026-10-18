@@ -128,12 +128,12 @@ public class ConnectionManager {
                 conn.send(content: data, completion: .contentProcessed({ [weak self, weak conn] error in
                     guard let self = self, let c = conn, self.connection === c else { return }
                     if let error = error {
-                        print("❌ NWConnection send error: \(error.localizedDescription)")
+                        print("NWConnection send error: \(error.localizedDescription)")
                         self.state = .failed(error)
                     }
                 }))
             } catch {
-                print("❌ Failed to encode message: \(error.localizedDescription)")
+                print("Failed to encode message: \(error.localizedDescription)")
                 self.state = .failed(error)
             }
         }
@@ -142,14 +142,14 @@ public class ConnectionManager {
     private func handleStateUpdate(_ state: NWConnection.State) {
         switch state {
         case .ready:
-            print("✅ NWConnection is ready")
+            print("NWConnection is ready")
             self.state = .connected
             receiveLoop()
         case .failed(let error):
-            print("❌ NWConnection failed: \(error.localizedDescription)")
+            print("NWConnection failed: \(error.localizedDescription)")
             self.state = .failed(error)
         case .cancelled:
-            print("ℹ️ NWConnection cancelled")
+            print("NWConnection cancelled")
             self.state = .disconnected
         case .setup, .waiting, .preparing:
             break
@@ -170,13 +170,13 @@ public class ConnectionManager {
             }
             
             if let error = error {
-                print("❌ NWConnection receive error: \(error.localizedDescription)")
+                print("NWConnection receive error: \(error.localizedDescription)")
                 self.state = .failed(error)
                 return
             }
             
             if isComplete {
-                print("ℹ️ NWConnection completed/closed by peer")
+                print("NWConnection completed/closed by peer")
                 self.state = .disconnected
                 return
             }

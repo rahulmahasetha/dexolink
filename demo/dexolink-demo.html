@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DexoLink v2.0.2 — Demo</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=SF+Pro+Display:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Global Styles & Reset */
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:100%; height:100%; overflow:hidden;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  background:#0a0a0f;
+  color:#fff;
+}
+
+/* Scene System — Each Scene Fades In/Out */
+.scene {
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+  opacity:0; pointer-events:none;
+  transition: opacity 0.8s cubic-bezier(.4,0,.2,1);
+}
+.scene.active { opacity:1; pointer-events:auto; }
+
+/* Scene 0 — Intro / Logo */
+#scene-intro {
+  background: radial-gradient(ellipse at 50% 40%, #0d1b3e 0%, #080c1a 60%, #050508 100%);
+}
+.intro-glow {
+  position:absolute; width:600px; height:600px; border-radius:50%;
+  background: radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%);
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%,100% { transform:scale(1); opacity:0.5; }
+  50% { transform:scale(1.3); opacity:1; }
+}
+.intro-logo {
+  position:relative; z-index:2;
+  display:flex; flex-direction:column; align-items:center; gap:20px;
+}
+.logo-icon {
+  width:120px; height:120px;
+  animation: logo-spin-in 1.2s cubic-bezier(.34,1.56,.64,1) forwards;
+  opacity:0;
+}
+@keyframes logo-spin-in {
+  0% { transform:scale(0) rotate(-180deg); opacity:0; }
+  100% { transform:scale(1) rotate(0deg); opacity:1; }
+}
+.logo-svg { width:100%; height:100%; }
+.logo-title {
+  font-size:56px; font-weight:800; letter-spacing:-2px;
+  background: linear-gradient(135deg, #3b82f6, #60a5fa, #93c5fd);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  animation: fade-up 0.8s 0.5s ease forwards; opacity:0;
+}
+.logo-tagline {
+  font-size:20px; font-weight:400; color:rgba(255,255,255,0.6);
+  animation: fade-up 0.8s 0.8s ease forwards; opacity:0;
+}
+.logo-version {
+  display:inline-block; padding:6px 16px; border-radius:20px;
+  background: rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.3);
+  font-size:14px; font-weight:600; color:#60a5fa;
+  animation: fade-up 0.8s 1.1s ease forwards; opacity:0;
+}
+@keyframes fade-up {
+  0% { transform:translateY(20px); opacity:0; }
+  100% { transform:translateY(0); opacity:1; }
+}
+
+/* Scene 1 — Devices Side By Side */
+#scene-devices {
+  background: radial-gradient(ellipse at 30% 50%, #0d1b3e 0%, #080c1a 50%, #050508 100%);
+}
+.devices-container {
+  display:flex; align-items:center; gap:100px; position:relative;
+}
+.device-phone {
+  width:280px; height:560px; border-radius:36px;
+  background:#111827; border:3px solid #1e293b;
+  box-shadow: 0 0 60px rgba(59,130,246,0.15), 0 20px 60px rgba(0,0,0,0.5);
+  overflow:hidden; position:relative;
+  animation: slide-in-left 1s cubic-bezier(.34,1.56,.64,1) forwards;
+  opacity:0; transform:translateX(-100px);
+}
+@keyframes slide-in-left {
+  to { opacity:1; transform:translateX(0); }
+}
+.device-mac {
+  width:420px; height:280px; border-radius:16px;
+  background:#1a1f2e; border:2px solid #2a3040;
+  box-shadow: 0 0 60px rgba(59,130,246,0.15), 0 20px 60px rgba(0,0,0,0.5);
+  overflow:hidden; position:relative;
+  animation: slide-in-right 1s 0.2s cubic-bezier(.34,1.56,.64,1) forwards;
+  opacity:0; transform:translateX(100px);
+}
+@keyframes slide-in-right {
+  to { opacity:1; transform:translateX(0); }
+}
+/* Phone notch */
+.phone-notch {
+  position:absolute; top:0; left:50%; transform:translateX(-50%);
+  width:120px; height:28px; background:#000; border-radius:0 0 16px 16px; z-index:5;
+}
+.phone-screen {
+  padding:36px 16px 16px; height:100%; display:flex; flex-direction:column;
+}
+.phone-header {
+  display:flex; align-items:center; gap:10px; margin-bottom:12px;
+}
+.phone-logo-small {
+  width:32px; height:32px;
+}
+.phone-app-name {
+  font-size:16px; font-weight:700; color:#fff;
+}
+.phone-app-tag { font-size:10px; color:rgba(255,255,255,0.5); }
+/* Mac window bar */
+.mac-titlebar {
+  height:32px; background:#0d1117; display:flex; align-items:center; padding:0 12px; gap:6px;
+}
+.mac-dot { width:10px; height:10px; border-radius:50%; }
+.mac-dot.red { background:#ff5f57; }
+.mac-dot.yellow { background:#febc2e; }
+.mac-dot.green { background:#28c840; }
+.mac-title { margin-left:auto; margin-right:auto; font-size:12px; color:rgba(255,255,255,0.4); }
+.mac-screen { padding:16px; height:calc(100% - 32px); overflow:hidden; }
+
+/* Connection beam animation */
+.connection-beam {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:120px; height:4px; z-index:10;
+  opacity:0;
+}
+.connection-beam.active {
+  animation: beam-appear 0.5s 1.5s forwards;
+}
+@keyframes beam-appear { to { opacity:1; } }
+.beam-line {
+  width:100%; height:100%; border-radius:2px;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6);
+  background-size:200% 100%;
+  animation: beam-flow 1.5s linear infinite;
+}
+@keyframes beam-flow {
+  0% { background-position:200% 0; }
+  100% { background-position:-200% 0; }
+}
+.beam-particles {
+  position:absolute; top:-8px; left:0; width:100%; height:20px;
+}
+.beam-particle {
+  position:absolute; width:4px; height:4px; border-radius:50%;
+  background:#60a5fa;
+  animation: particle-move 2s linear infinite;
+}
+.beam-particle:nth-child(1) { left:0; animation-delay:0s; }
+.beam-particle:nth-child(2) { left:20%; animation-delay:0.4s; }
+.beam-particle:nth-child(3) { left:40%; animation-delay:0.8s; }
+.beam-particle:nth-child(4) { left:60%; animation-delay:1.2s; }
+.beam-particle:nth-child(5) { left:80%; animation-delay:1.6s; }
+@keyframes particle-move {
+  0% { transform:translateX(0) translateY(0); opacity:0; }
+  20% { opacity:1; }
+  80% { opacity:1; }
+  100% { transform:translateX(20px) translateY(-4px); opacity:0; }
+}
+
+/* Scene 2 — Discovery & Pairing */
+#scene-discovery {
+  background: radial-gradient(ellipse at 50% 50%, #0d1b3e 0%, #080c1a 60%, #050508 100%);
+}
+.discovery-layout {
+  display:flex; gap:60px; align-items:flex-start;
+}
+.discovery-phone {
+  width:260px; min-height:500px; border-radius:30px;
+  background:#111827; border:2px solid #1e293b; overflow:hidden;
+  box-shadow: 0 0 40px rgba(59,130,246,0.1), 0 15px 40px rgba(0,0,0,0.4);
+  animation: fade-up 0.8s ease forwards; opacity:0;
+}
+.discovery-mac-panel {
+  width:360px; min-height:320px; border-radius:14px;
+  background:#1a1f2e; border:2px solid #2a3040; overflow:hidden;
+  box-shadow: 0 0 40px rgba(59,130,246,0.1), 0 15px 40px rgba(0,0,0,0.4);
+  animation: fade-up 0.8s 0.3s ease forwards; opacity:0;
+}
+
+/* Shared Card Styles */
+.card {
+  background: rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:12px; padding:12px; margin:8px 0;
+}
+.card-row {
+  display:flex; align-items:center; gap:10px;
+}
+.card-icon {
+  width:36px; height:36px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center; font-size:18px;
+  flex-shrink:0;
+}
+.card-icon.blue { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.card-icon.green { background:rgba(34,197,94,0.15); color:#22c55e; }
+.card-icon.orange { background:rgba(249,115,22,0.15); color:#f97316; }
+.card-icon.purple { background:rgba(168,85,247,0.15); color:#a855f7; }
+.card-icon.red { background:rgba(239,68,68,0.15); color:#ef4444; }
+.card-text h4 { font-size:13px; font-weight:600; color:#e2e8f0; }
+.card-text p { font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px; }
+.badge {
+  padding:3px 8px; border-radius:10px; font-size:10px; font-weight:600;
+  margin-left:auto; flex-shrink:0;
+}
+.badge.active { background:rgba(34,197,94,0.15); color:#22c55e; }
+.badge.ready { background:rgba(249,115,22,0.15); color:#f97316; }
+.badge.connected { background:rgba(34,197,94,0.2); color:#22c55e; border:1px solid rgba(34,197,94,0.3); }
+.badge.paired { background:rgba(249,115,22,0.2); color:#f97316; border:1px solid rgba(249,115,22,0.3); }
+.badge.blocked { background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid rgba(239,68,68,0.3); }
+
+/* Screen headers */
+.screen-header {
+  padding:12px 16px 8px; display:flex; align-items:center; gap:8px;
+}
+.screen-header .logo-sm { width:28px; height:28px; }
+.screen-header h3 { font-size:14px; font-weight:700; }
+.screen-header .subtitle { font-size:10px; color:rgba(255,255,255,0.4); }
+.section-title {
+  font-size:15px; font-weight:700; color:#e2e8f0;
+  padding:8px 16px 4px;
+}
+.section-sub {
+  font-size:11px; color:rgba(255,255,255,0.4);
+  padding:0 16px 8px;
+}
+.section-body { padding:0 12px 12px; }
+
+/* Scene 3 — Clipboard Sync */
+#scene-clipboard {
+  background: radial-gradient(ellipse at 60% 40%, #0d2818 0%, #080c1a 60%, #050508 100%);
+}
+.clipboard-demo {
+  display:flex; gap:50px; align-items:center;
+}
+.clipboard-panel {
+  width:320px; min-height:200px; border-radius:16px;
+  background:#111827; border:2px solid #1e293b; padding:20px;
+  box-shadow: 0 0 50px rgba(34,197,94,0.1);
+}
+.clipboard-item {
+  background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+  border-radius:10px; padding:10px 14px; margin:8px 0;
+  font-size:12px; color:#94a3b8;
+  opacity:0; animation: clip-appear 0.5s ease forwards;
+}
+.clipboard-item.synced {
+  border-color:rgba(34,197,94,0.3);
+  background:rgba(34,197,94,0.05);
+}
+@keyframes clip-appear {
+  0% { transform:translateY(10px); opacity:0; }
+  100% { transform:translateY(0); opacity:1; }
+}
+.sync-arrow-container {
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+}
+.sync-arrow {
+  font-size:32px; color:#22c55e;
+  animation: arrow-pulse 1.5s ease-in-out infinite;
+}
+@keyframes arrow-pulse {
+  0%,100% { transform:scale(1); opacity:0.5; }
+  50% { transform:scale(1.2); opacity:1; }
+}
+.sync-label {
+  font-size:11px; color:#22c55e; font-weight:600;
+  white-space:nowrap;
+}
+
+/* Scene 4 — File Transfer */
+#scene-transfer {
+  background: radial-gradient(ellipse at 40% 60%, #1a0d2e 0%, #080c1a 60%, #050508 100%);
+}
+.transfer-layout {
+  display:flex; gap:50px; align-items:flex-start;
+}
+.transfer-phone {
+  width:280px; min-height:480px; border-radius:28px;
+  background:#111827; border:2px solid #1e293b; overflow:hidden;
+  box-shadow: 0 0 50px rgba(168,85,247,0.1);
+  animation: fade-up 0.8s ease forwards; opacity:0;
+}
+.transfer-mac {
+  width:380px; min-height:260px; border-radius:14px;
+  background:#1a1f2e; border:2px solid #2a3040; overflow:hidden;
+  box-shadow: 0 0 50px rgba(168,85,247,0.1);
+  animation: fade-up 0.8s 0.3s ease forwards; opacity:0;
+}
+/* Progress bar */
+.progress-bar-container {
+  width:100%; height:6px; border-radius:3px;
+  background:rgba(255,255,255,0.08); margin:8px 0 4px; overflow:hidden;
+}
+.progress-bar-fill {
+  height:100%; border-radius:3px;
+  transition: width 0.3s ease;
+}
+.progress-bar-fill.blue { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+.progress-bar-fill.green { background: linear-gradient(90deg, #22c55e, #4ade80); }
+.progress-bar-fill.purple { background: linear-gradient(90deg, #a855f7, #c084fc); }
+.transfer-stat {
+  display:flex; align-items:center; gap:6px; font-size:10px; color:rgba(255,255,255,0.4);
+}
+.transfer-stat .speed { color:#22c55e; font-weight:600; }
+.transfer-controls {
+  display:flex; gap:6px; margin-left:auto;
+}
+.ctrl-btn {
+  width:26px; height:26px; border-radius:50%; border:none;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; cursor:pointer; font-weight:700;
+}
+.ctrl-btn.pause { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.ctrl-btn.cancel { background:rgba(239,68,68,0.15); color:#ef4444; }
+.ctrl-btn.done { background:rgba(34,197,94,0.15); color:#22c55e; }
+
+/* Scene 5 — Settings */
+#scene-settings {
+  background: radial-gradient(ellipse at 50% 50%, #1a1a0d 0%, #080c1a 60%, #050508 100%);
+}
+.settings-phone {
+  width:300px; min-height:520px; border-radius:32px;
+  background:#111827; border:2px solid #1e293b; overflow:hidden;
+  box-shadow: 0 0 50px rgba(249,115,22,0.1);
+  animation: scale-in 0.8s ease forwards; opacity:0;
+}
+@keyframes scale-in {
+  0% { transform:scale(0.8); opacity:0; }
+  100% { transform:scale(1); opacity:1; }
+}
+/* Toggle switch */
+.toggle {
+  width:40px; height:22px; border-radius:11px;
+  position:relative; flex-shrink:0; margin-left:auto;
+}
+.toggle.on { background:#3b82f6; }
+.toggle.off { background:rgba(255,255,255,0.15); }
+.toggle::after {
+  content:''; position:absolute; width:18px; height:18px; border-radius:50%;
+  background:#fff; top:2px; transition:left 0.2s;
+}
+.toggle.on::after { left:20px; }
+.toggle.off::after { left:2px; }
+
+/* Scene 6 — Connection Status */
+#scene-status {
+  background: radial-gradient(ellipse at 50% 60%, #0d1b3e 0%, #080c1a 60%, #050508 100%);
+}
+.status-grid {
+  display:grid; grid-template-columns:repeat(4,1fr); gap:24px;
+  animation: fade-up 0.8s ease forwards; opacity:0;
+}
+.status-card {
+  background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px; padding:24px; text-align:center;
+  min-width:140px;
+  transition: transform 0.3s, box-shadow 0.3s;
+}
+.status-card:hover {
+  transform:translateY(-4px);
+  box-shadow: 0 8px 30px rgba(59,130,246,0.15);
+}
+.status-icon { font-size:32px; margin-bottom:12px; }
+.status-label { font-size:12px; color:rgba(255,255,255,0.4); margin-bottom:4px; }
+.status-value { font-size:18px; font-weight:700; color:#e2e8f0; }
+.status-value.green { color:#22c55e; }
+.status-value.blue { color:#60a5fa; }
+
+/* Scene 7 — Outro */
+#scene-outro {
+  background: radial-gradient(ellipse at 50% 40%, #0d1b3e 0%, #080c1a 60%, #050508 100%);
+}
+.outro-content {
+  text-align:center; display:flex; flex-direction:column; align-items:center; gap:16px;
+}
+.outro-logo { width:80px; height:80px; animation: logo-spin-in 1s ease forwards; opacity:0; }
+.outro-title {
+  font-size:48px; font-weight:800; letter-spacing:-1px;
+  background: linear-gradient(135deg, #3b82f6, #60a5fa, #93c5fd);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  animation: fade-up 0.8s 0.3s ease forwards; opacity:0;
+}
+.outro-subtitle {
+  font-size:18px; color:rgba(255,255,255,0.6); max-width:500px;
+  animation: fade-up 0.8s 0.6s ease forwards; opacity:0;
+}
+.outro-features {
+  display:flex; gap:20px; margin-top:16px;
+  animation: fade-up 0.8s 0.9s ease forwards; opacity:0;
+}
+.feature-pill {
+  padding:8px 18px; border-radius:20px;
+  background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.2);
+  font-size:13px; font-weight:500; color:#93c5fd;
+}
+.outro-cta {
+  margin-top:20px;
+  padding:14px 40px; border-radius:30px; border:none;
+  background:linear-gradient(135deg, #3b82f6, #2563eb);
+  color:#fff; font-size:16px; font-weight:700; cursor:pointer;
+  box-shadow: 0 4px 20px rgba(59,130,246,0.4);
+  animation: fade-up 0.8s 1.2s ease forwards; opacity:0;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.outro-cta:hover {
+  transform:translateY(-2px);
+  box-shadow: 0 8px 30px rgba(59,130,246,0.5);
+}
+.outro-dev {
+  font-size:13px; color:rgba(255,255,255,0.3); margin-top:12px;
+  animation: fade-up 0.8s 1.4s ease forwards; opacity:0;
+}
+
+/* Scene Title Overlay */
+.scene-title-overlay {
+  position:absolute; top:40px; left:50%; transform:translateX(-50%);
+  text-align:center; z-index:20;
+}
+.scene-title-overlay h2 {
+  font-size:28px; font-weight:800; letter-spacing:-0.5px;
+  background: linear-gradient(135deg, #e2e8f0, #94a3b8);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  animation: fade-up 0.6s ease forwards; opacity:0;
+}
+.scene-title-overlay p {
+  font-size:14px; color:rgba(255,255,255,0.4); margin-top:4px;
+  animation: fade-up 0.6s 0.2s ease forwards; opacity:0;
+}
+
+/* Progress Indicator */
+.progress-dots {
+  position:fixed; bottom:30px; left:50%; transform:translateX(-50%);
+  display:flex; gap:8px; z-index:100;
+}
+.progress-dot {
+  width:8px; height:8px; border-radius:50%;
+  background:rgba(255,255,255,0.2);
+  transition: background 0.3s, transform 0.3s;
+}
+.progress-dot.active {
+  background:#3b82f6; transform:scale(1.3);
+}
+
+/* Nav Buttons */
+.nav-controls {
+  position:fixed; bottom:28px; right:30px; z-index:100;
+  display:flex; gap:10px;
+}
+.nav-btn {
+  width:40px; height:40px; border-radius:50%;
+  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12);
+  color:#fff; font-size:16px; cursor:pointer; display:flex;
+  align-items:center; justify-content:center;
+  transition: background 0.2s;
+}
+.nav-btn:hover { background:rgba(255,255,255,0.15); }
+
+/* Auto/Manual toggle */
+.play-toggle {
+  position:fixed; bottom:28px; left:30px; z-index:100;
+  display:flex; align-items:center; gap:8px;
+}
+.play-toggle button {
+  padding:8px 16px; border-radius:20px;
+  background:rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.3);
+  color:#60a5fa; font-size:12px; font-weight:600; cursor:pointer;
+  transition: background 0.2s;
+}
+.play-toggle button:hover { background:rgba(59,130,246,0.25); }
+.play-toggle button.paused { background:rgba(239,68,68,0.15); border-color:rgba(239,68,68,0.3); color:#ef4444; }
+
+/* Scan Animation (Discovery) */
+.scan-ring {
+  position:absolute; width:200px; height:200px; border-radius:50%;
+  border:2px solid rgba(59,130,246,0.3);
+  animation: scan-expand 2s ease-out infinite;
+}
+@keyframes scan-expand {
+  0% { transform:scale(0.5); opacity:1; }
+  100% { transform:scale(2); opacity:0; }
+}
+.scan-ring:nth-child(2) { animation-delay:0.7s; }
+.scan-ring:nth-child(3) { animation-delay:1.4s; }
+
+/* Device Label */
+.device-label {
+  position:absolute; bottom:-36px; text-align:center; width:100%;
+  font-size:13px; font-weight:600; color:rgba(255,255,255,0.5);
+}
+.device-label span { color:#60a5fa; }
+
+/* Bottom Nav Bar (Android) */
+.bottom-nav {
+  display:flex; background:rgba(0,0,0,0.3); border-top:1px solid rgba(255,255,255,0.06);
+  padding:8px 0 12px; margin-top:auto;
+}
+.nav-item {
+  flex:1; text-align:center; font-size:10px; color:rgba(255,255,255,0.4);
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+}
+.nav-item.active { color:#3b82f6; }
+.nav-item-icon { font-size:18px; }
+.nav-active-bg {
+  width:48px; height:28px; border-radius:14px; background:rgba(59,130,246,0.15);
+  display:flex; align-items:center; justify-content:center;
+}
+
+/* Animated Counter */
+.counter {
+  display:inline-block;
+  font-variant-numeric:tabular-nums;
+}
+
+/* File List Items */
+.file-item {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  background:rgba(255,255,255,0.03); border-radius:10px; margin:6px 0;
+  border:1px solid rgba(255,255,255,0.05);
+}
+.file-icon {
+  width:36px; height:36px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:16px; flex-shrink:0;
+}
+.file-icon.img { background:rgba(34,197,94,0.1); color:#22c55e; }
+.file-icon.pdf { background:rgba(239,68,68,0.1); color:#ef4444; }
+.file-icon.doc { background:rgba(59,130,246,0.1); color:#3b82f6; }
+.file-icon.vid { background:rgba(168,85,247,0.1); color:#a855f7; }
+.file-icon.zip { background:rgba(249,115,22,0.1); color:#f97316; }
+.file-name { font-size:12px; font-weight:600; color:#e2e8f0; }
+.file-meta { font-size:10px; color:rgba(255,255,255,0.35); margin-top:2px; }
+.file-actions { margin-left:auto; font-size:14px; color:rgba(255,255,255,0.3); }
+
+/* Category Chips */
+.chips {
+  display:flex; gap:6px; padding:8px 12px; overflow-x:auto;
+}
+.chip {
+  padding:5px 12px; border-radius:14px; font-size:11px; font-weight:600;
+  white-space:nowrap;
+  background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.5);
+  border:1px solid rgba(255,255,255,0.08);
+}
+.chip.active {
+  background:rgba(59,130,246,0.15); color:#3b82f6;
+  border-color:rgba(59,130,246,0.3);
+}
+
+/* Drop Zone (Macos) */
+.drop-zone {
+  border:2px dashed rgba(255,255,255,0.15); border-radius:12px;
+  padding:20px; text-align:center; margin:8px 0;
+}
+.drop-zone-icon { font-size:28px; color:#3b82f6; margin-bottom:6px; }
+.drop-zone-text { font-size:12px; color:rgba(255,255,255,0.4); }
+.drop-zone-types { font-size:10px; color:rgba(255,255,255,0.25); margin-top:4px; }
+.mac-btn {
+  display:inline-block; padding:5px 12px; border-radius:6px;
+  background:rgba(59,130,246,0.2); border:1px solid rgba(59,130,246,0.3);
+  color:#60a5fa; font-size:11px; font-weight:600; margin:6px 4px 0;
+  cursor:pointer;
+}
+
+/* Device Info Bar */
+.device-info-bar {
+  display:flex; align-items:center; gap:8px; padding:10px 12px;
+  background:rgba(59,130,246,0.05); border-radius:12px; margin:8px 12px;
+  border:1px solid rgba(59,130,246,0.1);
+}
+.device-avatar {
+  width:40px; height:40px; border-radius:10px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  display:flex; align-items:center; justify-content:center; font-size:20px;
+}
+.conn-badge {
+  display:inline-block; padding:2px 8px; border-radius:8px;
+  background:rgba(34,197,94,0.15); color:#22c55e;
+  font-size:9px; font-weight:700; margin-left:8px;
+}
+.conn-line {
+  color:rgba(255,255,255,0.3); font-size:14px; letter-spacing:4px;
+}
+
+/* Watermark */
+.watermark {
+  position:fixed; top:16px; right:20px; z-index:200;
+  padding:6px 14px; border-radius:20px;
+  background:rgba(0,0,0,0.4); backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,0.08);
+  font-size:11px; color:rgba(255,255,255,0.4); font-weight:500;
+}
+
+/* Responsive */
+@media (max-width:900px) {
+  .devices-container, .discovery-layout, .clipboard-demo, .transfer-layout {
+    flex-direction:column; gap:30px;
+  }
+  .device-mac, .discovery-mac-panel, .transfer-mac { width:90vw; max-width:400px; }
+  .device-phone, .discovery-phone, .transfer-phone { width:80vw; max-width:280px; }
+  .status-grid { grid-template-columns:repeat(2,1fr); }
+  .connection-beam { display:none; }
+  .logo-title { font-size:36px; }
+  .outro-title { font-size:32px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Watermark -->
+<div class="watermark">DexoLink v2.0.2 • Demo</div>
+
+<!-- Progress Dots -->
+<div class="progress-dots" id="progressDots"></div>
+
+<!-- Navigation -->
+<div class="nav-controls">
+  <button class="nav-btn" id="prevBtn" onclick="prevScene()">◀</button>
+  <button class="nav-btn" id="nextBtn" onclick="nextScene()">▶</button>
+</div>
+<div class="play-toggle">
+  <button id="playBtn" onclick="toggleAutoplay()">⏸ Auto</button>
+</div>
+
+<!-- Scene 0 — Intro -->
+<div class="scene active" id="scene-intro">
+  <div class="intro-glow"></div>
+  <div class="intro-logo">
+    <div class="logo-icon">
+      <svg class="logo-svg" viewBox="0 0 120 120" fill="none">
+        <circle cx="60" cy="60" r="56" stroke="url(#g1)" stroke-width="4" fill="rgba(59,130,246,0.08)"/>
+        <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="6" stroke-linecap="round" fill="none"/>
+        <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="6" stroke-linecap="round" fill="none"/>
+        <defs><linearGradient id="g1" x1="0" y1="0" x2="120" y2="120"><stop stop-color="#3b82f6"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+      </svg>
+    </div>
+    <div class="logo-title">DexoLink</div>
+    <div class="logo-tagline">Connect • Sync • Share</div>
+    <div class="logo-version">v2.0.2 — Android ↔ macOS</div>
+  </div>
+</div>
+
+<!-- Scene 1 — Both Devices -->
+<div class="scene" id="scene-devices">
+  <div class="scene-title-overlay">
+    <h2>Seamless Cross-Platform Connection</h2>
+    <p>Android and macOS, working together over local Wi-Fi</p>
+  </div>
+  <div class="devices-container">
+    <!-- Android Phone -->
+    <div class="device-phone" style="position:relative;">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <div class="phone-header">
+          <svg width="28" height="28" viewBox="0 0 120 120" fill="none">
+            <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="6" stroke-linecap="round" fill="none"/>
+            <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="6" stroke-linecap="round" fill="none"/>
+          </svg>
+          <div>
+            <div class="phone-app-name">DexoLink</div>
+            <div class="phone-app-tag">Connect • Sync • Share</div>
+          </div>
+        </div>
+        <!-- Connection card -->
+        <div class="device-info-bar">
+          <div class="device-avatar">📱</div>
+          <div style="flex:1">
+            <div style="font-size:11px;font-weight:600;color:#e2e8f0">This Device</div>
+            <div style="font-size:9px;color:rgba(255,255,255,0.4)">Samsung S21+ • Android 16</div>
+          </div>
+          <div class="conn-line">• • •</div>
+          <div style="text-align:center">
+            <span class="conn-badge">● Connected</span>
+            <div style="font-size:9px;color:rgba(255,255,255,0.4);margin-top:2px">Bidirectional</div>
+          </div>
+          <div class="conn-line">• • •</div>
+          <div class="device-avatar" style="background:linear-gradient(135deg,#64748b,#475569)">💻</div>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:#e2e8f0">Rahul's MacBook</div>
+            <div style="font-size:9px;color:rgba(255,255,255,0.4)">macOS 15</div>
+          </div>
+        </div>
+        <!-- Feature cards -->
+        <div style="padding:0 4px;">
+          <div class="card"><div class="card-row">
+            <div class="card-icon blue">📋</div>
+            <div class="card-text"><h4>Clipboard Sync</h4><p>Sync text, links, images</p></div>
+            <span class="badge active">✓ Active</span>
+          </div></div>
+          <div class="card"><div class="card-row">
+            <div class="card-icon orange">📁</div>
+            <div class="card-text"><h4>File Sharing</h4><p>Send & receive up to 10 GB</p></div>
+            <span class="badge active">✓ Active</span>
+          </div></div>
+          <div class="card"><div class="card-row">
+            <div class="card-icon green">🔗</div>
+            <div class="card-text"><h4>Device Pairing</h4><p>Find and pair nearby</p></div>
+            <span class="badge active">✓ Active</span>
+          </div></div>
+        </div>
+        <!-- Bottom nav -->
+        <div class="bottom-nav">
+          <div class="nav-item active">
+            <div class="nav-active-bg"><span class="nav-item-icon">🏠</span></div>
+            <span>Home</span>
+          </div>
+          <div class="nav-item"><span class="nav-item-icon">📁</span><span>Files</span></div>
+          <div class="nav-item"><span class="nav-item-icon">↕️</span><span>Transfers</span></div>
+          <div class="nav-item"><span class="nav-item-icon">⚙️</span><span>Settings</span></div>
+        </div>
+      </div>
+      <div class="device-label">📱 <span>Android</span></div>
+    </div>
+
+    <!-- Connection Beam -->
+    <div class="connection-beam active">
+      <div class="beam-line"></div>
+      <div class="beam-particles">
+        <div class="beam-particle"></div>
+        <div class="beam-particle"></div>
+        <div class="beam-particle"></div>
+        <div class="beam-particle"></div>
+        <div class="beam-particle"></div>
+      </div>
+    </div>
+
+    <!-- macOS -->
+    <div class="device-mac" style="position:relative;">
+      <div class="mac-titlebar">
+        <div class="mac-dot red"></div>
+        <div class="mac-dot yellow"></div>
+        <div class="mac-dot green"></div>
+        <div class="mac-title">DexoLink — Menu Bar</div>
+      </div>
+      <div class="mac-screen">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+          <div style="width:32px;height:32px;border-radius:8px;background:rgba(34,197,94,0.15);display:flex;align-items:center;justify-content:center">✅</div>
+          <div>
+            <div style="font-size:13px;font-weight:700;color:#e2e8f0">samsung SM-G990B2</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.4)">Strict 1-Device Policy • Keychain Protected</div>
+          </div>
+          <span class="conn-badge" style="margin-left:auto">Connected</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:14px;">
+          <span class="mac-btn" style="background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)">Disconnect</span>
+          <span class="mac-btn" style="background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)">Unpair</span>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px;">📂 Quick File Sharing</div>
+        <div class="drop-zone">
+          <div class="drop-zone-icon">⬆</div>
+          <div class="drop-zone-text">Drop files here or click to send</div>
+          <div class="drop-zone-types">Photos • PDFs • Documents • Any file</div>
+          <div style="margin-top:8px;">
+            <span class="mac-btn">Send to Phone</span>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:6px;">
+          <span style="font-size:16px">🔄</span>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:#22c55e">Auto Clipboard Sync Active</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.3)">Last synced: "Fix the following issues in ..."</div>
+          </div>
+        </div>
+      </div>
+      <div class="device-label">💻 <span>macOS</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Scene 2 — Discovery & Pairing -->
+<div class="scene" id="scene-discovery">
+  <div class="scene-title-overlay">
+    <h2>Auto Device Discovery</h2>
+    <p>Find and pair devices on your local Wi-Fi network</p>
+  </div>
+  <div class="discovery-layout" style="margin-top:70px;">
+    <!-- Android Discovery Screen -->
+    <div class="discovery-phone">
+      <div class="screen-header">
+        <svg width="24" height="24" viewBox="0 0 120 120" fill="none">
+          <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" fill="none"/>
+          <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="7" stroke-linecap="round" fill="none"/>
+        </svg>
+        <div>
+          <h3 style="font-size:14px;color:#fff;">DexoLink</h3>
+          <div class="subtitle">Connect • Sync • Share</div>
+        </div>
+      </div>
+      <div class="device-info-bar" style="border-color:rgba(249,115,22,0.2);background:rgba(249,115,22,0.05);">
+        <div class="device-avatar" style="width:32px;height:32px;font-size:16px;">📱</div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:#e2e8f0">This Device</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.4)">samsung s21 • Android 16</div>
+        </div>
+        <div style="margin-left:auto;text-align:right;">
+          <div style="font-size:10px;color:#f97316;font-weight:600">Disconnected</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.3)">Ready to pair</div>
+        </div>
+      </div>
+      <div style="padding:0 12px;">
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <div style="flex:1;padding:10px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);text-align:center;">
+            <div style="font-size:16px;">🔌</div>
+            <div style="font-size:10px;font-weight:600;color:#94a3b8;margin-top:4px;">Connect by IP</div>
+          </div>
+          <div style="flex:1.3;padding:10px;border-radius:10px;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);text-align:center;">
+            <div style="font-size:16px;">⚡</div>
+            <div style="font-size:10px;font-weight:600;color:#3b82f6;margin-top:4px;">Pair Devices</div>
+            <div style="font-size:8px;color:rgba(59,130,246,0.6)">Nearby discovery</div>
+          </div>
+        </div>
+        <div class="card"><div class="card-row">
+          <div class="card-icon blue">📋</div>
+          <div class="card-text"><h4>Clipboard Sync</h4><p>Sync text, links, images across devices</p></div>
+          <span class="badge ready">○ Ready</span>
+        </div></div>
+        <div class="card"><div class="card-row">
+          <div class="card-icon orange">📁</div>
+          <div class="card-text"><h4>File Sharing</h4><p>Send & receive files up to 10 GB</p></div>
+          <span class="badge ready">Ready</span>
+        </div></div>
+        <div class="card"><div class="card-row">
+          <div class="card-icon green">🔗</div>
+          <div class="card-text"><h4>Device Pairing</h4><p>1 device(s) found on local Wi-Fi</p></div>
+          <span class="badge ready">○ Standby</span>
+        </div></div>
+      </div>
+      <div class="bottom-nav" style="margin-top:10px;">
+        <div class="nav-item active"><div class="nav-active-bg"><span class="nav-item-icon">🏠</span></div><span>Home</span></div>
+        <div class="nav-item"><span class="nav-item-icon">📁</span><span>Files</span></div>
+        <div class="nav-item"><span class="nav-item-icon">↕️</span><span>Transfers</span></div>
+        <div class="nav-item"><span class="nav-item-icon">⚙️</span><span>Settings</span></div>
+      </div>
+    </div>
+
+    <!-- macOS Discovery Panel -->
+    <div class="discovery-mac-panel">
+      <div class="mac-titlebar">
+        <div class="mac-dot red"></div>
+        <div class="mac-dot yellow"></div>
+        <div class="mac-dot green"></div>
+        <div class="mac-title">DexoLink</div>
+      </div>
+      <div class="mac-screen">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div style="font-size:13px;font-weight:700;color:#e2e8f0;">Nearby Devices (Wi-Fi)</div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+            <span class="mac-btn" style="padding:3px 10px;font-size:10px;">Stop</span>
+            <span style="font-size:14px;color:rgba(255,255,255,0.3);cursor:pointer;">🔄</span>
+          </div>
+        </div>
+        <!-- Device: Paired & Connected -->
+        <div class="card" style="border-color:rgba(34,197,94,0.2);background:rgba(34,197,94,0.03);">
+          <div class="card-row">
+            <span style="font-size:20px;">📱</span>
+            <div class="card-text">
+              <h4>samsung S21 <span class="badge paired" style="margin-left:4px;">★ Paired</span> <span class="badge connected">Connected</span></h4>
+              <p>Connected • Auto-sync active</p>
+            </div>
+            <span class="mac-btn" style="margin-left:auto;background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)">Disconnect</span>
+          </div>
+        </div>
+        <!-- Device: Paired offline -->
+        <div class="card">
+          <div class="card-row">
+            <span style="font-size:20px;">📱</span>
+            <div class="card-text">
+              <h4>samsung SM-G990B2 <span class="badge paired">★ Paired</span> <span style="color:rgba(255,255,255,0.35);font-size:10px;font-weight:600;">Offline</span></h4>
+              <p>Offline • Last seen: 15m ago</p>
+            </div>
+            <span class="mac-btn" style="margin-left:auto;">Connect</span>
+          </div>
+        </div>
+        <!-- Device: Blocked -->
+        <div class="card">
+          <div class="card-row">
+            <span style="font-size:20px;">📱</span>
+            <div class="card-text">
+              <h4>samsung s21 <span class="badge blocked">Blocked</span></h4>
+              <p>1-device policy: unpair current device first</p>
+            </div>
+            <span class="mac-btn" style="margin-left:auto;background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)">Unpair Current</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Scan Rings (background decoration) -->
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;opacity:0.3;">
+    <div class="scan-ring"></div>
+    <div class="scan-ring"></div>
+    <div class="scan-ring"></div>
+  </div>
+</div>
+
+<!-- Scene 3 — Clipboard Sync -->
+<div class="scene" id="scene-clipboard">
+  <div class="scene-title-overlay">
+    <h2>Real-Time Clipboard Sync</h2>
+    <p>Copy on one device, paste on the other — instantly</p>
+  </div>
+  <div class="clipboard-demo" style="margin-top:70px;">
+    <!-- Android Clipboard -->
+    <div class="clipboard-panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <span style="font-size:24px;">📱</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#e2e8f0;">Android Clipboard</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);">Samsung S21+</div>
+        </div>
+      </div>
+      <div class="clipboard-item synced" style="animation-delay:0.5s;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="color:#22c55e;font-size:10px;font-weight:700;">SYNCED</span>
+          <span style="font-size:9px;color:rgba(255,255,255,0.3);">Just now</span>
+        </div>
+        <div style="margin-top:4px;color:#e2e8f0;font-size:13px;">"Fix the following issues in the ConnectionManager..."</div>
+      </div>
+      <div class="clipboard-item" style="animation-delay:0.8s;">
+        <div style="font-size:10px;color:rgba(255,255,255,0.3);">2 min ago</div>
+        <div style="margin-top:4px;color:#94a3b8;">https://github.com/rahulmahaseth/DexoLink</div>
+      </div>
+      <div class="clipboard-item" style="animation-delay:1.1s;">
+        <div style="font-size:10px;color:rgba(255,255,255,0.3);">5 min ago</div>
+        <div style="margin-top:4px;color:#94a3b8;">192.168.1.42:5555</div>
+      </div>
+    </div>
+
+    <!-- Sync Arrow -->
+    <div class="sync-arrow-container">
+      <div class="sync-arrow">⇄</div>
+      <div class="sync-label">Auto Sync<br>Bidirectional</div>
+    </div>
+
+    <!-- macOS Clipboard -->
+    <div class="clipboard-panel" style="border-color:#1e3a2e;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <span style="font-size:24px;">💻</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#e2e8f0;">macOS Clipboard</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);">Rahul's MacBook</div>
+        </div>
+      </div>
+      <div class="clipboard-item synced" style="animation-delay:0.7s;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="color:#22c55e;font-size:10px;font-weight:700;">SYNCED ←</span>
+          <span style="font-size:9px;color:rgba(255,255,255,0.3);">From Android</span>
+        </div>
+        <div style="margin-top:4px;color:#e2e8f0;font-size:13px;">"Fix the following issues in the ConnectionManager..."</div>
+      </div>
+      <div class="clipboard-item" style="animation-delay:1.0s;">
+        <div style="font-size:10px;color:rgba(255,255,255,0.3);">2 min ago</div>
+        <div style="margin-top:4px;color:#94a3b8;">https://github.com/rahulmahaseth/DexoLink</div>
+      </div>
+      <div class="clipboard-item" style="animation-delay:1.3s;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="color:#22c55e;font-size:10px;font-weight:700;">SYNCED →</span>
+          <span style="font-size:9px;color:rgba(255,255,255,0.3);">Sent to Android</span>
+        </div>
+        <div style="margin-top:4px;color:#94a3b8;">swift build --configuration release</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scene 4 — File Transfer -->
+<div class="scene" id="scene-transfer">
+  <div class="scene-title-overlay">
+    <h2>High-Speed File Transfer</h2>
+    <p>Send files up to 10 GB with real-time progress, pause & resume</p>
+  </div>
+  <div class="transfer-layout" style="margin-top:70px;">
+    <!-- Android Transfer Screen -->
+    <div class="transfer-phone">
+      <div class="screen-header">
+        <svg width="24" height="24" viewBox="0 0 120 120" fill="none">
+          <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" fill="none"/>
+          <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="7" stroke-linecap="round" fill="none"/>
+        </svg>
+        <div>
+          <h3 style="font-size:14px;color:#fff;">DexoLink</h3>
+        </div>
+      </div>
+      <div class="section-title">Transfers</div>
+      <div class="section-sub">Send and receive files between devices</div>
+      <div class="chips">
+        <div class="chip active">⬆ Ongoing 3</div>
+        <div class="chip">✓ Completed</div>
+        <div class="chip">✕ Failed</div>
+      </div>
+      <div style="padding:0 10px;">
+        <!-- Active transfer 1 -->
+        <div class="card">
+          <div class="card-row">
+            <div class="file-icon vid">▶</div>
+            <div class="card-text">
+              <h4>Project_Video.mp4</h4>
+              <p>Sending to Mac • 4.8 GB / 5.0 GB</p>
+            </div>
+            <div style="font-size:12px;font-weight:700;color:#3b82f6;margin-left:auto;">96%</div>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill blue" id="prog1" style="width:96%;"></div>
+          </div>
+          <div class="transfer-stat">
+            <span class="speed">⚡ 42 MB/s</span> | 00:00:07 remaining
+            <div class="transfer-controls">
+              <button class="ctrl-btn pause">⏸</button>
+              <button class="ctrl-btn cancel">✕</button>
+            </div>
+          </div>
+        </div>
+        <!-- Active transfer 2 -->
+        <div class="card">
+          <div class="card-row">
+            <div class="file-icon zip">📦</div>
+            <div class="card-text">
+              <h4>Dataset.zip</h4>
+              <p>Receiving from Mac • 1.2 GB / 1.2 GB</p>
+            </div>
+            <div style="font-size:12px;font-weight:700;color:#22c55e;margin-left:auto;">100%</div>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill green" style="width:100%;"></div>
+          </div>
+          <div class="transfer-stat">
+            <span class="speed">✅ 58 MB/s</span> | Completed • 00:01:32
+            <div class="transfer-controls">
+              <button class="ctrl-btn done">✓</button>
+            </div>
+          </div>
+        </div>
+        <!-- Active transfer 3 -->
+        <div class="card">
+          <div class="card-row">
+            <div class="file-icon img">🖼</div>
+            <div class="card-text">
+              <h4>Photos_2026.zip</h4>
+              <p>Sending to Mac • 850 MB / 2.0 GB</p>
+            </div>
+            <div style="font-size:12px;font-weight:700;color:#a855f7;margin-left:auto;" id="prog3pct">42%</div>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill purple" id="prog3" style="width:42%;"></div>
+          </div>
+          <div class="transfer-stat">
+            <span class="speed">⚡ 36 MB/s</span> | 00:00:31 remaining
+            <div class="transfer-controls">
+              <button class="ctrl-btn pause">⏸</button>
+              <button class="ctrl-btn cancel">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-nav" style="margin-top:auto;">
+        <div class="nav-item"><span class="nav-item-icon">🏠</span><span>Home</span></div>
+        <div class="nav-item"><span class="nav-item-icon">📁</span><span>Files</span></div>
+        <div class="nav-item active"><div class="nav-active-bg"><span class="nav-item-icon">↕️</span></div><span>Transfers</span></div>
+        <div class="nav-item"><span class="nav-item-icon">⚙️</span><span>Settings</span></div>
+      </div>
+    </div>
+
+    <!-- macOS Drop + Recent -->
+    <div class="transfer-mac">
+      <div class="mac-titlebar">
+        <div class="mac-dot red"></div>
+        <div class="mac-dot yellow"></div>
+        <div class="mac-dot green"></div>
+        <div class="mac-title">DexoLink — File Sharing</div>
+      </div>
+      <div class="mac-screen">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+          <div style="font-size:13px;font-weight:700;color:#e2e8f0;">📂 Quick File Sharing</div>
+          <span class="mac-btn" style="font-size:10px;">📥 Downloads</span>
+        </div>
+        <div class="drop-zone">
+          <div class="drop-zone-icon">⬆</div>
+          <div class="drop-zone-text">Drop files here or click to send</div>
+          <div class="drop-zone-types">Photos • PDFs • Documents • Downloads • Any file</div>
+          <div style="margin-top:8px;">
+            <span class="mac-btn">Send to Phone</span>
+            <span class="mac-btn" style="background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:rgba(255,255,255,0.5)">All Share Options...</span>
+          </div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin:12px 0 6px;">Recent Transfers</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
+          <span style="color:#22c55e;">✅</span>
+          <span style="font-size:11px;color:#94a3b8;flex:1;">AML_ALL_PPI_GNN_paper_2.pdf</span>
+          <span style="font-size:10px;color:rgba(255,255,255,0.3);">937 KB</span>
+          <span class="mac-btn" style="padding:2px 8px;font-size:9px;">Show</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;">
+          <span style="color:#22c55e;">✅</span>
+          <span style="font-size:11px;color:#94a3b8;flex:1;">leaderboard_redesign.png</span>
+          <span style="font-size:10px;color:rgba(255,255,255,0.3);">288 KB</span>
+          <span class="mac-btn" style="padding:2px 8px;font-size:9px;">Show</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scene 5 — Files Browser -->
+<div class="scene" id="scene-files">
+  <div class="scene-title-overlay">
+    <h2>Browse & Send Files</h2>
+    <p>Access photos, videos, documents and more from your Android device</p>
+  </div>
+  <div style="margin-top:70px;">
+    <div class="discovery-phone" style="width:280px;min-height:500px;">
+      <div class="screen-header">
+        <svg width="24" height="24" viewBox="0 0 120 120" fill="none">
+          <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" fill="none"/>
+          <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="7" stroke-linecap="round" fill="none"/>
+        </svg>
+        <div>
+          <h3 style="font-size:14px;color:#fff;">DexoLink</h3>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:6px;">
+          <span style="font-size:16px;">🔔</span>
+          <span style="font-size:16px;">⚙️</span>
+        </div>
+      </div>
+      <div style="padding:4px 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div style="font-size:18px;font-weight:800;color:#fff;">Files</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.4);">Browse, send and manage files</div>
+          </div>
+          <div style="padding:7px 14px;border-radius:20px;background:#3b82f6;font-size:11px;font-weight:700;color:#fff;">⬆ Send File</div>
+        </div>
+      </div>
+      <div class="chips">
+        <div class="chip active">All</div>
+        <div class="chip">Photos</div>
+        <div class="chip">Videos</div>
+        <div class="chip">Documents</div>
+        <div class="chip">Downloads</div>
+      </div>
+      <div style="padding:0 10px;">
+        <div class="file-item"><div class="file-icon img">🖼</div><div><div class="file-name">Screenshot_2026-10-04.png</div><div class="file-meta">530.6 KB • Today, 10:42 AM</div></div><div class="file-actions">⋮</div></div>
+        <div class="file-item"><div class="file-icon pdf">📄</div><div><div class="file-name">group_11_DL.pdf</div><div class="file-meta">10.4 MB • Today, 09:18 AM</div></div><div class="file-actions">⋮</div></div>
+        <div class="file-item"><div class="file-icon doc">📝</div><div><div class="file-name">Report.docx</div><div class="file-meta">2.8 MB • Yesterday, 07:32 PM</div></div><div class="file-actions">⋮</div></div>
+        <div class="file-item"><div class="file-icon vid">▶</div><div><div class="file-name">Lecture.mp4</div><div class="file-meta">1.2 GB • Oct 2, 2026</div></div><div class="file-actions">⋮</div></div>
+        <div class="file-item"><div class="file-icon zip">📦</div><div><div class="file-name">Project_Files.zip</div><div class="file-meta">850.3 MB • Oct 1, 2026</div></div><div class="file-actions">⋮</div></div>
+      </div>
+      <div class="bottom-nav" style="margin-top:auto;">
+        <div class="nav-item"><span class="nav-item-icon">🏠</span><span>Home</span></div>
+        <div class="nav-item active"><div class="nav-active-bg"><span class="nav-item-icon">📁</span></div><span>Files</span></div>
+        <div class="nav-item"><span class="nav-item-icon">↕️</span><span>Transfers</span></div>
+        <div class="nav-item"><span class="nav-item-icon">⚙️</span><span>Settings</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scene 6 — Settings -->
+<div class="scene" id="scene-settings">
+  <div class="scene-title-overlay">
+    <h2>Powerful Settings</h2>
+    <p>Fine-tune features, sync options, and security policies</p>
+  </div>
+  <div style="margin-top:70px;">
+    <div class="settings-phone">
+      <div class="screen-header">
+        <svg width="24" height="24" viewBox="0 0 120 120" fill="none">
+          <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="7" stroke-linecap="round" fill="none"/>
+          <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="7" stroke-linecap="round" fill="none"/>
+        </svg>
+        <div>
+          <h3 style="font-size:14px;color:#fff;">DexoLink</h3>
+        </div>
+      </div>
+      <div style="padding:4px 16px;">
+        <div style="font-size:18px;font-weight:800;color:#fff;">Settings</div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.4);">Customize features and security</div>
+      </div>
+      <div style="padding:0 12px;">
+        <!-- Features Section -->
+        <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.5);margin:10px 4px 6px;display:flex;align-items:center;gap:6px;">⚙️ Features</div>
+        <div class="card">
+          <div class="card-row"><div class="card-icon blue">📋</div><div class="card-text"><h4>Clipboard Sync</h4><p>Sync text, links and images</p></div><div class="toggle on"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-row"><div class="card-icon orange">📁</div><div class="card-text"><h4>Quick File Sharing</h4><p>Send and receive files</p></div><div class="toggle on"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-row"><div class="card-icon green">📡</div><div class="card-text"><h4>Auto Device Discovery</h4><p>Find devices on local Wi-Fi</p></div><div class="toggle on"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-row"><div class="card-icon red">🔔</div><div class="card-text"><h4>Show Notifications</h4><p>Pairing and transfer alerts</p></div><div class="toggle on"></div></div>
+        </div>
+        <!-- Sync Options -->
+        <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.5);margin:12px 4px 6px;display:flex;align-items:center;gap:6px;">🔄 Sync Options</div>
+        <div class="card">
+          <div class="card-row"><div class="card-text"><h4>Sync Direction</h4></div><span style="color:#3b82f6;font-size:12px;font-weight:600;margin-left:auto;">Two-Way ›</span></div>
+        </div>
+        <div class="card">
+          <div class="card-row"><div class="card-text"><h4>Sync Large Files (up to 10 GB)</h4><p>Enable high-speed transfer</p></div><div class="toggle on"></div></div>
+        </div>
+        <!-- Security -->
+        <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.5);margin:12px 4px 6px;display:flex;align-items:center;gap:6px;">🔒 Security</div>
+        <div class="card">
+          <div class="card-row"><div class="card-icon purple">🛡</div><div class="card-text"><h4>Strict 1-Device Policy</h4><p>Only one device can be paired</p></div><div class="toggle on"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-row"><div class="card-icon blue">🔐</div><div class="card-text"><h4>Require Pairing Approval</h4><p>Ask before connecting</p></div><div class="toggle on"></div></div>
+        </div>
+      </div>
+      <div style="text-align:center;padding:10px;font-size:10px;color:rgba(255,255,255,0.25);">
+        Developed by Rahul Mahaseth | DexoLink v2.0.2
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scene 7 — Connection Status -->
+<div class="scene" id="scene-status">
+  <div class="scene-title-overlay">
+    <h2>Live Connection Status</h2>
+    <p>Monitor network, latency, sync status, and connection health in real-time</p>
+  </div>
+  <div style="margin-top:90px;">
+    <div class="status-grid">
+      <div class="status-card">
+        <div class="status-icon">📶</div>
+        <div class="status-label">Network</div>
+        <div class="status-value blue">Wi-Fi (Local)</div>
+      </div>
+      <div class="status-card">
+        <div class="status-icon">⚡</div>
+        <div class="status-label">Latency</div>
+        <div class="status-value green"><span id="latencyCounter">12</span> ms</div>
+      </div>
+      <div class="status-card">
+        <div class="status-icon">🔄</div>
+        <div class="status-label">Last Sync</div>
+        <div class="status-value">Just now</div>
+      </div>
+      <div class="status-card">
+        <div class="status-icon">🟢</div>
+        <div class="status-label">Connection</div>
+        <div class="status-value green">Stable</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scene 8 — Outro -->
+<div class="scene" id="scene-outro">
+  <div class="intro-glow" style="background:radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%);"></div>
+  <div class="outro-content">
+    <div class="outro-logo">
+      <svg viewBox="0 0 120 120" fill="none" width="80" height="80">
+        <circle cx="60" cy="60" r="56" stroke="url(#g2)" stroke-width="4" fill="rgba(59,130,246,0.08)"/>
+        <path d="M35 55c0-12 10-22 22-22h6c12 0 22 10 22 22v0c0 12-10 22-22 22h-6" stroke="#3b82f6" stroke-width="6" stroke-linecap="round" fill="none"/>
+        <path d="M85 65c0 12-10 22-22 22h-6c-12 0-22-10-22-22v0c0-12 10-22 22-22h6" stroke="#60a5fa" stroke-width="6" stroke-linecap="round" fill="none"/>
+        <defs><linearGradient id="g2" x1="0" y1="0" x2="120" y2="120"><stop stop-color="#3b82f6"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs>
+      </svg>
+    </div>
+    <div class="outro-title">DexoLink</div>
+    <div class="outro-subtitle">The seamless bridge between your Android phone and Mac. Fast, secure, and works entirely over local Wi-Fi.</div>
+    <div class="outro-features">
+      <div class="feature-pill">📋 Clipboard Sync</div>
+      <div class="feature-pill">📁 File Transfer</div>
+      <div class="feature-pill">🔒 Secure</div>
+      <div class="feature-pill">⚡ Low Latency</div>
+    </div>
+    <button class="outro-cta" onclick="window.open('https://github.com/rahulmahaseth/DexoLink','_blank')">
+      ⬇ Download DexoLink v2.0.2
+    </button>
+    <div class="outro-dev">Developed by Rahul Mahaseth</div>
+  </div>
+</div>
+
+<script>
+/* Scene Management */
+const scenes = [
+  'scene-intro', 'scene-devices', 'scene-discovery', 'scene-clipboard',
+  'scene-transfer', 'scene-files', 'scene-settings', 'scene-status', 'scene-outro'
+];
+let currentScene = 0;
+let autoplay = true;
+let autoTimer = null;
+const SCENE_DURATION = 5000; // 5 seconds per scene
+
+// Create progress dots
+const dotsContainer = document.getElementById('progressDots');
+scenes.forEach((_, i) => {
+  const dot = document.createElement('div');
+  dot.className = 'progress-dot' + (i === 0 ? ' active' : '');
+  dot.onclick = () => goToScene(i);
+  dot.style.cursor = 'pointer';
+  dotsContainer.appendChild(dot);
+});
+
+function goToScene(index) {
+  if (index < 0 || index >= scenes.length) return;
+  // Hide current
+  document.getElementById(scenes[currentScene]).classList.remove('active');
+  dotsContainer.children[currentScene].classList.remove('active');
+  // Show new
+  currentScene = index;
+  document.getElementById(scenes[currentScene]).classList.add('active');
+  dotsContainer.children[currentScene].classList.add('active');
+  // Reset autoplay timer
+  if (autoplay) startAutoplay();
+}
+
+function nextScene() {
+  if (currentScene < scenes.length - 1) {
+    goToScene(currentScene + 1);
+  } else {
+    goToScene(0); // Loop
+  }
+}
+
+function prevScene() {
+  if (currentScene > 0) goToScene(currentScene - 1);
+}
+
+function toggleAutoplay() {
+  autoplay = !autoplay;
+  const btn = document.getElementById('playBtn');
+  if (autoplay) {
+    btn.textContent = '⏸ Auto';
+    btn.classList.remove('paused');
+    startAutoplay();
+  } else {
+    btn.textContent = '▶ Paused';
+    btn.classList.add('paused');
+    clearTimeout(autoTimer);
+  }
+}
+
+function startAutoplay() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    if (autoplay) nextScene();
+  }, SCENE_DURATION);
+}
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextScene(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); prevScene(); }
+  if (e.key === 'p') toggleAutoplay();
+});
+
+// Start autoplay
+startAutoplay();
+
+/* Animated Progress Bars */
+let progVal = 42;
+setInterval(() => {
+  progVal = Math.min(progVal + 0.5, 100);
+  const el = document.getElementById('prog3');
+  const pct = document.getElementById('prog3pct');
+  if (el) el.style.width = progVal + '%';
+  if (pct) pct.textContent = Math.round(progVal) + '%';
+  if (progVal >= 100) progVal = 42; // Reset for demo loop
+}, 200);
+
+/* Animated Latency Counter */
+setInterval(() => {
+  const el = document.getElementById('latencyCounter');
+  if (el) el.textContent = Math.floor(8 + Math.random() * 15);
+}, 2000);
+</script>
+</body>
+</html>

@@ -36,6 +36,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
@@ -64,9 +65,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-// -------------------------------------------------------------
-// UI Design System & Theme (Modern Light Theme matching screenshots)
-// -------------------------------------------------------------
+// UI Design System & Theme
 
 @Composable
 fun DexoLinkTheme(content: @Composable () -> Unit) {
@@ -106,9 +105,7 @@ fun Modifier.dashedBorder(
     )
 }
 
-// -------------------------------------------------------------
-// Vector Graphics (MacBook, Phone, DexoLink Chains, Category Icons)
-// -------------------------------------------------------------
+// Vector Graphics
 
 @Composable
 fun DexoLinkChainIcon(modifier: Modifier = Modifier) {
@@ -236,27 +233,27 @@ fun FileCategoryIcon(
     modifier: Modifier = Modifier
 ) {
     val ext = extension.lowercase(Locale.ROOT)
-    val (bgColor, iconText) = when {
+    val (bgColor, iconVector, iconTint) = when {
         ext in listOf("jpg", "jpeg", "png", "webp", "gif", "heic", "bmp") -> {
-            Color(0xFFDCFCE7) to "🖼️"
+            Triple(Color(0xFFDCFCE7), DexoIcons.CategoryImage, Color(0xFF16A34A))
         }
         ext == "pdf" -> {
-            Color(0xFFFEE2E2) to "📄"
+            Triple(Color(0xFFFEE2E2), DexoIcons.CategoryPdf, Color(0xFFDC2626))
         }
         ext in listOf("doc", "docx", "txt", "rtf", "pages", "xls", "xlsx", "csv", "ppt", "pptx") -> {
-            Color(0xFFDBEAFE) to "📝"
+            Triple(Color(0xFFDBEAFE), DexoIcons.CategoryDoc, Color(0xFF2563EB))
         }
         ext in listOf("mp4", "mkv", "mov", "avi", "webm", "3gp") -> {
-            Color(0xFFF3E8FF) to "▶"
+            Triple(Color(0xFFF3E8FF), DexoIcons.CategoryVideo, Color(0xFF9333EA))
         }
         ext in listOf("zip", "rar", "7z", "tar", "gz") -> {
-            Color(0xFFFEF3C7) to "🗜"
+            Triple(Color(0xFFFEF3C7), DexoIcons.CategoryZip, Color(0xFFD97706))
         }
         ext in listOf("mp3", "m4a", "wav", "flac", "aac") -> {
-            Color(0xFFFCE7F3) to "🎵"
+            Triple(Color(0xFFFCE7F3), DexoIcons.CategoryAudio, Color(0xFFDB2777))
         }
         else -> {
-            Color(0xFFF1F5F9) to "📁"
+            Triple(Color(0xFFF1F5F9), DexoIcons.CategoryFile, Color(0xFF64748B))
         }
     }
 
@@ -267,13 +264,16 @@ fun FileCategoryIcon(
             .background(bgColor),
         contentAlignment = Alignment.Center
     ) {
-        Text(iconText, fontSize = 20.sp)
+        Icon(
+            imageVector = iconVector,
+            contentDescription = ext,
+            modifier = Modifier.size(22.dp),
+            tint = iconTint
+        )
     }
 }
 
-// -------------------------------------------------------------
-// File Thumbnail Cache & Loader (Efficient In-Memory LRU Cache)
-// -------------------------------------------------------------
+// File Thumbnail Cache & Loader
 
 object FileThumbnailCache {
     private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
@@ -410,9 +410,7 @@ fun FileThumbnailOrIcon(
     }
 }
 
-// -------------------------------------------------------------
-// Main Screen Layout (Root with Modern White Bar & Bottom Navigation)
-// -------------------------------------------------------------
+// Main Screen Layout
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -549,7 +547,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔐", fontSize = 22.sp)
+                    Icon(
+                        imageVector = DexoIcons.Lock,
+                        contentDescription = "Pairing",
+                        modifier = Modifier.size(22.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Device Pairing Request",
@@ -626,7 +629,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("✨", fontSize = 20.sp)
+                    Icon(
+                        imageVector = DexoIcons.Link,
+                        contentDescription = "Pair Devices",
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Pair Devices Nearby",
@@ -741,7 +749,11 @@ fun MainScreenRoot(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Scan Again ⟲", fontSize = 11.sp, color = Color(0xFF0066FF))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(DexoIcons.Sync, null, modifier = Modifier.size(13.dp), tint = Color(0xFF0066FF))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("Scan Again", fontSize = 11.sp, color = Color(0xFF0066FF))
+                            }
                         }
                         OutlinedButton(
                             onClick = {
@@ -751,7 +763,11 @@ fun MainScreenRoot(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Direct IP 🔗", fontSize = 11.sp, color = Color(0xFF0F172A))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(DexoIcons.Wifi, null, modifier = Modifier.size(13.dp), tint = Color(0xFF0F172A))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("Direct IP", fontSize = 11.sp, color = Color(0xFF0F172A))
+                            }
                         }
                     }
                 }
@@ -776,7 +792,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔗", fontSize = 20.sp)
+                    Icon(
+                        imageVector = DexoIcons.Wifi,
+                        contentDescription = "Manual IP",
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Manual IP Connection",
@@ -857,7 +878,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("✏️", fontSize = 20.sp)
+                    Icon(
+                        imageVector = DexoIcons.Edit,
+                        contentDescription = "Rename",
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         if (renameTarget == "paired") "Rename Paired Mac" else "Rename My Device",
@@ -926,7 +952,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔄", fontSize = 20.sp)
+                    Icon(
+                        imageVector = DexoIcons.Sync,
+                        contentDescription = "Sync Direction",
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Sync Direction",
@@ -1023,7 +1054,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🛡️", fontSize = 20.sp)
+                    Icon(
+                        imageVector = DexoIcons.Shield,
+                        contentDescription = "Security",
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Security & Defense-in-Depth",
@@ -1110,7 +1146,12 @@ fun MainScreenRoot(
             shape = RoundedCornerShape(20.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔔", fontSize = 20.sp)
+                    Icon(
+                        imageVector = DexoIcons.Bell,
+                        contentDescription = "Notifications",
+                        modifier = Modifier.size(20.dp),
+                        tint = Color(0xFF0066FF)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "Activity & Notifications",
@@ -1215,7 +1256,12 @@ fun MainScreenRoot(
                     navigationIcon = {
                         if (backStack.size > 1) {
                             IconButton(onClick = { navigateBack() }) {
-                                Text("←", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                                Icon(
+                                    imageVector = DexoIcons.ArrowBack,
+                                    contentDescription = "Back",
+                                    modifier = Modifier.size(22.dp),
+                                    tint = Color(0xFF0F172A)
+                                )
                             }
                         }
                     },
@@ -1251,7 +1297,12 @@ fun MainScreenRoot(
                                 .clickable { showNotificationsDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("🔔", fontSize = 16.sp)
+                            Icon(
+                                imageVector = DexoIcons.Bell,
+                                contentDescription = "Notifications",
+                                modifier = Modifier.size(18.dp),
+                                tint = Color(0xFF475569)
+                            )
                             Box(
                                 modifier = Modifier
                                 .size(8.dp)
@@ -1273,7 +1324,12 @@ fun MainScreenRoot(
                                 .clickable { navigateToTab(NavTab.SETTINGS) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("⚙️", fontSize = 16.sp)
+                            Icon(
+                                imageVector = DexoIcons.Settings,
+                                contentDescription = "Settings",
+                                modifier = Modifier.size(18.dp),
+                                tint = Color(0xFF475569)
+                            )
                         }
 
                         Spacer(modifier = Modifier.width(6.dp))
@@ -1287,7 +1343,12 @@ fun MainScreenRoot(
                             contentAlignment = Alignment.Center
                         ) {
                             IconButton(onClick = { showOverflowMenu = true }) {
-                                Text("⋮", fontSize = 20.sp, color = Color(0xFF334155), fontWeight = FontWeight.Bold)
+                                DexoIcon(
+                                    imageVector = DexoIcons.MoreVert,
+                                    contentDescription = "More Options",
+                                    tint = Color(0xFF334155),
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                             DropdownMenu(
                                 expanded = showOverflowMenu,
@@ -1466,9 +1527,7 @@ fun MainScreenRoot(
     }
 }
 
-// -------------------------------------------------------------
-// Home Tab Screen Content (Matching Screenshot 4)
-// -------------------------------------------------------------
+// Home Tab Screen Content
 
 @Composable
 fun HomeScreenContent(
@@ -1782,7 +1841,12 @@ fun HomeScreenContent(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.width(2.dp))
-                                Text("›", fontSize = 13.sp, color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                                DexoIcon(
+                                    imageVector = DexoIcons.ChevronRight,
+                                    contentDescription = null,
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(13.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
@@ -1813,7 +1877,12 @@ fun HomeScreenContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                                     ) {
-                                        Text("🔌", fontSize = 11.sp)
+                                        Icon(
+                                            imageVector = DexoIcons.Disconnect,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = Color(0xFFDC2626)
+                                        )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             "Disconnect",
@@ -1835,7 +1904,12 @@ fun HomeScreenContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                                     ) {
-                                        Text("⚡", fontSize = 11.sp)
+                                        Icon(
+                                            imageVector = DexoIcons.Flash,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = Color(0xFF0066FF)
+                                        )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             "Connect",
@@ -1858,7 +1932,12 @@ fun HomeScreenContent(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                                 ) {
-                                    Text("🗑️", fontSize = 11.sp)
+                                    Icon(
+                                        imageVector = DexoIcons.Trash,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp),
+                                        tint = Color(0xFF475569)
+                                    )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         "Unpair",
@@ -1888,7 +1967,12 @@ fun HomeScreenContent(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                     ) {
-                        Text("⚡", fontSize = 16.sp)
+                        Icon(
+                            imageVector = DexoIcons.Transfer,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFF1E40AF)
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             "${activeTransfers.size} active transfer(s) in progress",
@@ -1934,7 +2018,12 @@ fun HomeScreenContent(
                                 .background(Color(0xFFEFF6FF)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("🔗", fontSize = 18.sp)
+                            Icon(
+                                imageVector = DexoIcons.Wifi,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = Color(0xFF0066FF)
+                            )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
@@ -1978,7 +2067,12 @@ fun HomeScreenContent(
                                 .background(Color(0x33FFFFFF)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("✨", fontSize = 18.sp)
+                            Icon(
+                                imageVector = DexoIcons.Link,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = Color.White
+                            )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
@@ -2022,7 +2116,12 @@ fun HomeScreenContent(
                                 .background(Color(0xFF0066FF)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("📋", fontSize = 22.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.Clipboard,
+                                contentDescription = "Clipboard Sync",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -2041,9 +2140,9 @@ fun HomeScreenContent(
                         }
                         // Active Badge
                         val (clipBg, clipColor, clipText) = when {
-                            syncMode == ClipboardSyncMode.DISABLED -> Triple(Color(0xFFF1F5F9), Color(0xFF64748B), "- Disabled")
-                            isConnected -> Triple(Color(0xFFDCFCE7), Color(0xFF16A34A), "✓ Active")
-                            else -> Triple(Color(0xFFEFF6FF), Color(0xFF0066FF), "○ Ready")
+                            syncMode == ClipboardSyncMode.DISABLED -> Triple(Color(0xFFF1F5F9), Color(0xFF64748B), "Disabled")
+                            isConnected -> Triple(Color(0xFFDCFCE7), Color(0xFF16A34A), "Active")
+                            else -> Triple(Color(0xFFEFF6FF), Color(0xFF0066FF), "Ready")
                         }
                         Box(
                             modifier = Modifier
@@ -2067,13 +2166,23 @@ fun HomeScreenContent(
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("🕒", fontSize = 10.sp)
-                                Spacer(modifier = Modifier.width(3.dp))
+                                DexoIcon(
+                                    imageVector = DexoIcons.History,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0066FF),
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text("History", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0066FF))
                             }
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("›", fontSize = 18.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                        DexoIcon(
+                            imageVector = DexoIcons.ChevronRight,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
@@ -2098,7 +2207,12 @@ fun HomeScreenContent(
                                 .clickable { onOpenFilePicker() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("📁", fontSize = 22.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.Folder,
+                                contentDescription = "File Sharing",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -2122,14 +2236,19 @@ fun HomeScreenContent(
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                if (isConnected) "✓ Active" else "Ready",
+                                if (isConnected) "Active" else "Ready",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isConnected) Color(0xFF16A34A) else Color(0xFF64748B)
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("›", fontSize = 18.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                        DexoIcon(
+                            imageVector = DexoIcons.ChevronRight,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
@@ -2153,7 +2272,12 @@ fun HomeScreenContent(
                                 .background(Color(0xFFA855F7)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("📱", fontSize = 22.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.DeviceMac,
+                                contentDescription = "Device Pairing",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -2179,14 +2303,19 @@ fun HomeScreenContent(
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                if (pairedDevice != null) "✓ Active" else "○ Standby",
+                                if (pairedDevice != null) "Active" else "Standby",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (pairedDevice != null) Color(0xFF16A34A) else Color(0xFF64748B)
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("›", fontSize = 18.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                        DexoIcon(
+                            imageVector = DexoIcons.ChevronRight,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -2221,7 +2350,12 @@ fun HomeScreenContent(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { onNavigateSettings() }
                         ) {
-                            Text("📶", fontSize = 20.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.Wifi,
+                                contentDescription = "Network",
+                                tint = Color(0xFF0066FF),
+                                modifier = Modifier.size(22.dp)
+                            )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text("Network", fontSize = 11.sp, color = Color(0xFF64748B))
                             Spacer(modifier = Modifier.height(2.dp))
@@ -2241,7 +2375,12 @@ fun HomeScreenContent(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable { onSendPing() }
                         ) {
-                            Text("⚡", fontSize = 20.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.Flash,
+                                contentDescription = "Latency",
+                                tint = Color(0xFFF59E0B),
+                                modifier = Modifier.size(22.dp)
+                            )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text("Latency", fontSize = 11.sp, color = Color(0xFF64748B))
                             Spacer(modifier = Modifier.height(2.dp))
@@ -2258,7 +2397,12 @@ fun HomeScreenContent(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("🔄", fontSize = 20.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.Sync,
+                                contentDescription = "Last Sync",
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(22.dp)
+                            )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text("Last Sync", fontSize = 11.sp, color = Color(0xFF64748B))
                             Spacer(modifier = Modifier.height(2.dp))
@@ -2275,7 +2419,12 @@ fun HomeScreenContent(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("🔗", fontSize = 20.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.Link,
+                                contentDescription = "Connection",
+                                tint = Color(0xFF8B5CF6),
+                                modifier = Modifier.size(22.dp)
+                            )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text("Connection", fontSize = 11.sp, color = Color(0xFF64748B))
                             Spacer(modifier = Modifier.height(2.dp))
@@ -2305,9 +2454,7 @@ fun HomeScreenContent(
     }
 }
 
-// -------------------------------------------------------------
-// Files Tab Screen Content (Matching Screenshot 1)
-// -------------------------------------------------------------
+// Files Tab Screen Content
 
 @Composable
 fun FilesTabContent(
@@ -2363,7 +2510,12 @@ fun FilesTabContent(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("⬆", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    DexoIcon(
+                        imageVector = DexoIcons.ArrowUp,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Send File", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
@@ -2414,7 +2566,12 @@ fun FilesTabContent(
                             .background(Color(0xFFEFF6FF)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("📁", fontSize = 32.sp)
+                        DexoIcon(
+                            imageVector = DexoIcons.Folder,
+                            contentDescription = null,
+                            tint = Color(0xFF0066FF),
+                            modifier = Modifier.size(32.dp)
+                        )
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
@@ -2475,7 +2632,12 @@ fun FilesTabContent(
                             // 3-dots overflow menu
                             Box {
                                 IconButton(onClick = { showItemMenu = true }) {
-                                    Text("⋮", fontSize = 20.sp, color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                                    DexoIcon(
+                                        imageVector = DexoIcons.MoreVert,
+                                        contentDescription = "More Options",
+                                        tint = Color(0xFF64748B),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                                 DropdownMenu(
                                     expanded = showItemMenu,
@@ -2513,9 +2675,7 @@ fun FilesTabContent(
     }
 }
 
-// -------------------------------------------------------------
-// Transfers Tab Screen Content (Matching Screenshot 3)
-// -------------------------------------------------------------
+// Transfers Tab Screen Content
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -2699,7 +2859,21 @@ fun TransfersTabContent(
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(if (isPaused) "▶" else "||", fontSize = 12.sp, color = if (isPaused) Color(0xFFD97706) else Color(0xFF0066FF), fontWeight = FontWeight.Bold)
+                                            if (isPaused) {
+                                                DexoIcon(
+                                                    imageVector = DexoIcons.Play,
+                                                    contentDescription = "Resume",
+                                                    tint = Color(0xFFD97706),
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            } else {
+                                                DexoIcon(
+                                                    imageVector = DexoIcons.Pause,
+                                                    contentDescription = "Pause",
+                                                    tint = Color(0xFF0066FF),
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
                                         }
                                         Box(
                                             modifier = Modifier
@@ -2709,7 +2883,12 @@ fun TransfersTabContent(
                                                 .clickable { onCancelTransfer(item.id) },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text("✕", fontSize = 12.sp, color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                                            DexoIcon(
+                                                imageVector = DexoIcons.Close,
+                                                contentDescription = "Cancel",
+                                                tint = Color(0xFFEF4444),
+                                                modifier = Modifier.size(13.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -2740,8 +2919,15 @@ fun TransfersTabContent(
 
                                 // Speed and ETA Row
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Flash,
+                                        contentDescription = null,
+                                        tint = Color(0xFFF59E0B),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
                                     Text(
-                                        "⚡ ${formatSpeed(item.speedBytesPerSec)}",
+                                        formatSpeed(item.speedBytesPerSec),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = Color(0xFFF59E0B)
@@ -2771,7 +2957,12 @@ fun TransfersTabContent(
                                         .background(Color(0xFFEFF6FF)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text("⇅", fontSize = 28.sp, color = Color(0xFF0066FF))
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Transfer,
+                                        contentDescription = null,
+                                        tint = Color(0xFF0066FF),
+                                        modifier = Modifier.size(28.dp)
+                                    )
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
@@ -2794,7 +2985,12 @@ fun TransfersTabContent(
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("⬆", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                        DexoIcon(
+                                            imageVector = DexoIcons.ArrowUp,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text("Send File", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                     }
@@ -2895,12 +3091,21 @@ fun TransfersTabContent(
                                     .clickable { showClearAllConfirmDialog = true }
                                     .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Text(
-                                    "🗑 Clear All",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFDC2626)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Trash,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDC2626),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Clear All",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFDC2626)
+                                    )
+                                }
                             }
                         }
                     }
@@ -3008,7 +3213,12 @@ fun TransfersTabContent(
                                         .clickable { onOpenFile(localFile) },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text("📁", fontSize = 14.sp)
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Folder,
+                                        contentDescription = "Open File",
+                                        tint = Color(0xFF0F172A),
+                                        modifier = Modifier.size(15.dp)
+                                    )
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
@@ -3022,7 +3232,12 @@ fun TransfersTabContent(
                                         .clickable { onResumeTransfer(item.id) },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text("⟲", fontSize = 14.sp, color = Color(0xFF0066FF), fontWeight = FontWeight.Bold)
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Retry,
+                                        contentDescription = "Retry",
+                                        tint = Color(0xFF0066FF),
+                                        modifier = Modifier.size(14.dp)
+                                    )
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
@@ -3032,7 +3247,12 @@ fun TransfersTabContent(
                                 onClick = { onDeleteTransfer(item.id) },
                                 modifier = Modifier.size(32.dp)
                             ) {
-                                Text("🗑", fontSize = 13.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Trash,
+                                    contentDescription = "Delete",
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(14.dp)
+                                )
                             }
 
                             // 3-dots menu button
@@ -3041,7 +3261,12 @@ fun TransfersTabContent(
                                     onClick = { showItemMenu = true },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Text("⋮", fontSize = 18.sp, color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                                    DexoIcon(
+                                        imageVector = DexoIcons.MoreVert,
+                                        contentDescription = "More Options",
+                                        tint = Color(0xFF64748B),
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                 }
                                 DropdownMenu(
                                     expanded = showItemMenu,
@@ -3154,9 +3379,7 @@ fun TransfersTabContent(
     }
 }
 
-// -------------------------------------------------------------
-// Settings Tab Screen Content (Matching Screenshot 2)
-// -------------------------------------------------------------
+// Settings Tab Screen Content
 
 @Composable
 fun SettingsTabContent(
@@ -3210,7 +3433,12 @@ fun SettingsTabContent(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("⚙️", fontSize = 16.sp)
+                    DexoIcon(
+                        imageVector = DexoIcons.Settings,
+                        contentDescription = null,
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "Features",
@@ -3239,7 +3467,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFF0066FF)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("📋", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Clipboard,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3265,7 +3498,12 @@ fun SettingsTabContent(
                                 .clickable { onOpenClipboardHistory() }
                                 .padding(vertical = 4.dp, horizontal = 4.dp)
                         ) {
-                            Text("🕒", fontSize = 13.sp)
+                            DexoIcon(
+                                imageVector = DexoIcons.History,
+                                contentDescription = null,
+                                tint = Color(0xFF0066FF),
+                                modifier = Modifier.size(13.dp)
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 "View Clipboard History",
@@ -3274,7 +3512,12 @@ fun SettingsTabContent(
                                 color = Color(0xFF0066FF)
                             )
                             Spacer(modifier = Modifier.weight(1f))
-                            Text("→", fontSize = 13.sp, color = Color(0xFF64748B))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF64748B),
+                                modifier = Modifier.size(14.dp)
+                            )
                         }
 
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
@@ -3291,7 +3534,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFFF59E0B)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("📁", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Folder,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3319,7 +3567,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFFA855F7)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("🔍", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Search,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3347,7 +3600,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFFEF4444)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("🔔", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Bell,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3369,7 +3627,12 @@ fun SettingsTabContent(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🔄", fontSize = 16.sp)
+                    DexoIcon(
+                        imageVector = DexoIcons.Sync,
+                        contentDescription = null,
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "Sync Options",
@@ -3400,7 +3663,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFF0066FF)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("📋", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Clipboard,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
@@ -3410,12 +3678,21 @@ fun SettingsTabContent(
                                 color = Color(0xFF0F172A),
                                 modifier = Modifier.weight(1f)
                             )
-                            Text(
-                                "${syncMode.title} ›",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF0066FF)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    syncMode.title,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF0066FF)
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                DexoIcon(
+                                    imageVector = DexoIcons.ChevronRight,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0066FF),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
 
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
@@ -3432,7 +3709,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFF10B981)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("⬇", fontSize = 18.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                DexoIcon(
+                                    imageVector = DexoIcons.ArrowDown,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3460,7 +3742,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFF64748B)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("🛡️", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Shield,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3482,7 +3769,12 @@ fun SettingsTabContent(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🛡️", fontSize = 16.sp)
+                    DexoIcon(
+                        imageVector = DexoIcons.Shield,
+                        contentDescription = null,
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "Security",
@@ -3511,7 +3803,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFF8B5CF6)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("🔒", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Lock,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3541,7 +3838,12 @@ fun SettingsTabContent(
                                     .background(Color(0xFF0066FF)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("🔑", fontSize = 18.sp)
+                                DexoIcon(
+                                    imageVector = DexoIcons.Key,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -3703,7 +4005,16 @@ fun SettingsTabContent(
                                 shape = RoundedCornerShape(8.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Text("Ping Mac ⚡", fontSize = 11.sp, color = Color(0xFF0066FF))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Ping Mac", fontSize = 11.sp, color = Color(0xFF0066FF))
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Flash,
+                                        contentDescription = null,
+                                        tint = Color(0xFF0066FF),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -3715,9 +4026,7 @@ fun SettingsTabContent(
     }
 }
 
-// -------------------------------------------------------------
 // Bottom Navigation Bar with Fixed Developer Attribution Footer
-// -------------------------------------------------------------
 
 @Composable
 fun DexoLinkBottomNavBar(
@@ -3741,28 +4050,28 @@ fun DexoLinkBottomNavBar(
             ) {
                 NavBarPillItem(
                     title = "Home",
-                    icon = "🏠",
+                    icon = DexoIcons.Home,
                     isSelected = selectedTab == NavTab.HOME,
                     badge = null,
                     onClick = { onTabSelected(NavTab.HOME) }
                 )
                 NavBarPillItem(
                     title = "Files",
-                    icon = "📁",
+                    icon = DexoIcons.Folder,
                     isSelected = selectedTab == NavTab.FILES,
                     badge = null,
                     onClick = { onTabSelected(NavTab.FILES) }
                 )
                 NavBarPillItem(
                     title = "Transfers",
-                    icon = "⇅",
+                    icon = DexoIcons.Transfer,
                     isSelected = selectedTab == NavTab.TRANSFERS,
                     badge = if (activeTransfersCount > 0) activeTransfersCount.toString() else null,
                     onClick = { onTabSelected(NavTab.TRANSFERS) }
                 )
                 NavBarPillItem(
                     title = "Settings",
-                    icon = "⚙️",
+                    icon = DexoIcons.Settings,
                     isSelected = selectedTab == NavTab.SETTINGS,
                     badge = null,
                     onClick = { onTabSelected(NavTab.SETTINGS) }
@@ -3792,7 +4101,7 @@ fun DexoLinkBottomNavBar(
 @Composable
 fun NavBarPillItem(
     title: String,
-    icon: String,
+    icon: ImageVector,
     isSelected: Boolean,
     badge: String?,
     onClick: () -> Unit
@@ -3807,10 +4116,11 @@ fun NavBarPillItem(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box {
-                Text(
-                    icon,
-                    fontSize = 18.sp,
-                    color = if (isSelected) Color.White else Color(0xFF64748B)
+                DexoIcon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = if (isSelected) Color.White else Color(0xFF64748B),
+                    modifier = Modifier.size(20.dp)
                 )
                 if (badge != null) {
                     Box(
@@ -3842,9 +4152,7 @@ fun NavBarPillItem(
     }
 }
 
-// -------------------------------------------------------------
 // Helper Data Formatters & Utilities
-// -------------------------------------------------------------
 
 data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
@@ -3901,9 +4209,7 @@ fun formatFileDate(timestamp: Long): String {
     }
 }
 
-// -------------------------------------------------------------
 // Clipboard History Dialog
-// -------------------------------------------------------------
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -3964,7 +4270,12 @@ fun ClipboardHistoryDialog(
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                        Text("✕", fontSize = 16.sp, color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                        DexoIcon(
+                            imageVector = DexoIcons.Close,
+                            contentDescription = "Close",
+                            tint = Color(0xFF64748B),
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
 
@@ -4058,12 +4369,21 @@ fun ClipboardHistoryDialog(
                                     .clickable { showClearAllConfirmDialog = true }
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
-                                Text(
-                                    "🗑 Clear All",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFDC2626)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Trash,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDC2626),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Clear All",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFDC2626)
+                                    )
+                                }
                             }
                         }
                     }
@@ -4078,7 +4398,20 @@ fun ClipboardHistoryDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("📋", fontSize = 40.sp)
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEFF6FF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Clipboard,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0066FF),
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
                                 "No clipboard history yet",
@@ -4174,7 +4507,12 @@ fun ClipboardHistoryDialog(
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text("📋", fontSize = 12.sp)
+                                            DexoIcon(
+                                                imageVector = DexoIcons.Clipboard,
+                                                contentDescription = "Copy",
+                                                tint = Color(0xFF0066FF),
+                                                modifier = Modifier.size(13.dp)
+                                            )
                                         }
 
                                         Spacer(modifier = Modifier.width(6.dp))
@@ -4188,7 +4526,12 @@ fun ClipboardHistoryDialog(
                                                 .clickable { onDeleteItem(item.id) },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text("🗑", fontSize = 12.sp)
+                                            DexoIcon(
+                                                imageVector = DexoIcons.Trash,
+                                                contentDescription = "Delete",
+                                                tint = Color(0xFFDC2626),
+                                                modifier = Modifier.size(13.dp)
+                                            )
                                         }
                                     }
 
