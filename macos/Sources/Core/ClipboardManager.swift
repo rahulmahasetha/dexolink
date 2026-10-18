@@ -10,13 +10,29 @@ public enum ClipboardDirection {
     case bidirectional
 }
 
+public struct ClipboardHistoryItem: Identifiable, Codable, Equatable {
+    public let id: String
+    public let text: String
+    public let timestamp: Date
+    public let isOutgoing: Bool
+
+    public init(id: String = UUID().uuidString, text: String, timestamp: Date = Date(), isOutgoing: Bool) {
+        self.id = id
+        self.text = text
+        self.timestamp = timestamp
+        self.isOutgoing = isOutgoing
+    }
+}
+
 public protocol ClipboardManagerDelegate: AnyObject {
     func clipboardManager(_ manager: ClipboardManager, didReceiveText text: String)
     func clipboardManager(_ manager: ClipboardManager, didSendText text: String)
+    func clipboardManagerDidUpdateHistory(_ manager: ClipboardManager)
 }
 
 public extension ClipboardManagerDelegate {
     func clipboardManager(_ manager: ClipboardManager, didSendText text: String) {}
+    func clipboardManagerDidUpdateHistory(_ manager: ClipboardManager) {}
 }
 
 public class ClipboardManager {
@@ -28,6 +44,8 @@ public class ClipboardManager {
     private var lastSentHash: String = ""
     private var lastReceivedHash: String = ""
     private var timer: Timer?
+    private let historyKey = "com.dexolink.clipboard_history"
+    public private(set) var history: [ClipboardHistoryItem] = []
     
     public var direction: ClipboardDirection = .disabled {
         didSet {
@@ -47,6 +65,56 @@ public class ClipboardManager {
     
     public init() {
         self.lastChangeCount = pasteboard.changeCount
+        loadHistory()
+    }
+    
+    private func loadHistory() {
+        guard let data = UserDefaults.standard.data(forKey: historyKey),
+              let list = try? JSONDecoder().decode([ClipboardHistoryItem].self, from: data) else {
+            return
+        }
+        self.history = list
+    }
+
+    private func persistHistory() {
+        if let data = try? JSONEncoder().encode(Array(history.prefix(50))) {
+            UserDefaults.standard.set(data, forKey: historyKey)
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.delegate?.clipboardManagerDidUpdateHistory(self)
+        }
+    }
+
+    public func addToHistory(text: String, isOutgoing: Bool) {
+        if let first = history.first, first.text == text {
+            return
+        }
+        let item = ClipboardHistoryItem(text: text, isOutgoing: isOutgoing)
+        history.insert(item, at: 0)
+        if history.count > 50 {
+            history = Array(history.prefix(50))
+        }
+        persistHistory()
+    }
+
+    // MARK: - History Deletion (Safe: does not delete disk files or disconnect)
+    public func deleteItem(id: String) {
+        history.removeAll(where: { $0.id == id })
+        persistHistory()
+        print("🗑️ Removed clipboard item \(id) from history")
+    }
+
+    public func deleteItems(ids: Set<String>) {
+        history.removeAll(where: { ids.contains($0.id) })
+        persistHistory()
+        print("🗑️ Removed \(ids.count) clipboard items from history")
+    }
+
+    public func clearHistory() {
+        history.removeAll()
+        persistHistory()
+        print("🗑️ Cleared all clipboard history")
     }
     
     public func setConnectionManager(_ manager: ConnectionManager?) {
@@ -143,6 +211,7 @@ public class ClipboardManager {
         sequenceNumber += 1
         print("📤 [macOS Clipboard Detect] Local pasteboard copied: \"\(text.prefix(35))...\" (\(text.count) chars, seq: \(sequenceNumber))")
         print("📤 [macOS Clipboard Send] Transmitting to Android (mode: \(direction))...")
+        addToHistory(text: text, isOutgoing: true)
         let message = ProtocolMessage.clipboardPush(sequenceNumber: sequenceNumber, content: text)
         connectionManager?.send(message: message)
         DispatchQueue.main.async { [weak self] in
@@ -167,6 +236,7 @@ public class ClipboardManager {
             // Loop prevention: only set pasteboard if it's new
             if hash != lastReceivedHash && hash != lastSentHash {
                 lastReceivedHash = hash
+                addToHistory(text: content, isOutgoing: false)
                 
                 DispatchQueue.main.async {
                     self.pasteboard.clearContents()

@@ -14,6 +14,8 @@ public enum ProtocolMessage: Codable, Equatable {
     case fileAck(fileId: String, verified: Bool)
     case progress(transferId: String, fileId: String, bytesReceived: Int64)
     case cancel(transferId: String)
+    case pause(transferId: String)
+    case resume(transferId: String)
     case error(code: Int, message: String)
     case ping
     case pong
@@ -42,6 +44,8 @@ public enum ProtocolMessage: Codable, Equatable {
         case fileAck = "FILE_ACK"
         case progress = "PROGRESS"
         case cancel = "CANCEL"
+        case pause = "PAUSE"
+        case resume = "RESUME"
         case error = "ERROR"
         case ping = "PING"
         case pong = "PONG"
@@ -121,6 +125,10 @@ public enum ProtocolMessage: Codable, Equatable {
             )
         case .cancel:
             self = .cancel(transferId: try container.decode(String.self, forKey: .transferId))
+        case .pause:
+            self = .pause(transferId: try container.decode(String.self, forKey: .transferId))
+        case .resume:
+            self = .resume(transferId: try container.decode(String.self, forKey: .transferId))
         case .error:
             self = .error(
                 code: try container.decode(Int.self, forKey: .code),
@@ -202,6 +210,12 @@ public enum ProtocolMessage: Codable, Equatable {
             try container.encode(bytesReceived, forKey: .bytesReceived)
         case let .cancel(transferId):
             try container.encode(MessageType.cancel, forKey: .type)
+            try container.encode(transferId, forKey: .transferId)
+        case let .pause(transferId):
+            try container.encode(MessageType.pause, forKey: .type)
+            try container.encode(transferId, forKey: .transferId)
+        case let .resume(transferId):
+            try container.encode(MessageType.resume, forKey: .type)
             try container.encode(transferId, forKey: .transferId)
         case let .error(code, message):
             try container.encode(MessageType.error, forKey: .type)

@@ -6,6 +6,8 @@ import Core
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @State private var showManualIPSheet = false
+    @State private var showHistorySheet = false
+    @State private var historyInitialTab = 0
     @State private var manualIP = ""
     @State private var manualPort = "52840"
     @State private var isTargetedForDrop = false
@@ -23,6 +25,16 @@ struct MenuBarView: View {
                     .fontWeight(.bold)
 
                 Spacer()
+
+                Button(action: {
+                    historyInitialTab = 0
+                    showHistorySheet.toggle()
+                }) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Transfer & Clipboard History")
 
                 Button(action: {
                     showManualIPSheet.toggle()
@@ -254,24 +266,52 @@ struct MenuBarView: View {
                             handleFileDrop(providers: providers)
                         }
 
-                        // Active Transfer Progress
+                        // Active Transfer Progress (with Pause / Resume & Cancel)
                         if let transfer = appState.activeTransfer {
+                            let isPaused: Bool = {
+                                if case .paused = transfer.state { return true }
+                                return false
+                            }()
+
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Image(systemName: transfer.isOutgoing ? "arrow.up.circle" : "arrow.down.circle")
+                                    Image(systemName: transfer.isOutgoing ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
                                         .foregroundColor(transfer.isOutgoing ? .cyan : .green)
-                                    Text(transfer.name)
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .lineLimit(1)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(transfer.name)
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .lineLimit(1)
+                                        Text(isPaused ? "Paused" : (transfer.isOutgoing ? "Uploading to phone..." : "Downloading from phone..."))
+                                            .font(.system(size: 9))
+                                            .foregroundColor(isPaused ? .orange : .secondary)
+                                    }
+
                                     Spacer()
+
+                                    // Pause / Resume Button
+                                    Button(action: {
+                                        if isPaused {
+                                            appState.unpauseTransfer(id: transfer.id)
+                                        } else {
+                                            appState.pauseTransfer(id: transfer.id)
+                                        }
+                                    }) {
+                                        Image(systemName: isPaused ? "play.circle.fill" : "pause.circle.fill")
+                                            .foregroundColor(isPaused ? .green : .orange)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(isPaused ? "Resume transfer" : "Pause transfer")
+
+                                    // Cancel Button
                                     Button(action: {
                                         appState.cancelTransfer(id: transfer.id)
                                     }) {
                                         Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.secondary)
+                                            .foregroundColor(.red.opacity(0.8))
                                     }
                                     .buttonStyle(.plain)
+                                    .help("Cancel file sharing")
                                 }
 
                                 ProgressView(value: transfer.progress)
@@ -282,7 +322,7 @@ struct MenuBarView: View {
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                     Spacer()
-                                    if transfer.speedBytesPerSec > 0 {
+                                    if transfer.speedBytesPerSec > 0 && !isPaused {
                                         Text("\(formatBytes(Int64(transfer.speedBytesPerSec)))/s")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
@@ -296,22 +336,35 @@ struct MenuBarView: View {
                                     Text("\(Int(transfer.progress * 100))%")
                                         .font(.caption2)
                                         .fontWeight(.bold)
+                                        .foregroundColor(isPaused ? .orange : .primary)
                                 }
                             }
                             .padding(8)
-                            .background(Color.secondary.opacity(0.08))
+                            .background((isPaused ? Color.orange : Color.secondary).opacity(0.10))
                             .cornerRadius(8)
                         }
 
-                        // Recent Completed Transfers
+                        // Recent Completed Transfers (with Manage History & Single Delete)
                         if !appState.recentTransfers.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Recent Transfers")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(.secondary)
+                                HStack {
+                                    Text("Recent Transfers")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.secondary)
 
-                                ForEach(appState.recentTransfers.prefix(2)) { item in
-                                    HStack {
+                                    Spacer()
+
+                                    Button("Manage (\(appState.recentTransfers.count))") {
+                                        historyInitialTab = 0
+                                        showHistorySheet = true
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(.accentColor)
+                                }
+
+                                ForEach(appState.recentTransfers.prefix(3)) { item in
+                                    HStack(spacing: 6) {
                                         Image(systemName: item.state == .completed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                                             .foregroundColor(item.state == .completed ? .green : .red)
                                             .font(.caption)
@@ -336,6 +389,17 @@ struct MenuBarView: View {
                                             .buttonStyle(.borderless)
                                             .font(.caption2)
                                         }
+
+                                        // Individual Delete from history (safe: file preserved)
+                                        Button(action: {
+                                            appState.deleteTransferHistoryItem(id: item.id)
+                                        }) {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 9))
+                                                .foregroundColor(.secondary.opacity(0.7))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Remove from history (preserves original file on Mac)")
                                     }
                                 }
                             }
@@ -370,6 +434,16 @@ struct MenuBarView: View {
                             }
 
                             Spacer()
+
+                            Button(action: {
+                                historyInitialTab = 1
+                                showHistorySheet = true
+                            }) {
+                                Image(systemName: "clock.arrow.circlepath")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("View clipboard history & delete items")
 
                             Button(action: {
                                 appState.sendPing()
@@ -514,6 +588,13 @@ struct MenuBarView: View {
                 }
             )
         }
+        .sheet(isPresented: $showHistorySheet) {
+            HistorySheetView(
+                appState: appState,
+                isPresented: $showHistorySheet,
+                selectedTab: historyInitialTab
+            )
+        }
     }
 
     private var isConnected: Bool {
@@ -625,7 +706,8 @@ struct DeviceRow: View {
         let pairedDevice = TrustStore.shared.getPairedDevice()
         let isPaired = (pairedDevice != nil && (
             device.id == pairedDevice!.deviceId ||
-            device.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(pairedDevice!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+            device.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(pairedDevice!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+            device.isPaired
         ))
         let isCurrentConnected = isPaired && (appState.connectionState.isConnected)
         let anotherDevicePaired = (pairedDevice != nil && !isPaired)
@@ -722,19 +804,43 @@ struct DeviceRow: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.mini)
             } else if anotherDevicePaired {
-                Button("Unpair Current") {
-                    appState.statusMessage = "Strict 1-Device Policy: Unpair '\(pairedDevice!.deviceName)' first to pair with '\(device.name)'."
+                HStack(spacing: 4) {
+                    Button("Unpair Current") {
+                        appState.statusMessage = "Strict 1-Device Policy: Unpair '\(pairedDevice!.deviceName)' first to pair with '\(device.name)'."
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("Unpair '\(pairedDevice!.deviceName)' above first to connect this device")
+
+                    Button(action: {
+                        appState.removeDiscoveredDevice(id: device.id)
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss from nearby list")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .help("Unpair '\(pairedDevice!.deviceName)' above first to connect this device")
             } else {
-                Button("Pair Device") {
-                    appState.connect(to: device)
+                HStack(spacing: 4) {
+                    Button("Pair Device") {
+                        appState.connect(to: device)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .tint(.purple)
+
+                    Button(action: {
+                        appState.removeDiscoveredDevice(id: device.id)
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss from nearby list")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .tint(.purple)
             }
         }
         .padding(8)
@@ -834,3 +940,439 @@ struct ManualIPSheet: View {
         .frame(width: 280)
     }
 }
+
+// MARK: - History Sheet View (File Transfers & Clipboard Logs)
+struct HistorySheetView: View {
+    @ObservedObject var appState: AppState
+    @Binding var isPresented: Bool
+    @State var selectedTab: Int = 0 // 0: Transfers, 1: Clipboard
+
+    // Multi-selection state
+    @State private var isSelectionMode: Bool = false
+    @State private var selectedTransferIds: Set<String> = []
+    @State private var selectedClipboardIds: Set<String> = []
+
+    // Confirmation alerts
+    @State private var showDeleteSelectedTransfersAlert = false
+    @State private var showClearTransfersAlert = false
+    @State private var showDeleteSelectedClipboardAlert = false
+    @State private var showClearClipboardAlert = false
+    @State private var copiedClipboardId: String? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundColor(.accentColor)
+                    .font(.title3)
+
+                Text("Activity & History")
+                    .font(.headline)
+                    .fontWeight(.bold)
+
+                Spacer()
+
+                Button("Done") {
+                    isPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            // Segmented Tab Picker
+            Picker("", selection: $selectedTab) {
+                Text("File Transfers (\(appState.recentTransfers.count))").tag(0)
+                Text("Clipboard History (\(appState.clipboardHistory.count))").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            // Content Area
+            if selectedTab == 0 {
+                transfersTabView
+            } else {
+                clipboardTabView
+            }
+
+            Divider()
+
+            // Safe footnote
+            HStack {
+                Image(systemName: "shield.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("Deleting history preserves original files on disk and keeps paired connections active.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+        }
+        .frame(width: 480, height: 460)
+        // Confirmation Alerts
+        .alert("Delete Selected Transfers?", isPresented: $showDeleteSelectedTransfersAlert) {
+            Button("Delete (\(selectedTransferIds.count))", role: .destructive) {
+                appState.deleteTransferHistoryItems(ids: selectedTransferIds)
+                selectedTransferIds.removeAll()
+                isSelectionMode = false
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete these \(selectedTransferIds.count) item(s) from transfer history? Original files on your Mac will NOT be deleted.")
+        }
+        .alert("Clear All Transfer History?", isPresented: $showClearTransfersAlert) {
+            Button("Clear All", role: .destructive) {
+                appState.clearTransferHistory()
+                selectedTransferIds.removeAll()
+                isSelectionMode = false
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to clear your transfer history? Original files on your Mac will NOT be deleted.")
+        }
+        .alert("Delete Selected Clips?", isPresented: $showDeleteSelectedClipboardAlert) {
+            Button("Delete (\(selectedClipboardIds.count))", role: .destructive) {
+                appState.deleteClipboardHistoryItems(ids: selectedClipboardIds)
+                selectedClipboardIds.removeAll()
+                isSelectionMode = false
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete these \(selectedClipboardIds.count) snippet(s) from clipboard history?")
+        }
+        .alert("Clear Clipboard History?", isPresented: $showClearClipboardAlert) {
+            Button("Clear All", role: .destructive) {
+                appState.clearClipboardHistory()
+                selectedClipboardIds.removeAll()
+                isSelectionMode = false
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to clear all clipboard history?")
+        }
+    }
+
+    // MARK: - Transfers Tab View
+    private var transfersTabView: some View {
+        VStack(spacing: 8) {
+            // Sub-toolbar
+            HStack {
+                if !appState.recentTransfers.isEmpty {
+                    Button(isSelectionMode ? "Cancel Selection" : "Select Multiple") {
+                        isSelectionMode.toggle()
+                        if !isSelectionMode { selectedTransferIds.removeAll() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
+                    if isSelectionMode {
+                        Button(selectedTransferIds.count == appState.recentTransfers.count ? "Deselect All" : "Select All") {
+                            if selectedTransferIds.count == appState.recentTransfers.count {
+                                selectedTransferIds.removeAll()
+                            } else {
+                                selectedTransferIds = Set(appState.recentTransfers.map { $0.id })
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+
+                        Spacer()
+
+                        Button(action: {
+                            showDeleteSelectedTransfersAlert = true
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "trash")
+                                Text("Delete Selected (\(selectedTransferIds.count))")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                        .tint(.red)
+                        .disabled(selectedTransferIds.isEmpty)
+                    } else {
+                        Spacer()
+
+                        Button("Clear All History") {
+                            showClearTransfersAlert = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .tint(.red)
+                    }
+                } else {
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 16)
+
+            if appState.recentTransfers.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "tray")
+                        .font(.system(size: 36))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("No Transfer History")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Text("Files you send or receive between your Mac and paired phone will be logged here.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                    Spacer()
+                }
+            } else {
+                List {
+                    ForEach(appState.recentTransfers) { item in
+                        HStack(spacing: 10) {
+                            if isSelectionMode {
+                                Button(action: {
+                                    if selectedTransferIds.contains(item.id) {
+                                        selectedTransferIds.remove(item.id)
+                                    } else {
+                                        selectedTransferIds.insert(item.id)
+                                    }
+                                }) {
+                                    Image(systemName: selectedTransferIds.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(selectedTransferIds.contains(item.id) ? .accentColor : .secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            Image(systemName: item.isOutgoing ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                .foregroundColor(item.isOutgoing ? .cyan : .green)
+                                .font(.title3)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .lineLimit(1)
+
+                                HStack(spacing: 6) {
+                                    Text(formatBytes(item.size))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+
+                                    Text("•")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+
+                                    Text(item.isOutgoing ? "Sent" : "Received")
+                                        .font(.caption2)
+                                        .foregroundColor(item.isOutgoing ? .cyan : .green)
+
+                                    Text("•")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+
+                                    Text(formattedDate(item.startTime))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
+                            Spacer()
+
+                            if let url = item.localURL {
+                                Button("Show") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+
+                            Button(action: {
+                                appState.deleteTransferHistoryItem(id: item.id)
+                            }) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.secondary.opacity(0.8))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove from history")
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
+    // MARK: - Clipboard Tab View
+    private var clipboardTabView: some View {
+        VStack(spacing: 8) {
+            // Sub-toolbar
+            HStack {
+                if !appState.clipboardHistory.isEmpty {
+                    Button(isSelectionMode ? "Cancel Selection" : "Select Multiple") {
+                        isSelectionMode.toggle()
+                        if !isSelectionMode { selectedClipboardIds.removeAll() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
+                    if isSelectionMode {
+                        Button(selectedClipboardIds.count == appState.clipboardHistory.count ? "Deselect All" : "Select All") {
+                            if selectedClipboardIds.count == appState.clipboardHistory.count {
+                                selectedClipboardIds.removeAll()
+                            } else {
+                                selectedClipboardIds = Set(appState.clipboardHistory.map { $0.id })
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+
+                        Spacer()
+
+                        Button(action: {
+                            showDeleteSelectedClipboardAlert = true
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "trash")
+                                Text("Delete Selected (\(selectedClipboardIds.count))")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                        .tint(.red)
+                        .disabled(selectedClipboardIds.isEmpty)
+                    } else {
+                        Spacer()
+
+                        Button("Clear All History") {
+                            showClearClipboardAlert = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .tint(.red)
+                    }
+                } else {
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 16)
+
+            if appState.clipboardHistory.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.system(size: 36))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("No Clipboard History")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Text("Copied texts synchronized between your Mac and paired phone will appear here.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                    Spacer()
+                }
+            } else {
+                List {
+                    ForEach(appState.clipboardHistory) { item in
+                        HStack(spacing: 10) {
+                            if isSelectionMode {
+                                Button(action: {
+                                    if selectedClipboardIds.contains(item.id) {
+                                        selectedClipboardIds.remove(item.id)
+                                    } else {
+                                        selectedClipboardIds.insert(item.id)
+                                    }
+                                }) {
+                                    Image(systemName: selectedClipboardIds.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(selectedClipboardIds.contains(item.id) ? .accentColor : .secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            Image(systemName: item.isOutgoing ? "arrow.up.right" : "arrow.down.left")
+                                .foregroundColor(item.isOutgoing ? .cyan : .green)
+                                .font(.body)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.text)
+                                    .font(.subheadline)
+                                    .lineLimit(2)
+
+                                HStack(spacing: 6) {
+                                    Text(item.isOutgoing ? "Sent" : "Received")
+                                        .font(.caption2)
+                                        .foregroundColor(item.isOutgoing ? .cyan : .green)
+
+                                    Text("•")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+
+                                    Text(formattedDate(item.timestamp))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
+                            Spacer()
+
+                            Button(action: {
+                                let pb = NSPasteboard.general
+                                pb.clearContents()
+                                pb.setString(item.text, forType: .string)
+                                copiedClipboardId = item.id
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    if copiedClipboardId == item.id {
+                                        copiedClipboardId = nil
+                                    }
+                                }
+                            }) {
+                                HStack(spacing: 2) {
+                                    Image(systemName: copiedClipboardId == item.id ? "checkmark" : "doc.on.doc")
+                                    Text(copiedClipboardId == item.id ? "Copied" : "Copy")
+                                }
+                                .font(.caption2)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+
+                            Button(action: {
+                                appState.deleteClipboardHistoryItem(id: item.id)
+                            }) {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.secondary.opacity(0.8))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove from history")
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let diff = Int(Date().timeIntervalSince(date))
+        if diff < 60 { return "Just now" }
+        if diff < 3600 { return "\(diff / 60)m ago" }
+        if diff < 86400 { return "\(diff / 3600)h ago" }
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f.string(from: date)
+    }
+}
+

@@ -424,25 +424,43 @@ public class DiscoveryService {
         let paired = TrustStore.shared.getPairedDevice()
 
         for dev in discoveredDevices {
+            let devMatchesPaired = (paired != nil) && (
+                dev.id == paired!.deviceId ||
+                dev.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+            )
+
             if let existingIdx = unique.firstIndex(where: { existing in
-                existing.id == dev.id ||
+                let existingMatchesPaired = (paired != nil) && (
+                    existing.id == paired!.deviceId ||
+                    existing.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                )
+                return existing.id == dev.id ||
                 existing.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(dev.name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
-                (existing.host != nil && dev.host != nil && existing.host == dev.host && existing.port == dev.port) ||
-                (paired != nil && (
-                    (existing.id == paired!.deviceId || existing.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame) &&
-                    (dev.id == paired!.deviceId || dev.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame)
-                ))
+                (existing.host != nil && dev.host != nil && !existing.host!.isEmpty && existing.host == dev.host) ||
+                (existingMatchesPaired && devMatchesPaired)
             }) {
                 var existing = unique[existingIdx]
                 if dev.isOnline { existing.isOnline = true }
-                if dev.lastSeen > existing.lastSeen { existing.lastSeen = dev.lastSeen }
-                if existing.host == nil && dev.host != nil { existing.host = dev.host }
-                if existing.port == nil && dev.port != nil { existing.port = dev.port }
-                if existing.endpoint == nil && dev.endpoint != nil { existing.endpoint = dev.endpoint }
-                if dev.isPaired { existing.isPaired = true }
+                if dev.lastSeen > existing.lastSeen {
+                    existing.lastSeen = dev.lastSeen
+                    existing.name = dev.name
+                }
+                if dev.host != nil { existing.host = dev.host }
+                if dev.port != nil { existing.port = dev.port }
+                if dev.endpoint != nil { existing.endpoint = dev.endpoint }
+                if dev.isPaired || devMatchesPaired { existing.isPaired = true }
+                if let p = paired, (existing.isPaired || devMatchesPaired) {
+                    existing.isPaired = true
+                    existing.name = p.deviceName
+                }
                 unique[existingIdx] = existing
             } else {
-                unique.append(dev)
+                var newDev = dev
+                if devMatchesPaired, let p = paired {
+                    newDev.isPaired = true
+                    newDev.name = p.deviceName
+                }
+                unique.append(newDev)
             }
         }
 
@@ -450,10 +468,12 @@ public class DiscoveryService {
             var foundPaired = false
             for i in 0..<unique.count {
                 let matches = unique[i].id == paired.deviceId ||
-                              unique[i].name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                              unique[i].name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+                              unique[i].isPaired
                 if matches {
                     if !foundPaired {
                         unique[i].isPaired = true
+                        unique[i].name = paired.deviceName
                         foundPaired = true
                     } else {
                         unique[i].isPaired = false
@@ -464,7 +484,8 @@ public class DiscoveryService {
                 var first = true
                 unique.removeAll { dev in
                     let matches = dev.id == paired.deviceId ||
-                                  dev.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                                  dev.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(paired.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
+                                  dev.isPaired
                     if matches {
                         if first {
                             first = false
@@ -478,6 +499,18 @@ public class DiscoveryService {
         }
 
         discoveredDevices = unique
+    }
+
+    public func removeDevice(id: String) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.discoveredDevices.removeAll(where: { $0.id == id })
+            self.persistCachedDevices()
+            DispatchQueue.main.async {
+                self.updateDelegate()
+            }
+            print("🗑️ Removed discovered device \(id)")
+        }
     }
     
     // MARK: - Advertiser

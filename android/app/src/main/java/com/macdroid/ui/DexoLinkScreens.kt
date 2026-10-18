@@ -49,11 +49,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.macdroid.core.ClipboardHistoryItem
 import com.macdroid.core.ClipboardSyncMode
 import com.macdroid.core.TransferItem
 import com.macdroid.core.TransferStatus
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import com.macdroid.networking.ConnectionState
 import com.macdroid.networking.DiscoveredDevice
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.macdroid.storage.TrustedDevice
 import java.io.File
 import java.text.SimpleDateFormat
@@ -447,7 +452,15 @@ fun MainScreenRoot(
     onUpdateDeviceName: (String) -> Unit,
     onRenamePaired: (String) -> Unit,
     onRequestPairing: () -> Unit,
-    onClearTransfers: () -> Unit
+    onClearTransfers: () -> Unit,
+    clipboardHistory: List<ClipboardHistoryItem> = emptyList(),
+    onPauseTransfer: (String) -> Unit = {},
+    onResumeOngoingTransfer: (String) -> Unit = {},
+    onDeleteTransfer: (String) -> Unit = {},
+    onDeleteTransfers: (Set<String>) -> Unit = {},
+    onDeleteClipboardItem: (String) -> Unit = {},
+    onDeleteClipboardItems: (Set<String>) -> Unit = {},
+    onClearClipboardHistory: () -> Unit = {}
 ) {
     val backStack = remember { mutableStateListOf(NavTab.HOME) }
     val currentTab = backStack.lastOrNull() ?: NavTab.HOME
@@ -459,6 +472,7 @@ fun MainScreenRoot(
     var showPairDevicesSheet by remember { mutableStateOf(false) }
     var showSyncModeDialog by remember { mutableStateOf(false) }
     var showNotificationsDialog by remember { mutableStateOf(false) }
+    var showClipboardHistorySheet by remember { mutableStateOf(false) }
     var fileToDelete by remember { mutableStateOf<File?>(null) }
 
     fun navigateToTab(tab: NavTab) {
@@ -500,6 +514,10 @@ fun MainScreenRoot(
             showSyncModeDialog = false
             return true
         }
+        if (showClipboardHistorySheet) {
+            showClipboardHistorySheet = false
+            return true
+        }
 
         if (backStack.size > 1) {
             backStack.removeAt(backStack.lastIndex)
@@ -510,7 +528,7 @@ fun MainScreenRoot(
 
     val anyModalActive = fileToDelete != null || showOverflowMenu || showNotificationsDialog ||
             showPairDevicesSheet || showManualIPDialog || showRenameDialog ||
-            showSecurityDialog || showSyncModeDialog
+            showSecurityDialog || showSyncModeDialog || showClipboardHistorySheet
 
     BackHandler(enabled = backStack.size > 1 || anyModalActive) {
         navigateBack()
@@ -1176,6 +1194,16 @@ fun MainScreenRoot(
         )
     }
 
+    if (showClipboardHistorySheet) {
+        ClipboardHistoryDialog(
+            history = clipboardHistory,
+            onDismiss = { showClipboardHistorySheet = false },
+            onDeleteItem = onDeleteClipboardItem,
+            onDeleteItems = onDeleteClipboardItems,
+            onClearHistory = onClearClipboardHistory
+        )
+    }
+
     Scaffold(
         topBar = {
             Surface(
@@ -1266,6 +1294,13 @@ fun MainScreenRoot(
                                 onDismissRequest = { showOverflowMenu = false },
                                 modifier = Modifier.background(Color.White)
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text("Clipboard History (${clipboardHistory.size})", color = Color(0xFF0F172A)) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        showClipboardHistorySheet = true
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text("Scan / Refresh Wi-Fi", color = Color(0xFF0F172A)) },
                                     onClick = {
@@ -1374,7 +1409,8 @@ fun MainScreenRoot(
                         onNavigateFiles = { navigateToTab(NavTab.FILES) },
                         onNavigateTransfers = { navigateToTab(NavTab.TRANSFERS) },
                         onNavigateSettings = { navigateToTab(NavTab.SETTINGS) },
-                        onSendPing = onSendPing
+                        onSendPing = onSendPing,
+                        onOpenClipboardHistory = { showClipboardHistorySheet = true }
                     )
                 }
                 NavTab.FILES -> {
@@ -1392,6 +1428,10 @@ fun MainScreenRoot(
                         completedTransfers = completedTransfers,
                         onCancelTransfer = onCancelTransfer,
                         onResumeTransfer = onResumeTransfer,
+                        onPauseTransfer = onPauseTransfer,
+                        onResumeOngoingTransfer = onResumeOngoingTransfer,
+                        onDeleteTransfer = onDeleteTransfer,
+                        onDeleteTransfers = onDeleteTransfers,
                         onClearTransfers = onClearTransfers,
                         onOpenFile = onOpenFile,
                         onShareFile = onShareFile,
@@ -1417,7 +1457,8 @@ fun MainScreenRoot(
                             showRenameDialog = true
                         },
                         onShowSecurity = { showSecurityDialog = true },
-                        onSendPing = onSendPing
+                        onSendPing = onSendPing,
+                        onOpenClipboardHistory = { showClipboardHistorySheet = true }
                     )
                 }
             }
@@ -1449,7 +1490,8 @@ fun HomeScreenContent(
     onNavigateFiles: () -> Unit,
     onNavigateTransfers: () -> Unit,
     onNavigateSettings: () -> Unit,
-    onSendPing: () -> Unit
+    onSendPing: () -> Unit,
+    onOpenClipboardHistory: () -> Unit = {}
 ) {
     val isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated
     val isConnecting = connectionState is ConnectionState.Connecting
@@ -2017,6 +2059,20 @@ fun HomeScreenContent(
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFFEFF6FF))
+                                .clickable { onOpenClipboardHistory() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("🕒", fontSize = 10.sp)
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("History", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0066FF))
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text("›", fontSize = 18.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
                     }
                 }
@@ -2461,18 +2517,27 @@ fun FilesTabContent(
 // Transfers Tab Screen Content (Matching Screenshot 3)
 // -------------------------------------------------------------
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TransfersTabContent(
     activeTransfers: List<TransferItem>,
     completedTransfers: List<TransferItem>,
     onCancelTransfer: (String) -> Unit,
     onResumeTransfer: (String) -> Unit,
+    onPauseTransfer: (String) -> Unit = {},
+    onResumeOngoingTransfer: (String) -> Unit = {},
+    onDeleteTransfer: (String) -> Unit = {},
+    onDeleteTransfers: (Set<String>) -> Unit = {},
     onClearTransfers: () -> Unit,
     onOpenFile: (File) -> Unit,
     onShareFile: (File) -> Unit,
     onSendNewFile: () -> Unit
 ) {
     var selectedFilter by remember { mutableStateOf("Ongoing") }
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedTransferIds = remember { mutableStateListOf<String>() }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showClearAllConfirmDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -2607,25 +2672,34 @@ fun TransfersTabContent(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
+                                        val isPaused = item.state == TransferStatus.PAUSED
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            "${if (item.isOutgoing) "Sending to Mac" else "Receiving from Mac"} • ${formatFileSize(item.bytesTransferred)} / ${formatFileSize(item.size)}",
+                                            if (isPaused) "Paused • ${formatFileSize(item.bytesTransferred)} / ${formatFileSize(item.size)}"
+                                            else "${if (item.isOutgoing) "Sending to Mac" else "Receiving from Mac"} • ${formatFileSize(item.bytesTransferred)} / ${formatFileSize(item.size)}",
                                             fontSize = 11.sp,
-                                            color = Color(0xFF64748B)
+                                            color = if (isPaused) Color(0xFFD97706) else Color(0xFF64748B)
                                         )
                                     }
 
                                     // Pause / Resume and Cancel Action Buttons
+                                    val isPaused = item.state == TransferStatus.PAUSED
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Box(
                                             modifier = Modifier
                                                 .size(32.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFFEFF6FF))
-                                                .clickable { onCancelTransfer(item.id) },
+                                                .background(if (isPaused) Color(0xFFFEF3C7) else Color(0xFFEFF6FF))
+                                                .clickable {
+                                                    if (isPaused) {
+                                                        onResumeOngoingTransfer(item.id)
+                                                    } else {
+                                                        onPauseTransfer(item.id)
+                                                    }
+                                                },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text("||", fontSize = 12.sp, color = Color(0xFF0066FF), fontWeight = FontWeight.Bold)
+                                            Text(if (isPaused) "▶" else "||", fontSize = 12.sp, color = if (isPaused) Color(0xFFD97706) else Color(0xFF0066FF), fontWeight = FontWeight.Bold)
                                         }
                                         Box(
                                             modifier = Modifier
@@ -2740,26 +2814,94 @@ fun TransfersTabContent(
                             .fillMaxWidth()
                             .padding(top = 10.dp)
                     ) {
-                        Text(
-                            "Recent Transfers",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = Color(0xFF0F172A)
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFFEE2E2))
-                                .clickable { onClearTransfers() }
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
+                        if (isSelectionMode) {
                             Text(
-                                "🗑 Clear All",
-                                fontSize = 11.sp,
+                                "${selectedTransferIds.size} Selected",
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFDC2626)
+                                fontSize = 15.sp,
+                                color = Color(0xFF0F172A)
                             )
+                            Spacer(modifier = Modifier.weight(1f))
+                            TextButton(
+                                onClick = {
+                                    if (selectedTransferIds.size == visibleCompleted.size) {
+                                        selectedTransferIds.clear()
+                                    } else {
+                                        selectedTransferIds.clear()
+                                        selectedTransferIds.addAll(visibleCompleted.map { it.id })
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    if (selectedTransferIds.size == visibleCompleted.size) "Deselect All" else "Select All",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF0066FF),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selectedTransferIds.isNotEmpty()) Color(0xFFDC2626) else Color(0xFFCBD5E1))
+                                    .clickable(enabled = selectedTransferIds.isNotEmpty()) {
+                                        showDeleteConfirmDialog = true
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    "Delete (${selectedTransferIds.size})",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            TextButton(
+                                onClick = {
+                                    isSelectionMode = false
+                                    selectedTransferIds.clear()
+                                }
+                            ) {
+                                Text("Cancel", fontSize = 12.sp, color = Color(0xFF64748B))
+                            }
+                        } else {
+                            Text(
+                                "Recent Transfers",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = Color(0xFF0F172A)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFEFF6FF))
+                                    .clickable { isSelectionMode = true }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Select",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0066FF)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFFEE2E2))
+                                    .clickable { showClearAllConfirmDialog = true }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "🗑 Clear All",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFDC2626)
+                                )
+                            }
                         }
                     }
                 }
@@ -2778,20 +2920,45 @@ fun TransfersTabContent(
 
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        border = BorderStroke(
+                            1.dp,
+                            if (selectedTransferIds.contains(item.id)) Color(0xFF0066FF) else Color(0xFFE2E8F0)
+                        ),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                if (localFile != null && localFile.exists()) {
-                                    onOpenFile(localFile)
+                            .combinedClickable(
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        if (selectedTransferIds.contains(item.id)) selectedTransferIds.remove(item.id)
+                                        else selectedTransferIds.add(item.id)
+                                    } else if (localFile != null && localFile.exists()) {
+                                        onOpenFile(localFile)
+                                    }
+                                },
+                                onLongClick = {
+                                    isSelectionMode = true
+                                    if (!selectedTransferIds.contains(item.id)) {
+                                        selectedTransferIds.add(item.id)
+                                    }
                                 }
-                            }
+                            )
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(12.dp)
                         ) {
+                            if (isSelectionMode) {
+                                Checkbox(
+                                    checked = selectedTransferIds.contains(item.id),
+                                    onCheckedChange = { checked ->
+                                        if (checked) selectedTransferIds.add(item.id) else selectedTransferIds.remove(item.id)
+                                    },
+                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0066FF))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+
                             if (localFile != null && localFile.exists()) {
                                 FileThumbnailOrIcon(file = localFile)
                             } else {
@@ -2860,7 +3027,15 @@ fun TransfersTabContent(
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
 
-                            // 3-dots menu button matching Screenshot 3
+                            // Direct Delete from History Button
+                            IconButton(
+                                onClick = { onDeleteTransfer(item.id) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Text("🗑", fontSize = 13.sp)
+                            }
+
+                            // 3-dots menu button
                             Box {
                                 IconButton(
                                     onClick = { showItemMenu = true },
@@ -2898,6 +3073,13 @@ fun TransfersTabContent(
                                             }
                                         )
                                     }
+                                    DropdownMenuItem(
+                                        text = { Text("Delete from History", color = Color(0xFFDC2626)) },
+                                        onClick = {
+                                            showItemMenu = false
+                                            onDeleteTransfer(item.id)
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -2905,6 +3087,70 @@ fun TransfersTabContent(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete Selected History?", fontWeight = FontWeight.Bold, color = Color(0xFF0F172A)) },
+            text = {
+                Text(
+                    "Remove ${selectedTransferIds.size} item(s) from transfer history?\n\nOriginal files on this device and your Mac will NOT be deleted, and paired devices will stay connected.",
+                    fontSize = 13.sp,
+                    color = Color(0xFF475569)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteTransfers(selectedTransferIds.toSet())
+                        selectedTransferIds.clear()
+                        isSelectionMode = false
+                        showDeleteConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = Color(0xFF64748B))
+                }
+            }
+        )
+    }
+
+    if (showClearAllConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAllConfirmDialog = false },
+            title = { Text("Clear All Transfer History?", fontWeight = FontWeight.Bold, color = Color(0xFF0F172A)) },
+            text = {
+                Text(
+                    "Clear all transfer history entries?\n\nOriginal files on this device and your Mac will NOT be deleted, and paired devices will stay connected.",
+                    fontSize = 13.sp,
+                    color = Color(0xFF475569)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearTransfers()
+                        selectedTransferIds.clear()
+                        isSelectionMode = false
+                        showClearAllConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("Clear All", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllConfirmDialog = false }) {
+                    Text("Cancel", color = Color(0xFF64748B))
+                }
+            }
+        )
     }
 }
 
@@ -2925,7 +3171,8 @@ fun SettingsTabContent(
     onOpenRenameLocal: () -> Unit,
     onOpenRenamePaired: () -> Unit,
     onShowSecurity: () -> Unit,
-    onSendPing: () -> Unit
+    onSendPing: () -> Unit,
+    onOpenClipboardHistory: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var quickFileSharingEnabled by remember { mutableStateOf(true) }
@@ -3006,6 +3253,28 @@ fun SettingsTabContent(
                                 },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
+                        }
+
+                        // View Clipboard History row
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onOpenClipboardHistory() }
+                                .padding(vertical = 4.dp, horizontal = 4.dp)
+                        ) {
+                            Text("🕒", fontSize = 13.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "View Clipboard History",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF0066FF)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            Text("→", fontSize = 13.sp, color = Color(0xFF64748B))
                         }
 
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
@@ -3629,5 +3898,390 @@ fun formatFileDate(timestamp: Long): String {
         isSameDay -> "Today, ${timeFormat.format(Date(timestamp))}"
         isYesterday -> "Yesterday, ${timeFormat.format(Date(timestamp))}"
         else -> dateFormat.format(Date(timestamp))
+    }
+}
+
+// -------------------------------------------------------------
+// Clipboard History Dialog
+// -------------------------------------------------------------
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ClipboardHistoryDialog(
+    history: List<ClipboardHistoryItem>,
+    onDismiss: () -> Unit,
+    onDeleteItem: (String) -> Unit,
+    onDeleteItems: (Set<String>) -> Unit,
+    onClearHistory: () -> Unit
+) {
+    val context = LocalContext.current
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedIds = remember { mutableStateListOf<String>() }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showClearAllConfirmDialog by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.85f),
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White,
+            shadowElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                // Header
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Clipboard History",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFFEFF6FF))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "${history.size}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0066FF)
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Text("✕", fontSize = 16.sp, color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Toolbar / Selection Mode Row
+                if (history.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        if (isSelectionMode) {
+                            Text(
+                                "${selectedIds.size} Selected",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color(0xFF0F172A)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            TextButton(
+                                onClick = {
+                                    if (selectedIds.size == history.size) {
+                                        selectedIds.clear()
+                                    } else {
+                                        selectedIds.clear()
+                                        selectedIds.addAll(history.map { it.id })
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    if (selectedIds.size == history.size) "Deselect All" else "Select All",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF0066FF),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selectedIds.isNotEmpty()) Color(0xFFDC2626) else Color(0xFFCBD5E1))
+                                    .clickable(enabled = selectedIds.isNotEmpty()) {
+                                        showDeleteConfirmDialog = true
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    "Delete (${selectedIds.size})",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            TextButton(
+                                onClick = {
+                                    isSelectionMode = false
+                                    selectedIds.clear()
+                                }
+                            ) {
+                                Text("Cancel", fontSize = 12.sp, color = Color(0xFF64748B))
+                            }
+                        } else {
+                            Text(
+                                "Recent copied items",
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFEFF6FF))
+                                    .clickable { isSelectionMode = true }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Select",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0066FF)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFFEE2E2))
+                                    .clickable { showClearAllConfirmDialog = true }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "🗑 Clear All",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFDC2626)
+                                )
+                            }
+                        }
+                    }
+                    Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 4.dp))
+                }
+
+                if (history.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("📋", fontSize = 40.sp)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "No clipboard history yet",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = Color(0xFF0F172A)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Text and snippets synced between your phone and Mac will appear here.",
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(history, key = { it.id }) { item ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selectedIds.contains(item.id)) Color(0xFF0066FF) else Color(0xFFE2E8F0)
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (isSelectionMode) {
+                                                if (selectedIds.contains(item.id)) selectedIds.remove(item.id)
+                                                else selectedIds.add(item.id)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            isSelectionMode = true
+                                            if (!selectedIds.contains(item.id)) selectedIds.add(item.id)
+                                        }
+                                    )
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (isSelectionMode) {
+                                            Checkbox(
+                                                checked = selectedIds.contains(item.id),
+                                                onCheckedChange = { checked ->
+                                                    if (checked) selectedIds.add(item.id) else selectedIds.remove(item.id)
+                                                },
+                                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0066FF))
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        }
+
+                                        // Direction Pill
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (item.isOutgoing) Color(0xFFEFF6FF) else Color(0xFFDCFCE7))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                if (item.isOutgoing) "Sent to Mac" else "From Mac",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (item.isOutgoing) Color(0xFF0066FF) else Color(0xFF16A34A)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            formatFileDate(item.timestamp),
+                                            fontSize = 10.sp,
+                                            color = Color(0xFF94A3B8)
+                                        )
+
+                                        Spacer(modifier = Modifier.weight(1f))
+
+                                        // Copy action button
+                                        Box(
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color.White)
+                                                .clickable {
+                                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("DexoLink", item.text))
+                                                    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("📋", fontSize = 12.sp)
+                                        }
+
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        // Delete single action button
+                                        Box(
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFFFEE2E2))
+                                                .clickable { onDeleteItem(item.id) },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("🗑", fontSize = 12.sp)
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    Text(
+                                        text = item.text,
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF1E293B),
+                                        maxLines = 4,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Safety Note Footnote
+                Text(
+                    "Deleting history removes entries from this log. Your active pairing and files are unaffected.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete Selected Items?", fontWeight = FontWeight.Bold, color = Color(0xFF0F172A)) },
+            text = {
+                Text(
+                    "Delete ${selectedIds.size} clipboard history item(s)? Original files and paired devices are not affected.",
+                    fontSize = 13.sp,
+                    color = Color(0xFF475569)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteItems(selectedIds.toSet())
+                        selectedIds.clear()
+                        isSelectionMode = false
+                        showDeleteConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = Color(0xFF64748B))
+                }
+            }
+        )
+    }
+
+    if (showClearAllConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAllConfirmDialog = false },
+            title = { Text("Clear Clipboard History?", fontWeight = FontWeight.Bold, color = Color(0xFF0F172A)) },
+            text = {
+                Text(
+                    "Clear all clipboard history entries? This only removes saved snippets from history.",
+                    fontSize = 13.sp,
+                    color = Color(0xFF475569)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearHistory()
+                        selectedIds.clear()
+                        isSelectionMode = false
+                        showClearAllConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("Clear All", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllConfirmDialog = false }) {
+                    Text("Cancel", color = Color(0xFF64748B))
+                }
+            }
+        )
     }
 }

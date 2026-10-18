@@ -16,6 +16,8 @@ enum class MessageType(val value: String) {
     FILE_ACK("FILE_ACK"),
     PROGRESS("PROGRESS"),
     CANCEL("CANCEL"),
+    PAUSE("PAUSE"),
+    RESUME("RESUME"),
     ERROR("ERROR"),
     PING("PING"),
     PONG("PONG"),
@@ -97,6 +99,12 @@ sealed class ProtocolMessage {
                     bytesReceived = json.optLong("bytesReceived", 0L)
                 )
                 MessageType.CANCEL -> CancelMessage(
+                    transferId = json.optString("transferId", "")
+                )
+                MessageType.PAUSE -> PauseMessage(
+                    transferId = json.optString("transferId", "")
+                )
+                MessageType.RESUME -> ResumeMessage(
                     transferId = json.optString("transferId", "")
                 )
                 MessageType.ERROR -> ErrorMessage(
@@ -243,6 +251,22 @@ data class ProgressMessage(val transferId: String, val fileId: String, val bytes
 
 data class CancelMessage(val transferId: String) : ProtocolMessage() {
     override val type = MessageType.CANCEL
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("transferId", transferId)
+    }
+}
+
+data class PauseMessage(val transferId: String) : ProtocolMessage() {
+    override val type = MessageType.PAUSE
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("transferId", transferId)
+    }
+}
+
+data class ResumeMessage(val transferId: String) : ProtocolMessage() {
+    override val type = MessageType.RESUME
     override fun toJson() = JSONObject().apply {
         put("type", type.value)
         put("transferId", transferId)

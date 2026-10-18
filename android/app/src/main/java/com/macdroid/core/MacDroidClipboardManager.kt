@@ -19,11 +19,19 @@ enum class ClipboardSyncMode(val id: String, val title: String, val description:
     }
 }
 
+data class ClipboardHistoryItem(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val text: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val isOutgoing: Boolean
+)
+
 class MacDroidClipboardManager(private val context: Context) {
     companion object {
         private const val TAG = "MacDroidClipboard"
         private const val PREFS_NAME = "dexolink_clipboard_prefs"
         private const val KEY_SYNC_MODE = "clipboard_sync_mode"
+        private const val KEY_CLIPBOARD_HISTORY = "clipboard_history"
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -41,6 +49,101 @@ class MacDroidClipboardManager(private val context: Context) {
 
     var lastSyncedSnippet: String? = null
         private set
+
+    private val history = java.util.Collections.synchronizedList(mutableListOf<ClipboardHistoryItem>())
+    var onHistoryChanged: (() -> Unit)? = null
+
+    init {
+        loadHistory()
+    }
+
+    private fun loadHistory() {
+        try {
+            val jsonStr = prefs.getString(KEY_CLIPBOARD_HISTORY, null) ?: return
+            val arr = org.json.JSONArray(jsonStr)
+            val list = mutableListOf<ClipboardHistoryItem>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    ClipboardHistoryItem(
+                        id = obj.getString("id"),
+                        text = obj.getString("text"),
+                        timestamp = obj.getLong("timestamp"),
+                        isOutgoing = obj.getBoolean("isOutgoing")
+                    )
+                )
+            }
+            synchronized(history) {
+                history.clear()
+                history.addAll(list)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading clipboard history: ${e.message}")
+        }
+    }
+
+    private fun persistHistory() {
+        try {
+            val arr = org.json.JSONArray()
+            synchronized(history) {
+                val takeList = history.take(50)
+                for (item in takeList) {
+                    val obj = org.json.JSONObject()
+                    obj.put("id", item.id)
+                    obj.put("text", item.text)
+                    obj.put("timestamp", item.timestamp)
+                    obj.put("isOutgoing", item.isOutgoing)
+                    arr.put(obj)
+                }
+            }
+            prefs.edit().putString(KEY_CLIPBOARD_HISTORY, arr.toString()).apply()
+            onHistoryChanged?.invoke()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error persisting clipboard history: ${e.message}")
+        }
+    }
+
+    fun getHistory(): List<ClipboardHistoryItem> {
+        synchronized(history) {
+            return ArrayList(history)
+        }
+    }
+
+    fun addToHistory(text: String, isOutgoing: Boolean) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        synchronized(history) {
+            if (history.isNotEmpty() && history[0].text == text) {
+                return
+            }
+            history.add(0, ClipboardHistoryItem(text = text, isOutgoing = isOutgoing))
+            while (history.size > 50) {
+                history.removeAt(history.size - 1)
+            }
+        }
+        persistHistory()
+    }
+
+    fun deleteHistoryItem(id: String) {
+        synchronized(history) {
+            history.removeAll { it.id == id }
+        }
+        persistHistory()
+    }
+
+    fun deleteHistoryItems(ids: Set<String>) {
+        synchronized(history) {
+            history.removeAll { ids.contains(it.id) }
+        }
+        persistHistory()
+    }
+
+    fun clearHistory() {
+        synchronized(history) {
+            history.clear()
+        }
+        persistHistory()
+    }
 
     private fun computeHash(text: String): String {
         return try {
@@ -75,7 +178,7 @@ class MacDroidClipboardManager(private val context: Context) {
         lastReceivedHash = hash
         lastSyncedSnippet = content
 
-        return try {
+        val applied = try {
             val clip = ClipData.newPlainText("DexoLink", content)
             clipboardManager?.setPrimaryClip(clip)
             Log.d(TAG, "[Clipboard Receipt] Set Android clipboard: \"${content.take(30)}...\" (${content.length} chars)")
@@ -84,6 +187,10 @@ class MacDroidClipboardManager(private val context: Context) {
             Log.e(TAG, "[Clipboard Error] Failed to set clipboard: ${e.message}", e)
             false
         }
+        if (applied) {
+            addToHistory(content, isOutgoing = false)
+        }
+        return applied
     }
 
     /**
@@ -113,6 +220,7 @@ class MacDroidClipboardManager(private val context: Context) {
     fun markSent(content: String) {
         lastSentHash = computeHash(content)
         lastSyncedSnippet = content
+        addToHistory(content, isOutgoing = true)
     }
 
     fun getCurrentClipText(): String? {

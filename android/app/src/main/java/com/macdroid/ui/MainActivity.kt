@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.macdroid.MacDroidApplication
+import com.macdroid.core.ClipboardHistoryItem
 import com.macdroid.core.ClipboardSyncMode
 import com.macdroid.core.TransferEventListener
 import com.macdroid.core.TransferItem
@@ -86,6 +87,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val activeTransfers = mutableStateListOf<TransferItem>()
     private val completedTransfers = mutableStateListOf<TransferItem>()
     private val receivedFiles = mutableStateListOf<File>()
+    private val clipboardHistory = mutableStateListOf<ClipboardHistoryItem>()
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -118,6 +120,9 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         connectionManager.addListener(this)
         discoveryService.addListener(this)
         connectionManager.transferManager.addListener(this)
+        connectionManager.clipboardManager.onHistoryChanged = {
+            runOnUiThread { syncClipboardHistory() }
+        }
 
         // 4. Initial state sync
         connectionState.value = connectionManager.state
@@ -142,6 +147,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         // Sync transfers & files
         syncTransferState()
         refreshReceivedFiles()
+        syncClipboardHistory()
 
         setContent {
             DexoLinkTheme {
@@ -291,11 +297,46 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                             }
                         }
                     },
+                    clipboardHistory = clipboardHistory,
+                    onPauseTransfer = { id ->
+                        connectionManager.pauseTransfer(id)
+                        log("Paused transfer: $id")
+                    },
+                    onResumeOngoingTransfer = { id ->
+                        connectionManager.unpauseTransfer(id)
+                        log("Resumed transfer: $id")
+                    },
+                    onDeleteTransfer = { id ->
+                        connectionManager.deleteCompletedTransfer(id)
+                        syncTransferState()
+                        log("Deleted transfer from history: $id")
+                    },
+                    onDeleteTransfers = { ids ->
+                        connectionManager.deleteCompletedTransfers(ids)
+                        syncTransferState()
+                        log("Deleted ${ids.size} transfers from history")
+                    },
                     onClearTransfers = {
-                        connectionManager.transferManager.completedTransfers.clear()
-                        completedTransfers.clear()
+                        connectionManager.clearCompletedTransfers()
+                        syncTransferState()
                         log("Cleared transfer history")
                         Toast.makeText(this, "Cleared transfer history", Toast.LENGTH_SHORT).show()
+                    },
+                    onDeleteClipboardItem = { id ->
+                        connectionManager.clipboardManager.deleteHistoryItem(id)
+                        syncClipboardHistory()
+                        log("Deleted clipboard history item: $id")
+                    },
+                    onDeleteClipboardItems = { ids ->
+                        connectionManager.clipboardManager.deleteHistoryItems(ids)
+                        syncClipboardHistory()
+                        log("Deleted ${ids.size} clipboard items from history")
+                    },
+                    onClearClipboardHistory = {
+                        connectionManager.clipboardManager.clearHistory()
+                        syncClipboardHistory()
+                        log("Cleared clipboard history")
+                        Toast.makeText(this, "Cleared clipboard history", Toast.LENGTH_SHORT).show()
                     }
                 )
             }
@@ -307,6 +348,11 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         activeTransfers.addAll(connectionManager.transferManager.activeTransfers.values)
         completedTransfers.clear()
         completedTransfers.addAll(connectionManager.transferManager.completedTransfers)
+    }
+
+    private fun syncClipboardHistory() {
+        clipboardHistory.clear()
+        clipboardHistory.addAll(connectionManager.clipboardManager.getHistory())
     }
 
     private fun refreshReceivedFiles() {
@@ -438,6 +484,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
 
     override fun onDestroy() {
         super.onDestroy()
+        connectionManager.clipboardManager.onHistoryChanged = null
         connectionManager.removeListener(this)
         discoveryService.removeListener(this)
         connectionManager.transferManager.removeListener(this)
@@ -534,6 +581,12 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                 completedTransfers.add(0, item)
             }
             Toast.makeText(this, "Transfer failed: $error ⚠️", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onTransfersListChanged() {
+        runOnUiThread {
+            syncTransferState()
         }
     }
 

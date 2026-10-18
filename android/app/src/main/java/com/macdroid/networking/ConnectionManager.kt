@@ -712,6 +712,26 @@ class ConnectionManager(private val context: Context) {
         transferManager.cancelTransfer(transferId)
     }
 
+    fun pauseTransfer(transferId: String) {
+        transferManager.pauseTransfer(transferId)
+    }
+
+    fun unpauseTransfer(transferId: String) {
+        transferManager.unpauseTransfer(transferId)
+    }
+
+    fun deleteCompletedTransfer(transferId: String) {
+        transferManager.deleteCompletedTransfer(transferId)
+    }
+
+    fun deleteCompletedTransfers(transferIds: Set<String>) {
+        transferManager.deleteCompletedTransfers(transferIds)
+    }
+
+    fun clearCompletedTransfers() {
+        transferManager.clearCompletedTransfers()
+    }
+
     fun resumeTransfer(transferId: String) {
         transferManager.resumeTransfer(transferId)
     }

@@ -226,6 +226,7 @@ class AppState: ObservableObject {
     @Published var lastSyncedClipboardSnippet: String? = nil
     @Published var activeTransfer: TransferItem? = nil
     @Published var recentTransfers: [TransferItem] = []
+    @Published var clipboardHistory: [ClipboardHistoryItem] = []
     @Published var userExplicitlyDisconnected: Bool = false
 
     private var pingStartTime: Date?
@@ -237,6 +238,8 @@ class AppState: ObservableObject {
     init() {
         self.transferManager = TransferManager(connectionManager: connectionManager)
         self.localIP = AppState.getLocalIP() ?? "Unavailable"
+        self.recentTransfers = self.transferManager.completedTransfers
+        self.clipboardHistory = self.clipboardManager.history
 
         // Wire up delegates
         discoveryService.delegate = self
@@ -455,10 +458,59 @@ class AppState: ObservableObject {
 
     func cancelTransfer(id: String) {
         transferManager.cancelTransfer(id: id)
+        if activeTransfer?.id == id {
+            activeTransfer = nil
+        }
+        recentTransfers = transferManager.completedTransfers
+    }
+
+    func pauseTransfer(id: String) {
+        transferManager.pauseTransfer(id: id)
+    }
+
+    func unpauseTransfer(id: String) {
+        transferManager.unpauseTransfer(id: id)
     }
 
     func resumeTransfer(id: String) {
         transferManager.resumeTransfer(id: id)
+    }
+
+    // MARK: - Transfer History Deletion (Safe: files and pairing preserved)
+    func deleteTransferHistoryItem(id: String) {
+        transferManager.deleteCompletedTransfer(id: id)
+        recentTransfers = transferManager.completedTransfers
+    }
+
+    func deleteTransferHistoryItems(ids: Set<String>) {
+        transferManager.deleteCompletedTransfers(ids: ids)
+        recentTransfers = transferManager.completedTransfers
+    }
+
+    func clearTransferHistory() {
+        transferManager.clearCompletedTransfers()
+        recentTransfers.removeAll()
+    }
+
+    // MARK: - Clipboard History Deletion (Safe: files and pairing preserved)
+    func deleteClipboardHistoryItem(id: String) {
+        clipboardManager.deleteItem(id: id)
+        clipboardHistory = clipboardManager.history
+    }
+
+    func deleteClipboardHistoryItems(ids: Set<String>) {
+        clipboardManager.deleteItems(ids: ids)
+        clipboardHistory = clipboardManager.history
+    }
+
+    func clearClipboardHistory() {
+        clipboardManager.clearHistory()
+        clipboardHistory.removeAll()
+    }
+
+    func removeDiscoveredDevice(id: String) {
+        discoveryService.removeDevice(id: id)
+        discoveredDevices.removeAll(where: { $0.id == id })
     }
 
     func acceptIncomingPairing() {
@@ -795,7 +847,14 @@ extension AppState: ClipboardManagerDelegate {
         DispatchQueue.main.async {
             self.lastSyncedClipboardSnippet = text
             self.statusMessage = "Synced to \(self.connectedDeviceName ?? "Android")"
+            self.clipboardHistory = manager.history
             print("📋 Auto-synced clipboard to Android: \"\(text.prefix(35))...\"")
+        }
+    }
+
+    func clipboardManagerDidUpdateHistory(_ manager: ClipboardManager) {
+        DispatchQueue.main.async {
+            self.clipboardHistory = manager.history
         }
     }
 }
@@ -803,14 +862,20 @@ extension AppState: ClipboardManagerDelegate {
 extension AppState: TransferManagerDelegate {
     func transferManager(_ manager: TransferManager, didUpdateItem item: TransferItem) {
         DispatchQueue.main.async {
-            self.activeTransfer = item
+            switch item.state {
+            case .pending, .transferring, .paused, .verifying:
+                self.activeTransfer = item
+            case .completed, .failed, .cancelled:
+                self.activeTransfer = nil
+                self.recentTransfers = manager.completedTransfers
+            }
         }
     }
 
     func transferManager(_ manager: TransferManager, didCompleteItem item: TransferItem) {
         DispatchQueue.main.async {
             self.activeTransfer = nil
-            self.recentTransfers.insert(item, at: 0)
+            self.recentTransfers = manager.completedTransfers
             self.statusMessage = item.isOutgoing ? "Sent: \(item.name)" : "Received: \(item.name)"
         }
     }
@@ -818,7 +883,7 @@ extension AppState: TransferManagerDelegate {
     func transferManager(_ manager: TransferManager, didFailItem item: TransferItem, error: String) {
         DispatchQueue.main.async {
             self.activeTransfer = nil
-            self.recentTransfers.insert(item, at: 0)
+            self.recentTransfers = manager.completedTransfers
             self.statusMessage = "Transfer failed: \(error)"
         }
     }

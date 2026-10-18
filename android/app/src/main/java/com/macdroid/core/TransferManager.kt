@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 enum class TransferStatus {
     PENDING,
     TRANSFERRING,
+    PAUSED,
     VERIFYING,
     COMPLETED,
     FAILED,
@@ -53,6 +54,7 @@ interface TransferEventListener {
     fun onTransferUpdated(item: TransferItem)
     fun onTransferCompleted(item: TransferItem)
     fun onTransferFailed(item: TransferItem, error: String)
+    fun onTransfersListChanged() {}
 }
 
 class TransferManager(
@@ -239,8 +241,57 @@ class TransferManager(
         }
     }
 
+    val pausedTransferIds = Collections.synchronizedSet(mutableSetOf<String>())
+
+    fun pauseTransfer(id: String) {
+        pausedTransferIds.add(id)
+        val item = activeTransfers[id]
+        if (item != null) {
+            item.state = TransferStatus.PAUSED
+            notifyUpdate(item)
+        }
+        sendCallback(PauseMessage(transferId = id))
+        Log.d(TAG, "Paused transfer: $id")
+    }
+
+    fun unpauseTransfer(id: String) {
+        pausedTransferIds.remove(id)
+        val item = activeTransfers[id]
+        if (item != null) {
+            item.state = TransferStatus.TRANSFERRING
+            notifyUpdate(item)
+        }
+        sendCallback(ResumeMessage(transferId = id))
+        Log.d(TAG, "Resumed transfer: $id")
+    }
+
+    fun deleteCompletedTransfer(id: String) {
+        synchronized(completedTransfers) {
+            completedTransfers.removeAll { it.id == id }
+        }
+        notifyListChanged()
+        Log.d(TAG, "Deleted transfer history item: $id")
+    }
+
+    fun deleteCompletedTransfers(ids: Set<String>) {
+        synchronized(completedTransfers) {
+            completedTransfers.removeAll { ids.contains(it.id) }
+        }
+        notifyListChanged()
+        Log.d(TAG, "Deleted ${ids.size} transfer history items")
+    }
+
+    fun clearCompletedTransfers() {
+        synchronized(completedTransfers) {
+            completedTransfers.clear()
+        }
+        notifyListChanged()
+        Log.d(TAG, "Cleared all transfer history items")
+    }
+
     fun cancelTransfer(id: String) {
         scope.launch {
+            pausedTransferIds.remove(id)
             senderCancelTokens.add(id)
             sendCallback(CancelMessage(transferId = id))
 
@@ -249,6 +300,7 @@ class TransferManager(
                 item.state = TransferStatus.CANCELLED
                 completedTransfers.add(0, item)
                 notifyUpdate(item)
+                notifyListChanged()
             }
 
             // Cleanup any receiver context matching transferId
@@ -280,6 +332,7 @@ class TransferManager(
             val item = completedTransfers.firstOrNull { it.id == id }
             if (item != null && item.isOutgoing && item.uri != null) {
                 completedTransfers.remove(item)
+                notifyListChanged()
                 Log.d(TAG, "Resuming transfer for ${item.name} ($id)")
                 sendFile(item.uri)
             }
@@ -561,6 +614,26 @@ class TransferManager(
                     releaseTransferLocksIfNeeded()
                 }
 
+                is PauseMessage -> {
+                    Log.d(TAG, "Transfer ${message.transferId} paused by peer")
+                    pausedTransferIds.add(message.transferId)
+                    val item = activeTransfers[message.transferId]
+                    if (item != null) {
+                        item.state = TransferStatus.PAUSED
+                        notifyUpdate(item)
+                    }
+                }
+
+                is ResumeMessage -> {
+                    Log.d(TAG, "Transfer ${message.transferId} resumed by peer")
+                    pausedTransferIds.remove(message.transferId)
+                    val item = activeTransfers[message.transferId]
+                    if (item != null) {
+                        item.state = TransferStatus.TRANSFERRING
+                        notifyUpdate(item)
+                    }
+                }
+
                 else -> {}
             }
         }
@@ -602,6 +675,16 @@ class TransferManager(
                             return@launch
                         }
 
+                        while (pausedTransferIds.contains(transferId)) {
+                            delay(100)
+                            if (senderCancelTokens.contains(transferId)) {
+                                senderCancelTokens.remove(transferId)
+                                Log.d(TAG, "Streaming aborted while paused: transfer $transferId cancelled")
+                                releaseTransferLocksIfNeeded()
+                                return@launch
+                            }
+                        }
+
                         val chunkBytes = if (bytesRead == buffer.size) buffer else buffer.copyOf(bytesRead)
                         digest.update(chunkBytes)
                         val base64Data = Base64.encodeToString(chunkBytes, Base64.NO_WRAP)
@@ -635,6 +718,7 @@ class TransferManager(
                 }
 
                 val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
+                pausedTransferIds.remove(transferId)
                 sendCallback(FileCompleteMessage(fileId = fileId, sha256 = sha256))
 
                 val item = activeTransfers[transferId]
@@ -645,6 +729,7 @@ class TransferManager(
                 Log.d(TAG, "Sent FileComplete for $filename (SHA-256: ${sha256.take(10)}...)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error streaming file: ${e.message}", e)
+                pausedTransferIds.remove(transferId)
                 val item = activeTransfers.remove(transferId)
                 if (item != null) {
                     item.state = TransferStatus.FAILED
@@ -652,6 +737,7 @@ class TransferManager(
                     completedTransfers.add(0, item)
                     releaseTransferLocksIfNeeded()
                     notifyUpdate(item)
+                    notifyListChanged()
                     notifyFailed(item, e.localizedMessage ?: "Stream error")
                 }
             }
@@ -678,6 +764,14 @@ class TransferManager(
         mainHandler.post {
             for (listener in listeners) {
                 listener.onTransferFailed(item, error)
+            }
+        }
+    }
+
+    fun notifyListChanged() {
+        mainHandler.post {
+            for (listener in listeners) {
+                listener.onTransfersListChanged()
             }
         }
     }
