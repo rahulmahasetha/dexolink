@@ -11,13 +11,22 @@ import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
 import com.macdroid.networking.*
+import com.macdroid.storage.DexoLinkSettings
 import com.macdroid.storage.TrustStore
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+
+data class PendingIncomingTransfer(
+    val transferId: String,
+    val totalSize: Long,
+    val peerName: String = "MacBook",
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 enum class TransferStatus {
     PENDING,
@@ -79,6 +88,36 @@ class TransferManager(
 
     val activeTransfers = ConcurrentHashMap<String, TransferItem>()
     val completedTransfers = Collections.synchronizedList(mutableListOf<TransferItem>())
+    val pendingIncomingTransfer = MutableStateFlow<PendingIncomingTransfer?>(null)
+
+    fun acceptPendingTransfer(transferId: String) {
+        val pending = pendingIncomingTransfer.value
+        if (pending != null && pending.transferId == transferId) {
+            pendingIncomingTransfer.value = null
+            val item = TransferItem(
+                id = transferId,
+                fileId = "",
+                name = "Incoming file...",
+                size = pending.totalSize,
+                isOutgoing = false,
+                state = TransferStatus.TRANSFERRING
+            )
+            activeTransfers[transferId] = item
+            acquireTransferLocks()
+            notifyUpdate(item)
+            sendCallback(TransferResponseMessage(transferId, accepted = true))
+            Log.d(TAG, "Accepted pending TransferRequest $transferId")
+        }
+    }
+
+    fun declinePendingTransfer(transferId: String) {
+        val pending = pendingIncomingTransfer.value
+        if (pending != null && pending.transferId == transferId) {
+            pendingIncomingTransfer.value = null
+            sendCallback(TransferResponseMessage(transferId, accepted = false))
+            Log.d(TAG, "Declined pending TransferRequest $transferId")
+        }
+    }
 
     val downloadDirectory: File by lazy {
         val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -375,21 +414,41 @@ class TransferManager(
                         Log.w(TAG, "Could not check StatFs: ${e.message}")
                     }
 
-                    // Auto-accept from authorized paired or connected device
-                    val item = TransferItem(
-                        id = message.transferId,
-                        fileId = "",
-                        name = "Incoming file...",
-                        size = message.totalSize,
-                        isOutgoing = false,
-                        state = TransferStatus.TRANSFERRING
-                    )
-                    activeTransfers[message.transferId] = item
-                    acquireTransferLocks()
-                    notifyUpdate(item)
+                    // Check 1: Is Quick File Sharing enabled in Settings?
+                    val settings = DexoLinkSettings.getInstance(context)
+                    if (!settings.quickFileSharing.value) {
+                        Log.w(TAG, "Rejecting TransferRequest: Quick File Sharing is disabled in Settings")
+                        sendCallback(TransferResponseMessage(message.transferId, accepted = false))
+                        return@launch
+                    }
 
-                    sendCallback(TransferResponseMessage(message.transferId, accepted = true))
-                    Log.d(TAG, "Accepted TransferRequest ${message.transferId} (${message.totalSize} bytes)")
+                    // Check 2: Auto-Accept from Paired Devices
+                    val isAutoAccept = settings.autoAcceptPaired.value
+                    if (isAutoAccept) {
+                        val item = TransferItem(
+                            id = message.transferId,
+                            fileId = "",
+                            name = "Incoming file...",
+                            size = message.totalSize,
+                            isOutgoing = false,
+                            state = TransferStatus.TRANSFERRING
+                        )
+                        activeTransfers[message.transferId] = item
+                        acquireTransferLocks()
+                        notifyUpdate(item)
+
+                        sendCallback(TransferResponseMessage(message.transferId, accepted = true))
+                        Log.d(TAG, "Auto-accepted TransferRequest ${message.transferId} (${message.totalSize} bytes)")
+                    } else {
+                        val peerName = trustStore.getPairedDevice()?.deviceName ?: "Paired Mac"
+                        val pending = PendingIncomingTransfer(
+                            transferId = message.transferId,
+                            totalSize = message.totalSize,
+                            peerName = peerName
+                        )
+                        pendingIncomingTransfer.value = pending
+                        Log.d(TAG, "Auto-accept is OFF: Held pending TransferRequest ${message.transferId} for user approval")
+                    }
                 }
 
                 is TransferResponseMessage -> {

@@ -51,6 +51,7 @@ import com.macdroid.core.TransferItem
 import com.macdroid.core.TransferStatus
 import com.macdroid.networking.*
 import com.macdroid.service.MacDroidService
+import com.macdroid.storage.DexoLinkSettings
 import com.macdroid.storage.TrustStore
 import com.macdroid.storage.TrustedDevice
 import java.io.File
@@ -133,6 +134,14 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         localDeviceName.value = connectionManager.deviceName
+        val settings = DexoLinkSettings.getInstance(this)
+        if (settings.autoDeviceDiscovery.value) {
+            if (!discoveryService.isBrowsing) {
+                discoveryService.startBrowsing()
+            }
+        } else {
+            discoveryService.stopBrowsing()
+        }
         isDiscoveryScanning.value = discoveryService.isBrowsing
         for (device in discoveryService.discoveredDevices.values) {
             val existingIndex = discoveredDevices.indexOfFirst {
@@ -154,6 +163,92 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
 
         setContent {
             DexoLinkTheme {
+                val pendingTransfer by connectionManager.transferManager.pendingIncomingTransfer.collectAsState()
+                if (pendingTransfer != null) {
+                    val pending = pendingTransfer!!
+                    val formattedSize = remember(pending.totalSize) {
+                        if (pending.totalSize >= 1024 * 1024 * 1024) {
+                            String.format(Locale.US, "%.1f GB", pending.totalSize / (1024.0 * 1024.0 * 1024.0))
+                        } else {
+                            String.format(Locale.US, "%.1f MB", pending.totalSize / (1024.0 * 1024.0))
+                        }
+                    }
+                    AlertDialog(
+                        onDismissRequest = {
+                            connectionManager.transferManager.declinePendingTransfer(pending.transferId)
+                        },
+                        containerColor = Color.White,
+                        shape = RoundedCornerShape(20.dp),
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFFEFF6FF)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Folder,
+                                        contentDescription = null,
+                                        tint = Color(0xFF0066FF),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    "Incoming File Transfer",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 17.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                            }
+                        },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "Your paired Mac (${pairedDevice.value?.deviceName ?: "Mac"}) wants to send a file to this device.",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF334155)
+                                )
+                                Text(
+                                    "File Size: $formattedSize",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Text(
+                                    "Auto-Accept is turned OFF in Settings. Would you like to accept this incoming file?",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    connectionManager.transferManager.acceptPendingTransfer(pending.transferId)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Accept Transfer", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            OutlinedButton(
+                                onClick = {
+                                    connectionManager.transferManager.declinePendingTransfer(pending.transferId)
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, Color(0xFFCBD5E1))
+                            ) {
+                                Text("Decline", color = Color(0xFF64748B))
+                            }
+                        }
+                    )
+                }
+
                 MainScreenRoot(
                     connectionState = connectionState.value,
                     syncMode = currentSyncMode.value,
@@ -220,6 +315,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                         checkAndSyncClipboard("QuickAction")
                     },
                     onRefreshDiscovery = {
+                        DexoLinkSettings.getInstance(this).setAutoDeviceDiscovery(true)
                         discoveredDevices.clear()
                         discoveryService.stopBrowsing()
                         discoveryService.startBrowsing()
@@ -228,12 +324,14 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     },
                     isScanning = isDiscoveryScanning.value,
                     onStartDiscovery = {
+                        DexoLinkSettings.getInstance(this).setAutoDeviceDiscovery(true)
                         discoveredDevices.clear()
                         discoveryService.startBrowsing()
                         isDiscoveryScanning.value = true
                         log("Started nearby device discovery")
                     },
                     onStopDiscovery = {
+                        DexoLinkSettings.getInstance(this).setAutoDeviceDiscovery(false)
                         discoveryService.stopBrowsing()
                         isDiscoveryScanning.value = false
                         log("Stopped device discovery")
@@ -508,8 +606,10 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         if (state is ConnectionState.Authenticated || state is ConnectionState.Connected) {
             isDiscoveryScanning.value = false
         } else if (state is ConnectionState.Disconnected || state is ConnectionState.Failed) {
-            if (isDiscoveryScanning.value && pairedDevice.value == null) {
+            val autoDisc = DexoLinkSettings.getInstance(this).autoDeviceDiscovery.value
+            if (autoDisc && pairedDevice.value == null) {
                 discoveryService.startBrowsing()
+                isDiscoveryScanning.value = true
             }
         }
     }

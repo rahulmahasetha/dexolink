@@ -1473,7 +1473,8 @@ fun MainScreenRoot(
                         onNavigateTransfers = { navigateToTab(NavTab.TRANSFERS) },
                         onNavigateSettings = { navigateToTab(NavTab.SETTINGS) },
                         onSendPing = onSendPing,
-                        onOpenClipboardHistory = { showClipboardHistorySheet = true }
+                        onOpenClipboardHistory = { showClipboardHistorySheet = true },
+                        isEnhancedClipboardEnabled = isEnhancedClipboardEnabled
                     )
                 }
                 NavTab.FILES -> {
@@ -1554,7 +1555,8 @@ fun HomeScreenContent(
     onNavigateTransfers: () -> Unit,
     onNavigateSettings: () -> Unit,
     onSendPing: () -> Unit,
-    onOpenClipboardHistory: () -> Unit = {}
+    onOpenClipboardHistory: () -> Unit = {},
+    isEnhancedClipboardEnabled: Boolean = false
 ) {
     val isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated
     val isConnecting = connectionState is ConnectionState.Connecting
@@ -1567,6 +1569,9 @@ fun HomeScreenContent(
     val continuityManager = remember { com.macdroid.continuity.ContinuityManager.getInstance(context) }
     val activeActivity by continuityManager.activeIncomingActivity.collectAsState()
     val isContinuityEnabled by continuityManager.isContinuityEnabled.collectAsState()
+    val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(context) }
+    val quickFileSharingEnabled by settings.quickFileSharing.collectAsState()
+    val autoDeviceDiscoveryEnabled by settings.autoDeviceDiscovery.collectAsState()
 
     if (showHandoffToMacDialog) {
         HandoffToMacDialog(
@@ -2226,301 +2231,448 @@ fun HomeScreenContent(
             }
         }
 
-        // 3. Active Features Section (Stack of 3 Cards matching Screenshot 4)
+        // 3. Active Features Section (Shows ONLY features that are currently enabled/ON)
+        val showClipboardSync = (syncMode != ClipboardSyncMode.DISABLED)
+        val showFileSharing = quickFileSharingEnabled
+        val showDevicePairing = autoDeviceDiscoveryEnabled || pairedDevice != null || devices.isNotEmpty()
+        val showContinuity = isContinuityEnabled
+        val showEnhancedClipboard = isEnhancedClipboardEnabled
+        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard
+
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Card 1: Clipboard Sync
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenSyncModeDialog() }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                if (!hasAnyActiveFeature) {
+                    // Empty state card when all features are turned OFF
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Box(
+                        Column(
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFF0066FF)),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.Clipboard,
-                                contentDescription = "Clipboard Sync",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Clipboard Sync",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                "Sync text, links, images across devices",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                        // Active Badge
-                        val (clipBg, clipColor, clipText) = when {
-                            syncMode == ClipboardSyncMode.DISABLED -> Triple(Color(0xFFF1F5F9), Color(0xFF64748B), "Disabled")
-                            isConnected -> Triple(Color(0xFFDCFCE7), Color(0xFF16A34A), "Active")
-                            else -> Triple(Color(0xFFEFF6FF), Color(0xFF0066FF), "Ready")
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(clipBg)
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                clipText,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = clipColor
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFEFF6FF))
-                                .clickable { onOpenClipboardHistory() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFF1F5F9)),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 DexoIcon(
-                                    imageVector = DexoIcons.History,
+                                    imageVector = DexoIcons.Settings,
                                     contentDescription = null,
-                                    tint = Color(0xFF0066FF),
-                                    modifier = Modifier.size(11.dp)
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(22.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("History", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0066FF))
                             }
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        DexoIcon(
-                            imageVector = DexoIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                // Card 2: File Sharing
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNavigateFiles() }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFF59E0B))
-                                .clickable { onOpenFilePicker() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.Folder,
-                                contentDescription = "File Sharing",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
+                            Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                "File Sharing",
+                                "No Features Currently Active",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
                                 color = Color(0xFF0F172A)
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "Send & receive files up to 10 GB",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (isConnected) Color(0xFFDCFCE7) else Color(0xFFF1F5F9))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                if (isConnected) "Active" else "Ready",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isConnected) Color(0xFF16A34A) else Color(0xFF64748B)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        DexoIcon(
-                            imageVector = DexoIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                // Card 3: Device Pairing
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenPairSheet() }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFA855F7)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.DeviceMac,
-                                contentDescription = "Device Pairing",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Device Pairing",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (pairedDevice != null) "Paired with ${pairedDevice.deviceName}" else if (devices.isNotEmpty()) "${devices.size} device(s) found on local Wi-Fi" else "Find and pair devices nearby",
-                                fontSize = 11.sp,
+                                "Enable Clipboard Sync, File Sharing, Continuity, or Discovery in Settings to display them here.",
+                                fontSize = 12.sp,
                                 color = Color(0xFF64748B),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                textAlign = TextAlign.Center
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = onNavigateSettings,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Open Settings", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (pairedDevice != null) Color(0xFFDCFCE7) else Color(0xFFF1F5F9))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                if (pairedDevice != null) "Active" else "Standby",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (pairedDevice != null) Color(0xFF16A34A) else Color(0xFF64748B)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        DexoIcon(
-                            imageVector = DexoIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(18.dp)
-                        )
                     }
                 }
 
-                // Card 4: Continuity (Handoff)
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            if (isConnected) {
-                                showHandoffToMacDialog = true
-                            } else {
-                                Toast.makeText(context, "Connect to your Mac to handoff activities", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                // Feature 1: Clipboard Sync (Visible ONLY when enabled)
+                if (showClipboardSync) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenSyncModeDialog() }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFF06B6D4)),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
                         ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.Sync,
-                                contentDescription = "Continuity",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF0066FF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Clipboard,
+                                    contentDescription = "Clipboard Sync",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "Continuity (Handoff)",
+                                    "Clipboard Sync",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 15.sp,
                                     color = Color(0xFF0F172A)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    color = if (isContinuityEnabled) Color(0xFFE0F7FA) else Color(0xFFF1F5F9),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        if (isContinuityEnabled) "ON" else "OFF",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = if (isContinuityEnabled) Color(0xFF00838F) else Color(0xFF64748B),
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Sync text, links, images across devices",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            // Active Badge
+                            val (clipBg, clipColor, clipText) = when {
+                                syncMode == ClipboardSyncMode.DISABLED -> Triple(Color(0xFFF1F5F9), Color(0xFF64748B), "Disabled")
+                                isConnected -> Triple(Color(0xFFDCFCE7), Color(0xFF16A34A), "Active")
+                                else -> Triple(Color(0xFFEFF6FF), Color(0xFF0066FF), "Ready")
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(clipBg)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    clipText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = clipColor
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFEFF6FF))
+                                    .clickable { onOpenClipboardHistory() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DexoIcon(
+                                        imageVector = DexoIcons.History,
+                                        contentDescription = null,
+                                        tint = Color(0xFF0066FF),
+                                        modifier = Modifier.size(11.dp)
                                     )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("History", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0066FF))
                                 }
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (isConnected) "Tap to Handoff active PDF, doc or web to Mac" else "Continue reading PDFs & browsing across devices",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                        DexoIcon(
-                            imageVector = DexoIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(16.dp)
-                        )
+                    }
+                }
+
+                // Feature 2: File Sharing (Visible ONLY when enabled)
+                if (showFileSharing) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateFiles() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFF59E0B))
+                                    .clickable { onOpenFilePicker() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Folder,
+                                    contentDescription = "File Sharing",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "File Sharing",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Send & receive files up to 10 GB",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (isConnected) Color(0xFFDCFCE7) else Color(0xFFF1F5F9))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    if (isConnected) "Active" else "Ready",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isConnected) Color(0xFF16A34A) else Color(0xFF64748B)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Feature 3: Device Pairing & Discovery (Visible ONLY when enabled or devices found)
+                if (showDevicePairing) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenPairSheet() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFA855F7)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.DeviceMac,
+                                    contentDescription = "Device Pairing",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Device Pairing",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    if (pairedDevice != null) "Paired with ${pairedDevice.deviceName}" else if (devices.isNotEmpty()) "${devices.size} device(s) found on local Wi-Fi" else "Find and pair devices nearby",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(if (pairedDevice != null) Color(0xFFDCFCE7) else Color(0xFFF1F5F9))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    if (pairedDevice != null) "Active" else "Standby",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (pairedDevice != null) Color(0xFF16A34A) else Color(0xFF64748B)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Feature 4: Continuity / Handoff (Visible ONLY when enabled)
+                if (showContinuity) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (isConnected) {
+                                    showHandoffToMacDialog = true
+                                } else {
+                                    Toast.makeText(context, "Connect to your Mac to handoff activities", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF06B6D4)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Sync,
+                                    contentDescription = "Continuity",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Continuity (Handoff)",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = Color(0xFFE0F7FA),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            "ON",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFF00838F),
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    if (isConnected) "Tap to Handoff active PDF, doc or web to Mac" else "Continue reading PDFs & browsing across devices",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Feature 5: Enhanced Clipboard (Visible ONLY when enabled)
+                if (showEnhancedClipboard) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateSettings() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF6366F1)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Sparkles,
+                                    contentDescription = "Enhanced Clipboard",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Enhanced Clipboard",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFFEEF2FF))
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Rich text & web paste compatibility active",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xFFDCFCE7))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Active",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF16A34A)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -3605,10 +3757,12 @@ fun SettingsTabContent(
     onToggleEnhancedClipboard: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
-    var quickFileSharingEnabled by remember { mutableStateOf(true) }
-    var notificationsEnabled by remember { mutableStateOf(true) }
-    var largeFilesSyncEnabled by remember { mutableStateOf(true) }
-    var autoAcceptEnabled by remember { mutableStateOf(false) }
+    val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(context) }
+    val quickFileSharingEnabled by settings.quickFileSharing.collectAsState()
+    val notificationsEnabled by settings.notificationsEnabled.collectAsState()
+    val largeFilesSyncEnabled by settings.largeFilesSync.collectAsState()
+    val autoAcceptEnabled by settings.autoAcceptPaired.collectAsState()
+    val autoDiscoveryEnabled by settings.autoDeviceDiscovery.collectAsState()
     var showEnhancedClipboardInfoDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -3832,7 +3986,7 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = quickFileSharingEnabled,
-                                onCheckedChange = { quickFileSharingEnabled = it },
+                                onCheckedChange = { settings.setQuickFileSharing(it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
                         }
@@ -3864,8 +4018,13 @@ fun SettingsTabContent(
                                 Text("Find devices on local Wi-Fi", fontSize = 11.sp, color = Color(0xFF64748B))
                             }
                             Switch(
-                                checked = isScanning,
-                                onCheckedChange = { onToggleScan() },
+                                checked = autoDiscoveryEnabled,
+                                onCheckedChange = { enabled ->
+                                    settings.setAutoDeviceDiscovery(enabled)
+                                    if (enabled != isScanning) {
+                                        onToggleScan()
+                                    }
+                                },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
                         }
@@ -3949,7 +4108,7 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = notificationsEnabled,
-                                onCheckedChange = { notificationsEnabled = it },
+                                onCheckedChange = { settings.setNotificationsEnabled(it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
                         }
@@ -4058,7 +4217,7 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = largeFilesSyncEnabled,
-                                onCheckedChange = { largeFilesSyncEnabled = it },
+                                onCheckedChange = { settings.setLargeFilesSync(it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
                         }
@@ -4091,7 +4250,7 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = autoAcceptEnabled,
-                                onCheckedChange = { autoAcceptEnabled = it },
+                                onCheckedChange = { settings.setAutoAcceptPaired(it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
                         }

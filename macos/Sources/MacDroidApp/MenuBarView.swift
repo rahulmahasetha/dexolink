@@ -531,196 +531,75 @@ struct MenuBarView: View {
                     .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
 
-                    // MARK: - Clipboard Sync Mode Card
-                    if isConnected {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.green)
-                                .font(.title3)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Auto Clipboard Sync Active")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                if let snippet = appState.lastSyncedClipboardSnippet {
-                                    Text("Last synced: \"\(snippet.prefix(28))...\"")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                } else {
-                                    Text("Copy on either device to sync instantly")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-
-                            Spacer()
-
-                            Button(action: {
-                                historyInitialTab = 1
-                                showHistorySheet = true
-                            }) {
-                                Image(systemName: "clock.arrow.circlepath")
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("View clipboard history & delete items")
-
-                            Button(action: {
-                                appState.sendPing()
-                            }) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "bolt.fill")
-                                    if let latency = appState.lastPingLatencyMs {
-                                        Text("\(latency)ms")
-                                            .font(.system(size: 10, weight: .bold))
-                                    }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help(appState.lastPingLatencyMs != nil ? "Ping Latency: \(appState.lastPingLatencyMs!)ms • Click to test again" : "Test Ping Latency")
-                        }
-                        .padding(10)
-                        .background(Color.green.opacity(0.10))
-                        .cornerRadius(10)
-                    }
-
-                    // MARK: - Enhanced Clipboard Control Card
+                    // MARK: - Feature Controls (Compact & Extensible Architecture for Continuity, Clipboard Sync, and Future Features)
                     if isConnected {
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "sparkles")
-                                    .foregroundColor(.purple)
-                                    .font(.title3)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text("Enhanced Clipboard")
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                        Text("BETA")
-                                            .font(.system(size: 8, weight: .heavy))
-                                            .foregroundColor(.purple)
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 1)
-                                            .background(
-                                                Capsule().fill(Color.purple.opacity(0.15))
-                                            )
-                                        Text(appState.isEnhancedClipboardEnabled ? "ON" : "OFF")
-                                            .font(.system(size: 8, weight: .heavy))
-                                            .foregroundColor(appState.isEnhancedClipboardEnabled ? .purple : .secondary)
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 1)
-                                            .background(
-                                                Capsule().fill((appState.isEnhancedClipboardEnabled ? Color.purple : Color.secondary).opacity(0.15))
-                                            )
-                                    }
-                                    Text("Multi-MIME HTML & plain text paste compatibility")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-
+                            HStack {
+                                Text("Feature Controls")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.secondary)
                                 Spacer()
-
-                                Toggle("", isOn: Binding(
-                                    get: { appState.isEnhancedClipboardEnabled },
-                                    set: { appState.setEnhancedClipboardEnabled($0) }
-                                ))
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                                .scaleEffect(0.75)
-                                .help(appState.isEnhancedClipboardEnabled ? "Disable Enhanced Clipboard" : "Enable Enhanced Clipboard (multi-MIME plain & HTML paste)")
                             }
 
-                            if appState.isEnhancedClipboardEnabled {
-                                Text("Sanitizes zero-width spaces, normalizes line breaks, and provides rich HTML pasteboards for web editors.")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.purple.opacity(0.85))
-                                    .lineLimit(2)
-                                    .padding(.leading, 28)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color.purple.opacity(0.06))
-                        .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.purple.opacity(0.2), lineWidth: 1)
-                        )
-                    }
-
-                    // MARK: - Continuity (Handoff) Control Card
-                    if isConnected {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                                    .foregroundColor(.cyan)
-                                    .font(.title3)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text("Continuity (Handoff)")
-                                            .font(.caption)
-                                            .fontWeight(.bold)
-                                        Text(appState.continuityManager.isEnabled ? "ON" : "OFF")
-                                            .font(.system(size: 8, weight: .heavy))
-                                            .foregroundColor(appState.continuityManager.isEnabled ? .cyan : .secondary)
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 1)
-                                            .background(
-                                                Capsule().fill((appState.continuityManager.isEnabled ? Color.cyan : Color.secondary).opacity(0.15))
-                                            )
-                                    }
-                                    Text("Seamlessly continue PDFs, web & docs across devices")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-
-                                Spacer()
-
-                                Toggle("", isOn: Binding(
-                                    get: { appState.continuityManager.isEnabled },
-                                    set: { appState.continuityManager.isEnabled = $0 }
-                                ))
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                                .scaleEffect(0.75)
-                            }
-
-                            if appState.continuityManager.isEnabled {
-                                HStack(spacing: 8) {
-                                    Button(action: {
+                            VStack(spacing: 6) {
+                                // 1. Continuity (Handoff)
+                                CompactFeatureControl(
+                                    title: "Continuity (Handoff)",
+                                    subtitle: appState.continuityManager.incomingActivity != nil ? "Incoming activity ready to open" : "Continue reading PDFs, docs & web across devices",
+                                    icon: "arrow.triangle.2.circlepath.circle.fill",
+                                    tintColor: .cyan,
+                                    isEnabled: appState.continuityManager.isEnabled,
+                                    onToggle: {
+                                        appState.continuityManager.isEnabled.toggle()
+                                    },
+                                    actionTitle: "Handoff...",
+                                    actionIcon: "paperplane.fill",
+                                    onAction: {
                                         showHandoffSheet = true
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "paperplane.fill")
-                                            Text("Handoff to Phone...")
-                                        }
-                                        .font(.caption2)
                                     }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
+                                )
 
-                                    if let last = appState.continuityManager.lastSentActivity {
-                                        Spacer()
-                                        Text("Last sent: \(last.title.prefix(18))...")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(1)
+                                // 2. Auto Clipboard Sync
+                                CompactFeatureControl(
+                                    title: "Auto Clipboard Sync",
+                                    subtitle: appState.lastSyncedClipboardSnippet.map { "Synced: \"\($0.prefix(22))...\"" } ?? "Bidirectional text & links",
+                                    icon: "doc.on.clipboard.fill",
+                                    tintColor: .green,
+                                    isEnabled: appState.isClipboardSyncEnabled,
+                                    onToggle: {
+                                        appState.toggleClipboardSync()
+                                    },
+                                    actionTitle: "History",
+                                    actionIcon: "clock.arrow.circlepath",
+                                    onAction: {
+                                        historyInitialTab = 1
+                                        showHistorySheet = true
+                                    },
+                                    secondaryActionTitle: appState.lastPingLatencyMs != nil ? "\(appState.lastPingLatencyMs!)ms" : "Ping",
+                                    secondaryActionIcon: "bolt.fill",
+                                    onSecondaryAction: {
+                                        appState.sendPing()
                                     }
-                                }
+                                )
+
+                                // 3. Enhanced Clipboard (Extensible for all future features)
+                                CompactFeatureControl(
+                                    title: "Enhanced Clipboard",
+                                    subtitle: "Rich HTML & multi-MIME paste compatibility",
+                                    icon: "sparkles",
+                                    tintColor: .purple,
+                                    badgeText: "BETA",
+                                    isEnabled: appState.isEnhancedClipboardEnabled,
+                                    onToggle: {
+                                        appState.setEnhancedClipboardEnabled(!appState.isEnhancedClipboardEnabled)
+                                    }
+                                )
                             }
                         }
                         .padding(10)
-                        .background(Color.cyan.opacity(0.06))
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
                         .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.cyan.opacity(0.2), lineWidth: 1)
-                        )
                     }
 
                     // MARK: - Nearby Discovered Devices
@@ -1917,4 +1796,124 @@ struct HandoffSheetView: View {
         isPresented = false
     }
 }
+
+// MARK: - Compact Feature Control Button (Extensible architecture for existing & future features)
+struct CompactFeatureControl: View {
+    let title: String
+    let subtitle: String?
+    let icon: String
+    let tintColor: Color
+    var badgeText: String? = nil
+    let isEnabled: Bool
+    let onToggle: () -> Void
+    var actionTitle: String? = nil
+    var actionIcon: String? = nil
+    var onAction: (() -> Void)? = nil
+    var secondaryActionTitle: String? = nil
+    var secondaryActionIcon: String? = nil
+    var onSecondaryAction: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(tintColor.opacity(isEnabled ? 0.18 : 0.08))
+                    .frame(width: 26, height: 26)
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isEnabled ? tintColor : .secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.primary)
+
+                    if let badge = badgeText {
+                        Text(badge)
+                            .font(.system(size: 7, weight: .heavy))
+                            .foregroundColor(tintColor)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 0.5)
+                            .background(
+                                Capsule().fill(tintColor.opacity(0.12))
+                            )
+                    }
+
+                    Text(isEnabled ? "ON" : "OFF")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundColor(isEnabled ? tintColor : .secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill((isEnabled ? tintColor : Color.secondary).opacity(0.12))
+                        )
+                }
+
+                if let sub = subtitle {
+                    Text(sub)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            // Secondary Action (e.g. Ping latency)
+            if let secTitle = secondaryActionTitle, let onSec = onSecondaryAction, isEnabled {
+                Button(action: onSec) {
+                    HStack(spacing: 2) {
+                        if let secIcon = secondaryActionIcon {
+                            Image(systemName: secIcon)
+                                .font(.system(size: 8))
+                        }
+                        Text(secTitle)
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("Test Ping Latency")
+            }
+
+            // Primary Action (e.g. Handoff... or History)
+            if let actTitle = actionTitle, let onAct = onAction, isEnabled {
+                Button(action: onAct) {
+                    HStack(spacing: 2) {
+                        if let actIcon = actionIcon {
+                            Image(systemName: actIcon)
+                                .font(.system(size: 8))
+                        }
+                        Text(actTitle)
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
+
+            // Compact 1-click Toggle Switch
+            Toggle("", isOn: Binding(
+                get: { isEnabled },
+                set: { _ in onToggle() }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .scaleEffect(0.68)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(tintColor.opacity(isEnabled ? 0.05 : 0.02))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(tintColor.opacity(isEnabled ? 0.20 : 0.08), lineWidth: 1)
+        )
+    }
+}
+
 

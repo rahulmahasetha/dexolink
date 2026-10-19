@@ -345,6 +345,7 @@ class AppState: ObservableObject {
     @Published var activeTransfer: TransferItem? = nil
     @Published var recentTransfers: [TransferItem] = []
     @Published var clipboardHistory: [ClipboardHistoryItem] = []
+    @Published var isClipboardSyncEnabled: Bool = true
     @Published var isEnhancedClipboardEnabled: Bool = false
     @Published var userExplicitlyDisconnected: Bool = false
 
@@ -364,6 +365,7 @@ class AppState: ObservableObject {
         self.localIP = AppState.getLocalIP() ?? "Unavailable"
         self.recentTransfers = self.transferManager.completedTransfers
         self.clipboardHistory = self.clipboardManager.history
+        self.isClipboardSyncEnabled = UserDefaults.standard.object(forKey: "dexolink_clipboard_sync_enabled") as? Bool ?? true
         self.isEnhancedClipboardEnabled = self.clipboardManager.isEnhancedClipboardEnabled
 
         // Wire up delegates
@@ -734,6 +736,26 @@ class AppState: ObservableObject {
         print("[macOS Enhanced Clipboard] Toggled to: \(enabled ? "ON" : "OFF")")
     }
 
+    func applyClipboardSyncDirection() {
+        if case .connected = connectionState, isClipboardSyncEnabled {
+            clipboardManager.direction = .bidirectional
+        } else {
+            clipboardManager.direction = .disabled
+        }
+    }
+
+    func setClipboardSyncEnabled(_ enabled: Bool) {
+        guard isClipboardSyncEnabled != enabled else { return }
+        isClipboardSyncEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "dexolink_clipboard_sync_enabled")
+        applyClipboardSyncDirection()
+        print("[macOS Auto Clipboard Sync] Toggled to: \(enabled ? "ON" : "OFF")")
+    }
+
+    func toggleClipboardSync() {
+        setClipboardSyncEnabled(!isClipboardSyncEnabled)
+    }
+
     func removeDiscoveredDevice(id: String) {
         discoveryService.removeDevice(id: id)
         discoveredDevices.removeAll(where: { $0.id == id })
@@ -746,7 +768,7 @@ class AppState: ObservableObject {
         self.pairingManager.confirmPairing()
         self.incomingPairingRequest = nil
         self.pairingPin = nil
-        self.clipboardManager.direction = .bidirectional
+        self.applyClipboardSyncDirection()
         self.statusMessage = "Connected to \(peerName) (Paired)"
         
         // Automatically stop discovery and scanning on both devices once pairing succeeds!
@@ -826,10 +848,10 @@ extension AppState: ConnectionManagerDelegate {
                 let myName = Host.current().localizedName ?? "MacBook"
                 let hello = ProtocolMessage.hello(version: 2, deviceId: CryptoService.shared.deviceId, deviceName: myName)
                 self.connectionManager.send(message: hello)
-                self.clipboardManager.direction = .bidirectional
+                self.applyClipboardSyncDirection()
             case .authenticated:
                 self.startHeartbeat()
-                self.clipboardManager.direction = .bidirectional
+                self.applyClipboardSyncDirection()
                 self.statusMessage = "Connected to \(self.connectedDeviceName ?? "Device") (Paired)"
                 // Automatically stop discovery, beacons, and scanning once connected & authenticated to save battery
                 self.discoveryService.stopBrowsing()
@@ -890,7 +912,7 @@ extension AppState: ConnectionManagerDelegate {
 
             if isTrusted {
                 self.statusMessage = "Paired with \(deviceName) (Trusted) • Syncing"
-                self.clipboardManager.direction = .bidirectional
+                self.applyClipboardSyncDirection()
                 let ack = ProtocolMessage.helloAck(
                     version: 2,
                     deviceId: CryptoService.shared.deviceId,
@@ -919,7 +941,7 @@ extension AppState: ConnectionManagerDelegate {
             self.connectedDeviceId = deviceId
             if paired {
                 self.statusMessage = "Connected to \(deviceName) • Syncing"
-                self.clipboardManager.direction = .bidirectional
+                self.applyClipboardSyncDirection()
                 if !TrustStore.shared.isPaired(deviceId: deviceId, deviceName: deviceName) {
                     TrustStore.shared.setPairedDevice(
                         TrustedDevice(deviceId: deviceId, deviceName: deviceName, publicKeyBase64: "", pairedAt: Date())
@@ -999,7 +1021,7 @@ extension AppState: ConnectionManagerDelegate {
                 self.pairingManager.initiatePairing(peerId: peerId, peerName: peerName, peerKeyBase64: publicKey)
                 self.pairingManager.confirmPairing()
                 self.pairingPin = nil
-                self.clipboardManager.direction = .bidirectional
+                self.applyClipboardSyncDirection()
                 self.statusMessage = "Connected to \(peerName) (Paired)"
                 
                 // Automatically stop discovery and scanning on both devices once pairing succeeds!
@@ -1053,7 +1075,7 @@ extension AppState: ConnectionManagerDelegate {
                     self.clipboardManager.direction = .sendOnly
                     self.statusMessage = "Mode: Mac → Android (Send Only)"
                 default:
-                    self.clipboardManager.direction = .bidirectional
+                    self.clipboardManager.direction = self.isClipboardSyncEnabled ? .bidirectional : .disabled
                     self.statusMessage = "Mode: Two-Way Sync Active"
                 }
 

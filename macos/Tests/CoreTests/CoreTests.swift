@@ -63,4 +63,24 @@ final class CoreTests: XCTestCase {
         XCTAssertNotNil(htmlContent)
         XCTAssertTrue(htmlContent?.contains("<p>Test Line 1</p>") == true)
     }
+
+    func testClipboardDirectionTransitions() {
+        let manager = ClipboardManager.shared
+        manager.direction = .disabled
+        XCTAssertEqual(manager.direction, .disabled)
+
+        manager.direction = .bidirectional
+        XCTAssertEqual(manager.direction, .bidirectional)
+
+        manager.direction = .disabled
+        XCTAssertEqual(manager.direction, .disabled)
+    }
+
+    func testClipboardHistoryItemModel() {
+        let item = ClipboardHistoryItem(text: "Sample Snippet", isOutgoing: true)
+        XCTAssertEqual(item.text, "Sample Snippet")
+        XCTAssertTrue(item.isOutgoing)
+        XCTAssertFalse(item.id.isEmpty)
+    }
 }
+

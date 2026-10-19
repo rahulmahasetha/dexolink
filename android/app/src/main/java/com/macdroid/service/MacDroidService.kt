@@ -154,7 +154,9 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
             if (port > 0) {
                 discoveryService.startAdvertising(port)
             }
-            discoveryService.startBrowsing()
+            if (com.macdroid.storage.DexoLinkSettings.getInstance(this).autoDeviceDiscovery.value) {
+                discoveryService.startBrowsing()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting server or discovery: ${e.message}", e)
         }
