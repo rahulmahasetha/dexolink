@@ -22,7 +22,9 @@
 | **macOS (v4.0.0)** | [**DexoLink-v4.0.0.dmg**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.0/DexoLink-v4.0.0.dmg) | macOS 13.0+ | Exact versioned DMG disk image |
 | **Android** | [**DexoLink-Android.apk**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink-Android.apk) | Android 8.0+ (Oreo through Android 15) | Standalone APK package |
 | **Android (v4.0.0)** | [**DexoLink-v4.0.0.apk**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.0/DexoLink-v4.0.0.apk) | Android 8.0+ | Exact versioned APK package |
-| **Windows (GUI & Engine)** | [**`windows/run_windows_gui.bat`**](windows/README.md) | Windows 10 / 11 | Easy-to-use desktop GUI app (`dexolink_gui.py`) & companion engine |
+| **Windows (.exe)** | [**DexoLink.exe**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink.exe) | Windows 10 / 11 (64-bit) | Standalone native Windows executable app |
+| **Windows (v4.0.0 .exe)** | [**DexoLink-v4.0.0.exe**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.0/DexoLink-v4.0.0.exe) | Windows 10 / 11 | Exact versioned standalone executable app |
+| **Windows (Source / GUI)** | [**`windows/run_windows_gui.bat`**](windows/README.md) | Windows 10 / 11 | Desktop GUI app (`dexolink_gui.py`) & launcher |
 | **iPhone (iOS App)** | [**`ios/README.md`**](ios/README.md) | iOS 16.0+ | Native SwiftUI iPhone app with PhotosPicker & Files sharing |
 
 ---
