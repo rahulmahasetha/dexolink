@@ -241,61 +241,72 @@ struct MenuBarView: View {
                         )
                     }
 
-                    // MARK: - Strict 1-Device Pairing Status Card
-                    if let paired = TrustStore.shared.getPairedDevice() {
-                        HStack(spacing: 8) {
-                            Image(systemName: isConnected ? "checkmark.seal.fill" : "lock.shield.fill")
-                                .foregroundColor(isConnected ? .green : .blue)
-                                .font(.title2)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(paired.deviceName)
-                                        .font(.subheadline)
-                                        .fontWeight(.bold)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                    Text(isConnected ? "Connected" : "Paired")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(isConnected ? .green : .cyan)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background((isConnected ? Color.green : Color.cyan).opacity(0.18))
-                                        .cornerRadius(4)
-                                        .lineLimit(1)
-                                        .fixedSize(horizontal: true, vertical: true)
-                                }
-                                Text("Strict 1-Device Policy • Keychain Protected")
-                                    .font(.caption2)
+                    // MARK: - Paired Devices Status Cards
+                    let trustedDevices = TrustStore.shared.getTrustedDevices()
+                    if !trustedDevices.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if appState.isMultiplePairedDevicesEnabled && trustedDevices.count > 1 {
+                                Text("Paired Devices (\(trustedDevices.count))")
+                                    .font(.system(size: 11, weight: .semibold))
                                     .foregroundColor(.secondary)
-                                    .lineLimit(1)
                             }
+                            ForEach(trustedDevices, id: \.deviceId) { paired in
+                                let isThisConnected = isConnected && (appState.connectedDeviceId == paired.deviceId || appState.connectedDeviceName == paired.deviceName)
+                                HStack(spacing: 8) {
+                                    Image(systemName: isThisConnected ? "checkmark.seal.fill" : "lock.shield.fill")
+                                        .foregroundColor(isThisConnected ? .green : .blue)
+                                        .font(.title2)
 
-                            Spacer(minLength: 4)
-
-                            HStack(spacing: 6) {
-                                if isConnected {
-                                    Button("Disconnect") {
-                                        appState.disconnect()
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 6) {
+                                            Text(paired.deviceName)
+                                                .font(.subheadline)
+                                                .fontWeight(.bold)
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                            Text(isThisConnected ? "Connected" : "Paired")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundColor(isThisConnected ? .green : .cyan)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background((isThisConnected ? Color.green : Color.cyan).opacity(0.18))
+                                                .cornerRadius(4)
+                                                .lineLimit(1)
+                                                .fixedSize(horizontal: true, vertical: true)
+                                        }
+                                        Text(appState.isMultiplePairedDevicesEnabled ? "Multi-Device Mode • Keychain Protected" : "Strict 1-Device Policy • Keychain Protected")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
                                     }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .tint(.orange)
-                                    .help("Disconnect active session while preserving pairing")
-                                }
 
-                                Button("Unpair") {
-                                    appState.unpair()
+                                    Spacer(minLength: 4)
+
+                                    HStack(spacing: 6) {
+                                        if isThisConnected {
+                                            Button("Disconnect") {
+                                                appState.disconnect()
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                            .tint(.orange)
+                                            .help("Disconnect active session while preserving pairing")
+                                        }
+
+                                        Button("Unpair") {
+                                            appState.unpair(deviceId: paired.deviceId)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .tint(.red)
+                                        .help("Unpair this specific device")
+                                    }
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .tint(.red)
-                                .help("Unpair to allow pairing another device")
+                                .padding(10)
+                                .background(Color.green.opacity(0.08))
+                                .cornerRadius(10)
                             }
                         }
-                        .padding(10)
-                        .background(Color.green.opacity(0.08))
-                        .cornerRadius(10)
                     }
 
                     // MARK: - Pairing PIN Banner if Active
@@ -366,7 +377,8 @@ struct MenuBarView: View {
 
                                 HStack(spacing: 8) {
                                     if isConnected {
-                                        Button("Send to Phone") {
+                                        let targetLabel = appState.connectedDeviceName.map { "Send to \($0)" } ?? "Send Files"
+                                        Button(targetLabel) {
                                             selectAndSendFile()
                                         }
                                         .buttonStyle(.borderedProminent)
@@ -595,6 +607,18 @@ struct MenuBarView: View {
                                         appState.setEnhancedClipboardEnabled(!appState.isEnhancedClipboardEnabled)
                                     }
                                 )
+
+                                // 4. Multiple Paired Devices
+                                CompactFeatureControl(
+                                    title: "Multiple Paired Devices",
+                                    subtitle: appState.isMultiplePairedDevicesEnabled ? "Connect multiple devices simultaneously" : "Single device mode (Strict 1-device policy)",
+                                    icon: "person.2.badge.key.fill",
+                                    tintColor: .indigo,
+                                    isEnabled: appState.isMultiplePairedDevicesEnabled,
+                                    onToggle: {
+                                        appState.toggleMultiplePairedDevices()
+                                    }
+                                )
                             }
                         }
                         .padding(10)
@@ -707,7 +731,7 @@ struct MenuBarView: View {
             // MARK: - Developer Attribution Footer
             HStack {
                 Spacer()
-                Text("Developed by Rahul Mahaseth | DexoLink v3.0.0")
+                Text("Developed by Rahul Mahaseth | DexoLink v4.0.0")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary.opacity(0.8))
                 Spacer()
@@ -866,14 +890,9 @@ struct DeviceRow: View {
     @ObservedObject var appState: AppState
 
     var body: some View {
-        let pairedDevice = TrustStore.shared.getPairedDevice()
-        let isPaired = (pairedDevice != nil && (
-            device.id == pairedDevice!.deviceId ||
-            device.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(pairedDevice!.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame ||
-            device.isPaired
-        ))
-        let isCurrentConnected = isPaired && (appState.connectionState.isConnected)
-        let anotherDevicePaired = (pairedDevice != nil && !isPaired)
+        let isPaired = TrustStore.shared.isPaired(deviceId: device.id, deviceName: device.name) || device.isPaired
+        let isCurrentConnected = isPaired && (appState.connectionState.isConnected && (appState.connectedDeviceId == device.id || appState.connectedDeviceName == device.name))
+        let anotherDevicePaired = !appState.isMultiplePairedDevicesEnabled && (TrustStore.shared.hasPairedDevice() && !isPaired)
 
         HStack {
             // Device Icon (iPhone, iPad, Mac, Android)
@@ -967,13 +986,14 @@ struct DeviceRow: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.mini)
             } else if anotherDevicePaired {
+                let firstPairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? "Current Device"
                 HStack(spacing: 4) {
                     Button("Unpair Current") {
-                        appState.statusMessage = "Strict 1-Device Policy: Unpair '\(pairedDevice!.deviceName)' first to pair with '\(device.name)'."
+                        appState.statusMessage = "Strict 1-Device Policy: Unpair '\(firstPairedName)' first to pair with '\(device.name)'."
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
-                    .help("Unpair '\(pairedDevice!.deviceName)' above first to connect this device")
+                    .help("Unpair '\(firstPairedName)' above first to connect this device")
 
                     Button(action: {
                         appState.removeDiscoveredDevice(id: device.id)

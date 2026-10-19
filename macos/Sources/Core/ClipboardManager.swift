@@ -1,5 +1,9 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import Networking
 import CryptoKit
 
@@ -39,7 +43,11 @@ public class ClipboardManager {
     public static let shared = ClipboardManager()
     public weak var delegate: ClipboardManagerDelegate?
     
+    #if os(macOS)
     private let pasteboard = NSPasteboard.general
+    #elseif os(iOS)
+    private let pasteboard = UIPasteboard.general
+    #endif
     private var lastChangeCount: Int
     private var lastSentHash: String = ""
     private var lastReceivedHash: String = ""
@@ -131,8 +139,9 @@ public class ClipboardManager {
         self.connectionManager = manager
     }
 
-    /// Writes text to the macOS general pasteboard with support for Enhanced Clipboard (plain + HTML representations).
+    /// Writes text to the general pasteboard with support for Enhanced Clipboard (plain + HTML representations).
     public func applyTextToPasteboard(_ text: String) {
+        #if os(macOS)
         pasteboard.clearContents()
         if isEnhancedClipboardEnabled {
             let sanitized = EnhancedClipboardHelper.sanitizePlainText(text)
@@ -149,6 +158,18 @@ public class ClipboardManager {
                 print("[macOS Clipboard Error] NSPasteboard.setString returned false")
             }
         }
+        #elseif os(iOS)
+        if isEnhancedClipboardEnabled {
+            let sanitized = EnhancedClipboardHelper.sanitizePlainText(text)
+            let html = EnhancedClipboardHelper.toHtmlRepresentation(sanitized)
+            pasteboard.string = sanitized
+            pasteboard.setValue(html, forPasteboardType: "public.html")
+            print("[iOS Clipboard Applied] Enhanced multi-MIME applied")
+        } else {
+            pasteboard.string = text
+            print("[iOS Clipboard Applied] Successfully wrote text to UIPasteboard")
+        }
+        #endif
         self.lastChangeCount = pasteboard.changeCount
     }
     
@@ -156,6 +177,7 @@ public class ClipboardManager {
         self.lastChangeCount = pasteboard.changeCount
         
         // 1. Event-driven observer: check clipboard immediately whenever user switches applications
+        #if os(macOS)
         if appActivationObserver == nil {
             appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.didActivateApplicationNotification,
@@ -167,6 +189,19 @@ public class ClipboardManager {
                 self?.checkForChanges()
             }
         }
+        #elseif os(iOS)
+        if appActivationObserver == nil {
+            appActivationObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.idleCheckCount = 0
+                self?.scheduleAdaptiveTimer(fast: true)
+                self?.checkForChanges()
+            }
+        }
+        #endif
 
         // 2. Schedule adaptive timer
         scheduleAdaptiveTimer(fast: true)
@@ -175,10 +210,17 @@ public class ClipboardManager {
     private func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        #if os(macOS)
         if let observer = appActivationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             appActivationObserver = nil
         }
+        #elseif os(iOS)
+        if let observer = appActivationObserver {
+            NotificationCenter.default.removeObserver(observer)
+            appActivationObserver = nil
+        }
+        #endif
     }
 
     private func scheduleAdaptiveTimer(fast: Bool) {
@@ -228,7 +270,15 @@ public class ClipboardManager {
         if currentCount != lastChangeCount {
             lastChangeCount = currentCount
             
-            if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            #if os(macOS)
+            let clipboardString = pasteboard.string(forType: .string)
+            #elseif os(iOS)
+            let clipboardString = pasteboard.string
+            #else
+            let clipboardString: String? = nil
+            #endif
+            
+            if let text = clipboardString, !text.isEmpty {
                 // Reject extremely large clipboard texts (> 1MB)
                 let textData = Data(text.utf8)
                 if textData.count > 1024 * 1024 {

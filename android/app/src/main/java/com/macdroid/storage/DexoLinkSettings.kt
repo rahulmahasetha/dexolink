@@ -19,6 +19,7 @@ class DexoLinkSettings private constructor(context: Context) {
         private const val KEY_QUICK_FILE_SHARING = "quick_file_sharing"
         private const val KEY_NOTIFICATIONS = "notifications_enabled"
         private const val KEY_LARGE_FILES_SYNC = "large_files_sync"
+        private const val KEY_MULTI_PAIRED_DEVICES = "multi_paired_devices"
 
         @Volatile
         private var instance: DexoLinkSettings? = null
@@ -48,6 +49,9 @@ class DexoLinkSettings private constructor(context: Context) {
     private val _largeFilesSync = MutableStateFlow(prefs.getBoolean(KEY_LARGE_FILES_SYNC, true))
     val largeFilesSync: StateFlow<Boolean> = _largeFilesSync.asStateFlow()
 
+    private val _multiPairedDevices = MutableStateFlow(prefs.getBoolean(KEY_MULTI_PAIRED_DEVICES, false))
+    val multiPairedDevices: StateFlow<Boolean> = _multiPairedDevices.asStateFlow()
+
     fun setAutoDeviceDiscovery(enabled: Boolean) {
         _autoDeviceDiscovery.value = enabled
         prefs.edit().putBoolean(KEY_AUTO_DISCOVERY, enabled).apply()
@@ -71,5 +75,10 @@ class DexoLinkSettings private constructor(context: Context) {
     fun setLargeFilesSync(enabled: Boolean) {
         _largeFilesSync.value = enabled
         prefs.edit().putBoolean(KEY_LARGE_FILES_SYNC, enabled).apply()
+    }
+
+    fun setMultiPairedDevices(enabled: Boolean) {
+        _multiPairedDevices.value = enabled
+        prefs.edit().putBoolean(KEY_MULTI_PAIRED_DEVICES, enabled).apply()
     }
 }

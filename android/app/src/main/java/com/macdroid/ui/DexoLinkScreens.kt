@@ -4285,7 +4285,8 @@ fun SettingsTabContent(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        // 1. Strict 1-Device Policy
+                        // 1. Multiple Paired Devices
+                        val multiPairedEnabled by settings.multiPairedDevices.collectAsState()
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -4306,14 +4307,16 @@ fun SettingsTabContent(
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Strict 1-Device Policy", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
-                                Text("Only one device can be paired at a time", fontSize = 11.sp, color = Color(0xFF64748B))
+                                Text("Multiple Paired Devices", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                Text(
+                                    if (multiPairedEnabled) "Connect multiple devices simultaneously" else "Single device mode (Strict 1-device policy)",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
                             }
                             Switch(
-                                checked = true,
-                                onCheckedChange = {
-                                    Toast.makeText(context, "Strict 1-Device Policy is enforced by Keystore", Toast.LENGTH_SHORT).show()
-                                },
+                                checked = multiPairedEnabled,
+                                onCheckedChange = { settings.setMultiPairedDevices(it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
                             )
                         }
@@ -4353,46 +4356,58 @@ fun SettingsTabContent(
 
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
 
-                        // 3. Paired Mac info & Unpair button
-                        if (pairedDevice != null) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        "Paired Mac: ${pairedDevice.deviceName}",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                    Text(
-                                        "TrustStore verified",
-                                        fontSize = 11.sp,
-                                        color = Color(0xFF16A34A)
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    OutlinedButton(
-                                        onClick = onOpenRenamePaired,
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        // 3. Paired Devices List & Device-Specific Unpair
+                        val trustStore = remember { com.macdroid.storage.TrustStore.getInstance(context) }
+                        val trustedList = remember(multiPairedEnabled, pairedDevice) { trustStore.getTrustedDevices() }
+                        if (trustedList.isNotEmpty()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Trusted Paired Devices (${trustedList.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Color(0xFF64748B))
+                                for (device in trustedList) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("Rename", fontSize = 11.sp, color = Color(0xFF0F172A))
-                                    }
-                                    Button(
-                                        onClick = onUnpair,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("Unpair", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                device.deviceName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = Color(0xFF0F172A)
+                                            )
+                                            Text(
+                                                "TrustStore verified",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF16A34A)
+                                            )
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            if (device.deviceId == pairedDevice?.deviceId) {
+                                                OutlinedButton(
+                                                    onClick = onOpenRenamePaired,
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text("Rename", fontSize = 11.sp, color = Color(0xFF0F172A))
+                                                }
+                                            }
+                                            Button(
+                                                onClick = {
+                                                    trustStore.unpairDevice(device.deviceId)
+                                                    onUnpair()
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                            ) {
+                                                Text("Unpair", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                            }
+                                        }
                                     }
                                 }
                             }
                         } else {
                             Text(
-                                "No device currently paired • Strict 1-Device Policy active",
+                                if (multiPairedEnabled) "No devices currently paired" else "No device currently paired • Strict 1-Device Policy active",
                                 fontSize = 12.sp,
                                 color = Color(0xFF64748B)
                             )
@@ -4705,7 +4720,7 @@ fun DexoLinkBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v3.0.0",
+                    "Developed by Rahul Mahaseth | DexoLink v4.0.0",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF64748B),

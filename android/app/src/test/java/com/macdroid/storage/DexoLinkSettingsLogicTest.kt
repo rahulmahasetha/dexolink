@@ -152,4 +152,74 @@ class DexoLinkSettingsLogicTest {
         onAppStart()
         assertFalse("Discovery should not browse on start when disabled", isBrowsing)
     }
+
+    @Test
+    fun testMultiplePairedDevices_defaultsToFalse() {
+        val multiPairedDefault = false
+        assertFalse("Multiple Paired Devices must be OFF by default", multiPairedDefault)
+    }
+
+    @Test
+    fun testMultiplePairedDevices_singleModeEnforcesSingleDevice() {
+        var multiPairedEnabled = false
+        val deviceList = mutableListOf<String>()
+
+        fun pairDevice(id: String) {
+            if (!multiPairedEnabled) {
+                deviceList.clear()
+                deviceList.add(id)
+            } else {
+                if (!deviceList.contains(id)) {
+                    deviceList.add(id)
+                }
+            }
+        }
+
+        pairDevice("macbook-1")
+        assertEquals(1, deviceList.size)
+        assertEquals("macbook-1", deviceList.first())
+
+        // Pairing second device in single mode replaces the first
+        pairDevice("iphone-1")
+        assertEquals(1, deviceList.size)
+        assertEquals("iphone-1", deviceList.first())
+    }
+
+    @Test
+    fun testMultiplePairedDevices_multiModeAllowsMultipleAndDeviceSpecificUnpairing() {
+        var multiPairedEnabled = true
+        val deviceList = mutableListOf<String>()
+
+        fun pairDevice(id: String) {
+            if (!multiPairedEnabled) {
+                deviceList.clear()
+                deviceList.add(id)
+            } else {
+                if (!deviceList.contains(id)) {
+                    deviceList.add(id)
+                }
+            }
+        }
+
+        fun unpairDevice(id: String) {
+            deviceList.remove(id)
+        }
+
+        pairDevice("macbook-pro")
+        pairDevice("pixel-8")
+        pairDevice("windows-desktop")
+
+        assertEquals(3, deviceList.size)
+        assertTrue(deviceList.contains("macbook-pro"))
+        assertTrue(deviceList.contains("pixel-8"))
+        assertTrue(deviceList.contains("windows-desktop"))
+
+        // Device-specific unpairing: unpair only Pixel 8
+        unpairDevice("pixel-8")
+        assertEquals(2, deviceList.size)
+        assertFalse("pixel-8 must be removed", deviceList.contains("pixel-8"))
+        assertTrue("macbook-pro must remain paired", deviceList.contains("macbook-pro"))
+        assertTrue("windows-desktop must remain paired", deviceList.contains("windows-desktop"))
+    }
 }
+

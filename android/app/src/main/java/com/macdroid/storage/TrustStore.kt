@@ -28,10 +28,11 @@ data class TrustedDevice(
     }
 }
 
-class TrustStore(context: Context) {
+class TrustStore(private val context: Context) {
     companion object {
         private const val PREFS_NAME = "macdroid_trust_store"
         private const val KEY_PAIRED_DEVICE = "single_paired_device"
+        private const val KEY_MULTI_DEVICES = "multi_paired_devices_list"
 
         @Volatile
         private var instance: TrustStore? = null
@@ -48,6 +49,11 @@ class TrustStore(context: Context) {
 
     @Synchronized
     fun getPairedDevice(): TrustedDevice? {
+        val settings = DexoLinkSettings.getInstance(context)
+        if (settings.multiPairedDevices.value) {
+            val devices = getTrustedDevices()
+            if (devices.isNotEmpty()) return devices.first()
+        }
         val raw = prefs.getString(KEY_PAIRED_DEVICE, null) ?: return null
         val decrypted = KeystoreHelper.decrypt(raw) ?: raw
         return try {
@@ -63,36 +69,83 @@ class TrustStore(context: Context) {
 
     @Synchronized
     fun hasPairedDevice(): Boolean {
-        return getPairedDevice() != null
+        return getTrustedDevices().isNotEmpty()
     }
 
     @Synchronized
     fun isPairedWith(deviceId: String, deviceName: String? = null): Boolean {
         if (deviceId.isBlank() && deviceName.isNullOrBlank()) return false
-        val paired = getPairedDevice() ?: return false
-        if (deviceId.isNotBlank() && paired.deviceId == deviceId) return true
-        if (!deviceName.isNullOrBlank() && paired.deviceName.trim().equals(deviceName.trim(), ignoreCase = true)) return true
+        val devices = getTrustedDevices()
+        for (dev in devices) {
+            if (deviceId.isNotBlank() && dev.deviceId == deviceId) return true
+            if (!deviceName.isNullOrBlank() && dev.deviceName.trim().equals(deviceName.trim(), ignoreCase = true)) return true
+        }
         return false
     }
 
     @Synchronized
     fun setPairedDevice(device: TrustedDevice) {
-        // Enforce strictly one paired device at a time, encrypted with Android Keystore
-        val jsonStr = device.toJson().toString()
-        val encrypted = KeystoreHelper.encrypt(jsonStr)
-        prefs.edit().putString(KEY_PAIRED_DEVICE, encrypted).apply()
+        val settings = DexoLinkSettings.getInstance(context)
+        if (settings.multiPairedDevices.value) {
+            addTrustedDevice(device)
+        } else {
+            // Strictly enforce single device when Multiple Paired Devices is OFF
+            val jsonStr = device.toJson().toString()
+            val encrypted = KeystoreHelper.encrypt(jsonStr)
+            prefs.edit()
+                .putString(KEY_PAIRED_DEVICE, encrypted)
+                .remove(KEY_MULTI_DEVICES)
+                .apply()
+        }
     }
 
     @Synchronized
-    fun unpairDevice() {
-        prefs.edit().remove(KEY_PAIRED_DEVICE).apply()
+    fun unpairDevice(deviceId: String? = null) {
+        if (deviceId != null) {
+            removeTrustedDevice(deviceId)
+        } else {
+            prefs.edit().remove(KEY_PAIRED_DEVICE).remove(KEY_MULTI_DEVICES).apply()
+        }
     }
 
-    // Backwards-compatible facade methods
     @Synchronized
     fun getTrustedDevices(): List<TrustedDevice> {
-        val paired = getPairedDevice() ?: return emptyList()
-        return listOf(paired)
+        val settings = DexoLinkSettings.getInstance(context)
+        if (!settings.multiPairedDevices.value) {
+            val raw = prefs.getString(KEY_PAIRED_DEVICE, null) ?: return emptyList()
+            val decrypted = KeystoreHelper.decrypt(raw) ?: raw
+            val single = try {
+                TrustedDevice.fromJson(JSONObject(decrypted))
+            } catch (e: Exception) {
+                try { TrustedDevice.fromJson(JSONObject(raw)) } catch (ex: Exception) { null }
+            }
+            return single?.let { listOf(it) } ?: emptyList()
+        }
+
+        val raw = prefs.getString(KEY_MULTI_DEVICES, null)
+        if (raw.isNullOrBlank()) {
+            // Fallback to single paired device if multi list not initialized yet
+            val rawSingle = prefs.getString(KEY_PAIRED_DEVICE, null) ?: return emptyList()
+            val decryptedSingle = KeystoreHelper.decrypt(rawSingle) ?: rawSingle
+            val single = try {
+                TrustedDevice.fromJson(JSONObject(decryptedSingle))
+            } catch (e: Exception) {
+                try { TrustedDevice.fromJson(JSONObject(rawSingle)) } catch (ex: Exception) { null }
+            }
+            return single?.let { listOf(it) } ?: emptyList()
+        }
+
+        val decrypted = KeystoreHelper.decrypt(raw) ?: raw
+        return try {
+            val jsonArray = org.json.JSONArray(decrypted)
+            val list = mutableListOf<TrustedDevice>()
+            for (i in 0 until jsonArray.length()) {
+                list.add(TrustedDevice.fromJson(jsonArray.getJSONObject(i)))
+            }
+            list
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     @Synchronized
@@ -102,21 +155,42 @@ class TrustStore(context: Context) {
 
     @Synchronized
     fun getDevice(deviceId: String): TrustedDevice? {
-        val paired = getPairedDevice() ?: return null
-        return if (paired.deviceId == deviceId) paired else null
+        return getTrustedDevices().find { it.deviceId == deviceId }
     }
 
     @Synchronized
     fun addTrustedDevice(device: TrustedDevice) {
-        setPairedDevice(device)
+        val current = getTrustedDevices().filter { it.deviceId != device.deviceId }.toMutableList()
+        current.add(0, device)
+        val array = org.json.JSONArray()
+        for (d in current) {
+            array.put(d.toJson())
+        }
+        val encrypted = KeystoreHelper.encrypt(array.toString())
+        val singleEncrypted = KeystoreHelper.encrypt(device.toJson().toString())
+        prefs.edit()
+            .putString(KEY_MULTI_DEVICES, encrypted)
+            .putString(KEY_PAIRED_DEVICE, singleEncrypted)
+            .apply()
     }
 
     @Synchronized
     fun removeTrustedDevice(deviceId: String) {
-        val paired = getPairedDevice()
-        if (paired != null && paired.deviceId == deviceId) {
-            unpairDevice()
+        val current = getTrustedDevices().filter { it.deviceId != deviceId }
+        val editor = prefs.edit()
+        if (current.isEmpty()) {
+            editor.remove(KEY_MULTI_DEVICES).remove(KEY_PAIRED_DEVICE)
+        } else {
+            val array = org.json.JSONArray()
+            for (d in current) {
+                array.put(d.toJson())
+            }
+            val encrypted = KeystoreHelper.encrypt(array.toString())
+            val singleEncrypted = KeystoreHelper.encrypt(current.first().toJson().toString())
+            editor.putString(KEY_MULTI_DEVICES, encrypted)
+                .putString(KEY_PAIRED_DEVICE, singleEncrypted)
         }
+        editor.apply()
     }
 
     @Synchronized

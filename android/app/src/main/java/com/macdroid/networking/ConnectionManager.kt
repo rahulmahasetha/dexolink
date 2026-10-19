@@ -15,6 +15,7 @@ import com.macdroid.security.CryptoService
 import com.macdroid.security.PairingManager
 import com.macdroid.storage.TrustStore
 import com.macdroid.storage.TrustedDevice
+import com.macdroid.storage.DexoLinkSettings
 import kotlinx.coroutines.*
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -144,7 +145,8 @@ class ConnectionManager(private val context: Context) {
                             try { client.close() } catch (e: Exception) {}
                             continue
                         }
-                        if (isConnected() && state is ConnectionState.Authenticated) {
+                        val settings = DexoLinkSettings.getInstance(context)
+                        if (!settings.multiPairedDevices.value && isConnected() && state is ConnectionState.Authenticated) {
                             log("Ignoring incoming connection from ${client.inetAddress.hostAddress}: Active authenticated session already exists")
                             try { client.close() } catch (e: Exception) {}
                             continue
@@ -209,7 +211,8 @@ class ConnectionManager(private val context: Context) {
             try { socket.close() } catch (e: Exception) {}
             return
         }
-        if (isIncoming && isConnected() && state is ConnectionState.Authenticated) {
+        val settings = DexoLinkSettings.getInstance(context)
+        if (!settings.multiPairedDevices.value && isIncoming && isConnected() && state is ConnectionState.Authenticated) {
             log("Ignoring incoming connection from ${socket.inetAddress?.hostAddress}: Already active and authenticated with ${currentPeerName ?: "Mac"}")
             try { socket.close() } catch (e: Exception) {}
             return
@@ -463,12 +466,13 @@ class ConnectionManager(private val context: Context) {
                     log("[Mode Sync] Synced mode '${clipboardManager.syncMode.id}' with ${message.deviceName}")
                 } else {
                     if (!isIncomingConnection) {
-                        if (!trustStore.hasPairedDevice()) {
+                        val settings = DexoLinkSettings.getInstance(context)
+                        if (settings.multiPairedDevices.value || !trustStore.hasPairedDevice()) {
                             log("Initiating PAIR_REQUEST to ${message.deviceName}...")
                             state = ConnectionState.Connecting("Pairing request sent to ${message.deviceName}...")
                             sendMessage(PairRequestMessage(publicKey = cryptoService.publicKeyBase64))
                         } else {
-                            log("Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}'")
+                            log("Cannot pair with ${message.deviceName}: Already paired with '${trustStore.getPairedDevice()?.deviceName}' (Multiple Paired Devices is OFF)")
                         }
                     } else {
                         log("Received HelloAck as receiver from ${message.deviceName} — awaiting incoming PairRequest")
@@ -490,14 +494,15 @@ class ConnectionManager(private val context: Context) {
                 }
 
                 // Strict 1-device policy: check if phone is already paired with another device!
+                val settings = DexoLinkSettings.getInstance(context)
                 val existingPaired = trustStore.getPairedDevice()
-                if (existingPaired != null && existingPaired.deviceId != peerId && existingPaired.deviceName != peerName) {
-                    log("Auto-rejecting PAIR_REQUEST from $peerName: Already paired with '${existingPaired.deviceName}'")
+                if (!settings.multiPairedDevices.value && existingPaired != null && existingPaired.deviceId != peerId && existingPaired.deviceName != peerName) {
+                    log("Auto-rejecting PAIR_REQUEST from $peerName: Already paired with '${existingPaired.deviceName}' (Multiple Paired Devices is OFF)")
                     sendMessage(
                         PairResponseMessage(
                             accepted = false,
                             publicKey = "",
-                            reason = "Device is already paired with '${existingPaired.deviceName}'. In accordance with DexoLink's strict one-device policy, please unpair first."
+                            reason = "Device is already paired with '${existingPaired.deviceName}'. In accordance with DexoLink's strict one-device policy, please unpair first or enable Multiple Paired Devices in Settings."
                         )
                     )
                     state = ConnectionState.Failed("Rejected pairing: Already paired with ${existingPaired.deviceName}")
@@ -672,6 +677,24 @@ class ConnectionManager(private val context: Context) {
         state = ConnectionState.Disconnected
     }
 
+    fun unpairDevice(deviceId: String? = null) {
+        if (deviceId != null) {
+            log("Unpairing specific device: $deviceId")
+            trustStore.unpairDevice(deviceId)
+            if (currentPeerId == deviceId) {
+                sendMessage(UnpairMessage)
+                userExplicitlyDisconnected = true
+                try {
+                    transferManager.cancelAll()
+                } catch (e: Exception) {}
+                disconnect(disableAutoReconnect = true)
+                state = ConnectionState.Disconnected
+            }
+        } else {
+            unpairCurrentDevice()
+        }
+    }
+
     fun sendMessage(message: ProtocolMessage) {
         sendChannel.trySend(message)
     }
@@ -681,9 +704,10 @@ class ConnectionManager(private val context: Context) {
             log("Cannot send PAIR_REQUEST: Not connected to peer")
             return
         }
+        val settings = DexoLinkSettings.getInstance(context)
         val existingPaired = trustStore.getPairedDevice()
-        if (existingPaired != null && currentPeerId != null && !trustStore.isPairedWith(currentPeerId ?: "", currentPeerName ?: "")) {
-            log("Cannot request pairing: Already paired with ${existingPaired.deviceName}. Unpair first.")
+        if (!settings.multiPairedDevices.value && existingPaired != null && currentPeerId != null && !trustStore.isPairedWith(currentPeerId ?: "", currentPeerName ?: "")) {
+            log("Cannot request pairing: Already paired with ${existingPaired.deviceName}. Unpair first or enable Multiple Paired Devices.")
             return
         }
         log("Sending PAIR_REQUEST to ${currentPeerName ?: "Mac"}...")

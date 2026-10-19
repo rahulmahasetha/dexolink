@@ -347,6 +347,8 @@ class AppState: ObservableObject {
     @Published var clipboardHistory: [ClipboardHistoryItem] = []
     @Published var isClipboardSyncEnabled: Bool = true
     @Published var isEnhancedClipboardEnabled: Bool = false
+    @Published var isMultiplePairedDevicesEnabled: Bool = false
+    @Published var selectedTargetDeviceId: String? = nil
     @Published var userExplicitlyDisconnected: Bool = false
 
     var onMasterStateChanged: ((Bool) -> Void)?
@@ -367,6 +369,8 @@ class AppState: ObservableObject {
         self.clipboardHistory = self.clipboardManager.history
         self.isClipboardSyncEnabled = UserDefaults.standard.object(forKey: "dexolink_clipboard_sync_enabled") as? Bool ?? true
         self.isEnhancedClipboardEnabled = self.clipboardManager.isEnhancedClipboardEnabled
+        self.isMultiplePairedDevicesEnabled = UserDefaults.standard.bool(forKey: "dexolink_multiple_paired_devices_enabled")
+        TrustStore.shared.isMultiplePairedDevicesEnabled = self.isMultiplePairedDevicesEnabled
 
         // Wire up delegates
         discoveryService.delegate = self
@@ -624,20 +628,49 @@ class AppState: ObservableObject {
         statusMessage = "Disconnected"
     }
 
-    func unpair() {
-        let pairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? (connectedDeviceName ?? "Device")
-        print("Unpairing from \(pairedName)...")
-        stopHeartbeat()
-        userExplicitlyDisconnected = true
-        clipboardManager.direction = .disabled
-        transferManager.cancelAll()
-        connectionManager.send(message: .unpair)
-        TrustStore.shared.unpairDevice()
-        connectionManager.disconnect()
-        connectedDeviceName = nil
-        connectedDeviceId = nil
-        pairingPin = nil
-        statusMessage = "Unpaired from \(pairedName)"
+    func setMultiplePairedDevicesEnabled(_ enabled: Bool) {
+        guard isMultiplePairedDevicesEnabled != enabled else { return }
+        isMultiplePairedDevicesEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "dexolink_multiple_paired_devices_enabled")
+        TrustStore.shared.isMultiplePairedDevicesEnabled = enabled
+        print("[macOS Multiple Paired Devices] Toggled to: \(enabled ? "ON" : "OFF")")
+    }
+
+    func toggleMultiplePairedDevices() {
+        setMultiplePairedDevicesEnabled(!isMultiplePairedDevicesEnabled)
+    }
+
+    func unpair(deviceId: String? = nil) {
+        if let id = deviceId {
+            print("Unpairing specific device id: \(id)...")
+            if connectedDeviceId == id {
+                stopHeartbeat()
+                userExplicitlyDisconnected = true
+                clipboardManager.direction = .disabled
+                transferManager.cancelAll()
+                connectionManager.send(message: .unpair)
+                connectionManager.disconnect()
+                connectedDeviceName = nil
+                connectedDeviceId = nil
+                pairingPin = nil
+                statusMessage = "Unpaired from device"
+            }
+            TrustStore.shared.unpairDevice(deviceId: id)
+        } else {
+            let pairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? (connectedDeviceName ?? "Device")
+            print("Unpairing from \(pairedName)...")
+            stopHeartbeat()
+            userExplicitlyDisconnected = true
+            clipboardManager.direction = .disabled
+            transferManager.cancelAll()
+            connectionManager.send(message: .unpair)
+            TrustStore.shared.unpairDevice()
+            connectionManager.disconnect()
+            connectedDeviceName = nil
+            connectedDeviceId = nil
+            pairingPin = nil
+            statusMessage = "Unpaired from \(pairedName)"
+        }
     }
 
     func sendPing() {
@@ -954,12 +987,12 @@ extension AppState: ConnectionManagerDelegate {
                 if !self.connectionManager.isIncoming {
                     if !self.discoveryEnabled {
                         print("Discovery is stopped: Suppressing pair request to \(deviceName)")
-                    } else if !TrustStore.shared.hasPairedDevice() {
+                    } else if self.isMultiplePairedDevicesEnabled || !TrustStore.shared.hasPairedDevice() {
                         self.statusMessage = "Pairing request sent to \(deviceName)..."
                         self.connectionManager.send(message: .pairRequest(publicKey: CryptoService.shared.publicKeyBase64))
                         print("HelloAck(paired: false) received from \(deviceName) — Mac initiated PairRequest")
                     } else {
-                        print("Cannot pair with \(deviceName): Already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? "")")
+                        print("Cannot pair with \(deviceName): Already paired with \(TrustStore.shared.getPairedDevice()?.deviceName ?? "") (Multiple Paired Devices is OFF)")
                     }
                 } else {
                     print("Received HelloAck as receiver from \(deviceName) — awaiting incoming PairRequest")
@@ -983,12 +1016,12 @@ extension AppState: ConnectionManagerDelegate {
             }
 
             // 2. Strict 1-device policy: check if Mac is already paired with another device
-            if let paired = TrustStore.shared.getPairedDevice(), paired.deviceName != peerName && paired.deviceId != peerId {
-                print("Pairing request from \(peerName) rejected: Mac already paired with \(paired.deviceName)")
+            if !self.isMultiplePairedDevicesEnabled, let paired = TrustStore.shared.getPairedDevice(), paired.deviceName != peerName && paired.deviceId != peerId {
+                print("Pairing request from \(peerName) rejected: Mac already paired with \(paired.deviceName) (Multiple Paired Devices is OFF)")
                 self.connectionManager.send(message: .pairResponse(
                     accepted: false,
                     publicKey: "",
-                    reason: "Mac is already paired with '\(paired.deviceName)'. In accordance with DexoLink's strict one-device policy, please unpair first."
+                    reason: "Mac is already paired with '\(paired.deviceName)'. In accordance with DexoLink's strict one-device policy, please unpair first or enable Multiple Paired Devices in Settings."
                 ))
                 self.statusMessage = "Rejected pairing from \(peerName) (Already paired with \(paired.deviceName))"
                 return

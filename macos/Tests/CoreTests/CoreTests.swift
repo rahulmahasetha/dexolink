@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import Core
+import Crypto
 
 final class CoreTests: XCTestCase {
 
@@ -81,6 +82,36 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(item.text, "Sample Snippet")
         XCTAssertTrue(item.isOutgoing)
         XCTAssertFalse(item.id.isEmpty)
+    }
+
+    func testMultiplePairedDevices_defaultsToFalse() {
+        let store = TrustStore.shared
+        XCTAssertFalse(store.isMultiplePairedDevicesEnabled)
+    }
+
+    func testTrustStore_multiDeviceBehaviorAndDeviceSpecificUnpair() {
+        let store = TrustStore.shared
+        store.isMultiplePairedDevicesEnabled = true
+        defer {
+            store.unpairDevice()
+            store.isMultiplePairedDevicesEnabled = false
+        }
+
+        let dev1 = TrustedDevice(deviceId: "mac-test-1", deviceName: "MacBook One", publicKeyBase64: "", pairedAt: Date())
+        let dev2 = TrustedDevice(deviceId: "mac-test-2", deviceName: "Pixel 8", publicKeyBase64: "", pairedAt: Date())
+
+        store.addTrustedDevice(dev1)
+        store.addTrustedDevice(dev2)
+
+        XCTAssertTrue(store.isPaired(deviceId: "mac-test-1"))
+        XCTAssertTrue(store.isPaired(deviceId: "mac-test-2"))
+        XCTAssertEqual(store.getTrustedDevices().count, 2)
+
+        // Device-specific unpairing
+        store.removeTrustedDevice(deviceId: "mac-test-2")
+        XCTAssertTrue(store.isPaired(deviceId: "mac-test-1"))
+        XCTAssertFalse(store.isPaired(deviceId: "mac-test-2"))
+        XCTAssertEqual(store.getTrustedDevices().count, 1)
     }
 }
 

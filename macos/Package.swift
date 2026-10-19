@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "MacDroid",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v13),
+        .iOS(.v16)
     ],
     products: [
         .executable(name: "MacDroidApp", targets: ["MacDroidApp"]),
@@ -50,7 +51,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CoreTests",
-            dependencies: ["Core"],
+            dependencies: ["Core", "Crypto"],
             path: "Tests/CoreTests"
         ),
         .testTarget(
