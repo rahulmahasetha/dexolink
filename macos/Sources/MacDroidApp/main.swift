@@ -345,6 +345,7 @@ class AppState: ObservableObject {
     @Published var activeTransfer: TransferItem? = nil
     @Published var recentTransfers: [TransferItem] = []
     @Published var clipboardHistory: [ClipboardHistoryItem] = []
+    @Published var isEnhancedClipboardEnabled: Bool = false
     @Published var userExplicitlyDisconnected: Bool = false
 
     var onMasterStateChanged: ((Bool) -> Void)?
@@ -363,6 +364,7 @@ class AppState: ObservableObject {
         self.localIP = AppState.getLocalIP() ?? "Unavailable"
         self.recentTransfers = self.transferManager.completedTransfers
         self.clipboardHistory = self.clipboardManager.history
+        self.isEnhancedClipboardEnabled = self.clipboardManager.isEnhancedClipboardEnabled
 
         // Wire up delegates
         discoveryService.delegate = self
@@ -644,10 +646,11 @@ class AppState: ObservableObject {
 
     func sendClipboard() {
         let pasteboard = NSPasteboard.general
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
+        guard let rawText = pasteboard.string(forType: .string), !rawText.isEmpty else {
             statusMessage = "Mac clipboard is empty"
             return
         }
+        let text = isEnhancedClipboardEnabled ? EnhancedClipboardHelper.sanitizePlainText(rawText) : rawText
         let seq = Int(Date().timeIntervalSince1970) % 100000
         connectionManager.send(message: .clipboardPush(sequenceNumber: seq, content: text))
         statusMessage = "Clipboard sent to \(connectedDeviceName ?? "Android")"
@@ -723,6 +726,12 @@ class AppState: ObservableObject {
     func clearClipboardHistory() {
         clipboardManager.clearHistory()
         clipboardHistory.removeAll()
+    }
+
+    func setEnhancedClipboardEnabled(_ enabled: Bool) {
+        clipboardManager.isEnhancedClipboardEnabled = enabled
+        isEnhancedClipboardEnabled = enabled
+        print("[macOS Enhanced Clipboard] Toggled to: \(enabled ? "ON" : "OFF")")
     }
 
     func removeDiscoveredDevice(id: String) {

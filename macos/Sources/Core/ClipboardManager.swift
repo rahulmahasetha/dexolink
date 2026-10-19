@@ -45,7 +45,17 @@ public class ClipboardManager {
     private var lastReceivedHash: String = ""
     private var timer: Timer?
     private let historyKey = "com.dexolink.clipboard_history"
+    private let enhancedClipboardKey = "com.dexolink.enhanced_clipboard_enabled"
     public private(set) var history: [ClipboardHistoryItem] = []
+
+    public var isEnhancedClipboardEnabled: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: enhancedClipboardKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: enhancedClipboardKey)
+        }
+    }
     
     public var direction: ClipboardDirection = .disabled {
         didSet {
@@ -119,6 +129,27 @@ public class ClipboardManager {
     
     public func setConnectionManager(_ manager: ConnectionManager?) {
         self.connectionManager = manager
+    }
+
+    /// Writes text to the macOS general pasteboard with support for Enhanced Clipboard (plain + HTML representations).
+    public func applyTextToPasteboard(_ text: String) {
+        pasteboard.clearContents()
+        if isEnhancedClipboardEnabled {
+            let sanitized = EnhancedClipboardHelper.sanitizePlainText(text)
+            let html = EnhancedClipboardHelper.toHtmlRepresentation(sanitized)
+            pasteboard.declareTypes([.string, .html], owner: nil)
+            let strSuccess = pasteboard.setString(sanitized, forType: .string)
+            let htmlSuccess = pasteboard.setString(html, forType: .html)
+            print("[macOS Clipboard Applied] Enhanced multi-MIME applied (string: \(strSuccess), html: \(htmlSuccess))")
+        } else {
+            let success = pasteboard.setString(text, forType: .string)
+            if success {
+                print("[macOS Clipboard Applied] Successfully wrote text to NSPasteboard: \"\(text.prefix(35))...\"")
+            } else {
+                print("[macOS Clipboard Error] NSPasteboard.setString returned false")
+            }
+        }
+        self.lastChangeCount = pasteboard.changeCount
     }
     
     private func startMonitoring() {
@@ -219,14 +250,15 @@ public class ClipboardManager {
     
     private func sendClipboardText(_ text: String) {
         sequenceNumber += 1
-        print("[macOS Clipboard Detect] Local pasteboard copied: \"\(text.prefix(35))...\" (\(text.count) chars, seq: \(sequenceNumber))")
+        let textToSend = isEnhancedClipboardEnabled ? EnhancedClipboardHelper.sanitizePlainText(text) : text
+        print("[macOS Clipboard Detect] Local pasteboard copied: \"\(textToSend.prefix(35))...\" (\(textToSend.count) chars, seq: \(sequenceNumber))")
         print("[macOS Clipboard Send] Transmitting to Android (mode: \(direction))...")
-        addToHistory(text: text, isOutgoing: true)
-        let message = ProtocolMessage.clipboardPush(sequenceNumber: sequenceNumber, content: text)
+        addToHistory(text: textToSend, isOutgoing: true)
+        let message = ProtocolMessage.clipboardPush(sequenceNumber: sequenceNumber, content: textToSend)
         connectionManager?.send(message: message)
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.delegate?.clipboardManager(self, didSendText: text)
+            self.delegate?.clipboardManager(self, didSendText: textToSend)
         }
     }
     
@@ -246,20 +278,12 @@ public class ClipboardManager {
             // Loop prevention: only set pasteboard if it's new
             if hash != lastReceivedHash && hash != lastSentHash {
                 lastReceivedHash = hash
-                addToHistory(text: content, isOutgoing: false)
+                let storedText = isEnhancedClipboardEnabled ? EnhancedClipboardHelper.sanitizePlainText(content) : content
+                addToHistory(text: storedText, isOutgoing: false)
                 
                 DispatchQueue.main.async {
-                    self.pasteboard.clearContents()
-                    let success = self.pasteboard.setString(content, forType: .string)
-                    self.lastChangeCount = self.pasteboard.changeCount
-                    
-                    if success {
-                        print("[macOS Clipboard Applied] Successfully wrote text to NSPasteboard: \"\(content.prefix(35))...\"")
-                    } else {
-                        print("[macOS Clipboard Error] NSPasteboard.setString returned false")
-                    }
-                    
-                    self.delegate?.clipboardManager(self, didReceiveText: content)
+                    self.applyTextToPasteboard(content)
+                    self.delegate?.clipboardManager(self, didReceiveText: storedText)
                     
                     // Send ACK
                     let ack = ProtocolMessage.clipboardAck(sequenceNumber: seq)

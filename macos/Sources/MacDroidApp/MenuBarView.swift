@@ -586,6 +586,71 @@ struct MenuBarView: View {
                         .cornerRadius(10)
                     }
 
+                    // MARK: - Enhanced Clipboard Control Card
+                    if isConnected {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "sparkles")
+                                    .foregroundColor(.purple)
+                                    .font(.title3)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text("Enhanced Clipboard")
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                        Text("BETA")
+                                            .font(.system(size: 8, weight: .heavy))
+                                            .foregroundColor(.purple)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(
+                                                Capsule().fill(Color.purple.opacity(0.15))
+                                            )
+                                        Text(appState.isEnhancedClipboardEnabled ? "ON" : "OFF")
+                                            .font(.system(size: 8, weight: .heavy))
+                                            .foregroundColor(appState.isEnhancedClipboardEnabled ? .purple : .secondary)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(
+                                                Capsule().fill((appState.isEnhancedClipboardEnabled ? Color.purple : Color.secondary).opacity(0.15))
+                                            )
+                                    }
+                                    Text("Multi-MIME HTML & plain text paste compatibility")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Toggle("", isOn: Binding(
+                                    get: { appState.isEnhancedClipboardEnabled },
+                                    set: { appState.setEnhancedClipboardEnabled($0) }
+                                ))
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                                .scaleEffect(0.75)
+                                .help(appState.isEnhancedClipboardEnabled ? "Disable Enhanced Clipboard" : "Enable Enhanced Clipboard (multi-MIME plain & HTML paste)")
+                            }
+
+                            if appState.isEnhancedClipboardEnabled {
+                                Text("Sanitizes zero-width spaces, normalizes line breaks, and provides rich HTML pasteboards for web editors.")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.purple.opacity(0.85))
+                                    .lineLimit(2)
+                                    .padding(.leading, 28)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.purple.opacity(0.06))
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.purple.opacity(0.2), lineWidth: 1)
+                        )
+                    }
+
                     // MARK: - Continuity (Handoff) Control Card
                     if isConnected {
                         VStack(alignment: .leading, spacing: 8) {
@@ -1543,9 +1608,7 @@ struct HistorySheetView: View {
                             Spacer()
 
                             Button(action: {
-                                let pb = NSPasteboard.general
-                                pb.clearContents()
-                                pb.setString(item.text, forType: .string)
+                                appState.clipboardManager.applyTextToPasteboard(item.text)
                                 copiedClipboardId = item.id
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                     if copiedClipboardId == item.id {

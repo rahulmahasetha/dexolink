@@ -12,8 +12,8 @@ Icon
 **/build/
 build/
 *.apk
-!/DexoLink-v2.0.2.apk
-!/DexoLink-Android.apk
+!/DexoLink*.apk
+!androide apk/**
 *.ap_
 *.aab
 *.dex
@@ -38,7 +38,8 @@ xcuserdata/
 *.xcuserdatad
 macos/dist/
 *.dmg
-!/DexoLink.dmg
+!/DexoLink*.dmg
+!MacOS dmg/**
 *.app
 DerivedData/
 *.dSYM/

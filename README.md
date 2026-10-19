@@ -115,6 +115,12 @@ sequenceDiagram
 - 📋 **Bidirectional Real-Time Clipboard Synchronization & History**  
   Copying text on either device instantly synchronizes with the other in real time with 3 sync modes (Two-Way, Android → Mac, Mac → Android). Includes a searchable, selectable history log.
 
+- ✨ **Enhanced Clipboard (Multi-MIME HTML & Sanitization - OFF by Default)**  
+  Provides enhanced paste compatibility for web apps and rich editors (Google Docs, Notion, Slack) via multi-format HTML and plain text pasteboards. Strips invisible zero-width characters and normalizes line endings. Includes Android Paste Assistant notifications and an optional browser helper extension.
+
+- 🔄 **DexoLink Continuity (Handoff)**  
+  Apple Handoff-inspired cross-device continuity. Seamlessly transition supported tasks (web links, reading PDFs, documents) with saved reading progress and page context. Controlled via an independent ON/OFF toggle on both macOS and Android.
+
 - ⚡ **Background Persistence on Android**  
   Runs a sticky Foreground Service with `PARTIAL_WAKE_LOCK` and Wi-Fi performance lock, maintaining socket connections and background clipboard sync even when the app is minimized.
 
