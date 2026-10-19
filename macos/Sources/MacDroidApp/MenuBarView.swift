@@ -60,9 +60,116 @@ struct MenuBarView: View {
 
             Divider()
 
+            // MARK: - Master Quick Settings ON/OFF Card
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(appState.isEnabled ? Color.blue.opacity(0.16) : Color.secondary.opacity(0.12))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: appState.isEnabled ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(appState.isEnabled ? .blue : .secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("DexoLink")
+                            .font(.system(size: 13, weight: .bold))
+
+                        Text(appState.isEnabled ? "ON" : "OFF")
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundColor(appState.isEnabled ? .blue : .secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(
+                                Capsule()
+                                    .fill(appState.isEnabled ? Color.blue.opacity(0.15) : Color.secondary.opacity(0.12))
+                            )
+                    }
+
+                    Text(masterSubtitleText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: Binding(
+                    get: { appState.isEnabled },
+                    set: { appState.setMasterEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .scaleEffect(0.85)
+                .help(appState.isEnabled ? "Turn Off DexoLink (0% CPU & Battery)" : "Turn On DexoLink")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+
+            Divider()
+
             ScrollView {
                 VStack(spacing: 10) {
-                    // MARK: - Incoming Pairing Request Card
+                    if !appState.isEnabled {
+                        // DexoLink Turned Off State Banner
+                        VStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.secondary.opacity(0.1))
+                                    .frame(width: 58, height: 58)
+                                Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                                    .font(.system(size: 26))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 24)
+
+                            VStack(spacing: 4) {
+                                Text("DexoLink is Turned Off")
+                                    .font(.system(size: 14, weight: .bold))
+
+                                Text("All background listeners, discovery broadcasts, and socket connections are stopped to ensure 0% CPU and battery usage.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 24)
+                            }
+
+                            if let paired = TrustStore.shared.getPairedDevice() {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "lock.shield.fill")
+                                        .foregroundColor(.cyan)
+                                        .font(.caption)
+                                    Text("Paired device saved: \(paired.deviceName)")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(Color.cyan.opacity(0.1))
+                                .cornerRadius(6)
+                            }
+
+                            Button(action: {
+                                appState.setMasterEnabled(true)
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "bolt.fill")
+                                    Text("Turn On DexoLink")
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.blue)
+                            .controlSize(.regular)
+                            .padding(.top, 4)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    } else {
+                        // MARK: - Incoming Pairing Request Card
                     if let req = appState.incomingPairingRequest {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 8) {
@@ -535,6 +642,7 @@ struct MenuBarView: View {
                     .padding(10)
                     .background(Color(nsColor: .controlBackgroundColor).opacity(0.4))
                     .cornerRadius(10)
+                    }
                 }
                 .padding(10)
             }
@@ -606,7 +714,23 @@ struct MenuBarView: View {
         }
     }
 
+    private var masterSubtitleText: String {
+        guard appState.isEnabled else {
+            return "Turned Off • 0% CPU & Battery"
+        }
+        if isConnected {
+            return "Connected to \(appState.connectedDeviceName ?? "Device")"
+        } else if let paired = TrustStore.shared.getPairedDevice() {
+            return "Searching for \(paired.deviceName)..."
+        } else {
+            return "Active • Ready to connect"
+        }
+    }
+
     private var statusColor: Color {
+        guard appState.isEnabled else {
+            return .gray
+        }
         switch appState.connectionState {
         case .connected, .authenticated, .transferring:
             return .green
@@ -620,6 +744,9 @@ struct MenuBarView: View {
     }
 
     private var footerStatusText: String {
+        guard appState.isEnabled else {
+            return "DexoLink is Off"
+        }
         switch appState.connectionState {
         case .connected, .authenticated, .transferring:
             return "Connected to \(appState.connectedDeviceName ?? "Device")"

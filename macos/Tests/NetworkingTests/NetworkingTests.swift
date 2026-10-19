@@ -43,4 +43,18 @@ final class NetworkingTests: XCTestCase {
         service.stopBrowsing()
         XCTAssertFalse(service.isBrowsing)
     }
+
+    func testDiscoveryServiceAdvertisingAndBrowsingLifecycle() throws {
+        let service = DiscoveryService()
+        XCTAssertFalse(service.isBrowsing)
+
+        service.stopBrowsing()
+        XCTAssertFalse(service.isBrowsing)
+
+        service.stopAdvertising()
+        // Ensure repeated stops are idempotent and safe
+        service.stopAdvertising()
+        service.stopBrowsing()
+        XCTAssertFalse(service.isBrowsing)
+    }
 }

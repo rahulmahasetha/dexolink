@@ -48,9 +48,16 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: "MacDroid")
-            button.action = #selector(togglePopover)
+            updateStatusBarIcon()
+            button.action = #selector(handleStatusBarClick(_:))
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+
+        appState.onMasterStateChanged = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateStatusBarIcon()
+            }
         }
 
         // Create the popover that shows our SwiftUI view
@@ -113,6 +120,93 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         return false // Keep running as a menu bar app even with no windows
     }
 
+    func updateStatusBarIcon() {
+        guard let button = statusItem?.button else { return }
+        let symbolName = appState.isEnabled ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash"
+        let description = appState.isEnabled ? "DexoLink: On" : "DexoLink: Off"
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
+    }
+
+    @objc func handleStatusBarClick(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else {
+            togglePopover()
+            return
+        }
+
+        if event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
+            showContextMenu(at: sender)
+        } else {
+            togglePopover()
+        }
+    }
+
+    private func showContextMenu(at button: NSStatusBarButton) {
+        if popover.isShown {
+            popover.performClose(nil)
+        }
+
+        let menu = NSMenu()
+
+        // Header Title
+        let headerItem = NSMenuItem(title: "DexoLink", action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
+
+        // Toggle Switch Item
+        let isEnabled = appState.isEnabled
+        let toggleTitle = isEnabled ? "Turn DexoLink Off" : "Turn DexoLink On"
+        let toggleItem = NSMenuItem(title: toggleTitle, action: #selector(toggleMasterFromMenu), keyEquivalent: "")
+        toggleItem.target = self
+        toggleItem.image = NSImage(systemSymbolName: isEnabled ? "antenna.radiowaves.left.and.right.slash" : "antenna.radiowaves.left.and.right", accessibilityDescription: nil)
+        menu.addItem(toggleItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Quick Status Info
+        let statusText: String
+        if !isEnabled {
+            statusText = "Status: Off (0% Battery & CPU)"
+        } else if appState.connectionState.isConnected {
+            statusText = "Connected to \(appState.connectedDeviceName ?? "Device")"
+        } else if let paired = TrustStore.shared.getPairedDevice() {
+            statusText = "Paired with \(paired.deviceName) (Searching...)"
+        } else {
+            statusText = "Active • Ready to pair"
+        }
+        let statusMenuItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Open Popover
+        let openItem = NSMenuItem(title: "Open DexoLink...", action: #selector(openPopoverFromMenu), keyEquivalent: "o")
+        openItem.target = self
+        menu.addItem(openItem)
+
+        // Quit
+        let quitItem = NSMenuItem(title: "Quit DexoLink", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
+    }
+
+    @objc func toggleMasterFromMenu() {
+        appState.toggleMasterSwitch()
+    }
+
+    @objc func openPopoverFromMenu() {
+        if !popover.isShown, let button = statusItem.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    @objc func quitApp() {
+        NSApplication.shared.terminate(nil)
+    }
+
     @objc func togglePopover() {
         guard let button = statusItem.button else { return }
 
@@ -153,6 +247,9 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            if !self.appState.isEnabled {
+                self.appState.setMasterEnabled(true)
+            }
             ShareWindowController.present(appState: self.appState, urls: urls, text: text)
         }
     }
@@ -163,6 +260,9 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         guard !urls.isEmpty else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            if !self.appState.isEnabled {
+                self.appState.setMasterEnabled(true)
+            }
             ShareWindowController.present(appState: self.appState, urls: urls, text: nil)
         }
         sender.reply(toOpenOrPrint: .success)
@@ -191,6 +291,9 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         if !fileUrls.isEmpty || shareText != nil {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                if !self.appState.isEnabled {
+                    self.appState.setMasterEnabled(true)
+                }
                 ShareWindowController.present(appState: self.appState, urls: fileUrls, text: shareText)
             }
         }
@@ -211,6 +314,7 @@ class AppState: ObservableObject {
     let clipboardManager = ClipboardManager()
     let pairingManager = PairingManager()
 
+    @Published var isEnabled: Bool
     @Published var isDiscovering = false
     @Published var isActivelyScanning = false
     @Published var discoveryEnabled = true
@@ -229,6 +333,8 @@ class AppState: ObservableObject {
     @Published var clipboardHistory: [ClipboardHistoryItem] = []
     @Published var userExplicitlyDisconnected: Bool = false
 
+    var onMasterStateChanged: ((Bool) -> Void)?
+
     private var pingStartTime: Date?
     private var activeScanTimer: Timer?
     private var backgroundAvailabilityTimer: Timer?
@@ -236,6 +342,9 @@ class AppState: ObservableObject {
     private var lastDataActivityTimestamp = Date()
 
     init() {
+        let savedState = UserDefaults.standard.object(forKey: "dexolink_master_enabled") as? Bool ?? true
+        self.isEnabled = savedState
+
         self.transferManager = TransferManager(connectionManager: connectionManager)
         self.localIP = AppState.getLocalIP() ?? "Unavailable"
         self.recentTransfers = self.transferManager.completedTransfers
@@ -248,24 +357,97 @@ class AppState: ObservableObject {
         clipboardManager.delegate = self
         transferManager.delegate = self
 
-        // Start advertiser listener
-        discoveryService.startAdvertising(port: 52840)
+        if isEnabled {
+            // Start advertiser listener
+            discoveryService.startAdvertising(port: 52840)
 
-        // Start discovery with an active scanning window
-        startDiscovery(showActiveIndicator: true)
+            // Start discovery with an active scanning window
+            startDiscovery(showActiveIndicator: true)
 
-        // Periodic background availability refresh (every 60s with 10s tolerance to coalesce CPU wakeups)
+            // Periodic background availability refresh (every 60s with 10s tolerance to coalesce CPU wakeups)
+            scheduleBackgroundAvailabilityTimer()
+
+            print("Discovery started on \(localIP):\(discoveryService.listeningPort)...")
+        } else {
+            statusMessage = "DexoLink is Off"
+            print("DexoLink initialized in OFF state — network services halted to conserve power")
+        }
+    }
+
+    func toggleMasterSwitch() {
+        setMasterEnabled(!isEnabled)
+    }
+
+    func setMasterEnabled(_ enabled: Bool) {
+        guard isEnabled != enabled else { return }
+        isEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "dexolink_master_enabled")
+
+        if enabled {
+            userExplicitlyDisconnected = false
+            statusMessage = "Ready to connect"
+
+            // 1. Restart Advertising / Listener
+            discoveryService.startAdvertising(port: 52840)
+
+            // 2. Resume UDP Beacons and start browsing if discoveryEnabled
+            if discoveryEnabled {
+                startDiscovery(showActiveIndicator: true)
+                scheduleBackgroundAvailabilityTimer()
+            }
+            print("[DexoLink Master Toggle] Turned ON: Networking and discovery activated")
+        } else {
+            // Turning OFF: TRUE ZERO-COST IDLE STATE
+            // 1. Disconnect active connection and stop heartbeat
+            stopHeartbeat()
+            clipboardManager.direction = .disabled
+            transferManager.cancelAll()
+            connectionManager.disconnect()
+            connectedDeviceName = nil
+            connectedDeviceId = nil
+            pairingPin = nil
+            incomingPairingRequest = nil
+
+            // 2. Stop Discovery & Browsing
+            discoveryService.stopBrowsing()
+            isDiscovering = false
+            isActivelyScanning = false
+            activeScanTimer?.invalidate()
+            activeScanTimer = nil
+
+            // 3. Stop Background availability timer
+            stopBackgroundAvailabilityTimer()
+
+            // 4. Stop Advertiser & Pause UDP Beacons
+            discoveryService.stopAdvertising()
+            UDPBeaconService.shared.pauseBroadcasting()
+
+            // 5. Clear discovered devices
+            discoveredDevices.removeAll()
+
+            statusMessage = "DexoLink is Off"
+            print("[DexoLink Master Toggle] Turned OFF: All network listeners, timers, and sockets halted")
+        }
+
+        onMasterStateChanged?(enabled)
+    }
+
+    private func scheduleBackgroundAvailabilityTimer() {
+        backgroundAvailabilityTimer?.invalidate()
         backgroundAvailabilityTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.discoveryEnabled, !self.connectionState.isConnected else { return }
+            guard let self = self, self.isEnabled, self.discoveryEnabled, !self.connectionState.isConnected else { return }
             self.discoveryService.refreshDeviceAvailability()
         }
         backgroundAvailabilityTimer?.tolerance = 10.0
+    }
 
-        print("Discovery started on \(localIP):\(discoveryService.listeningPort)...")
+    private func stopBackgroundAvailabilityTimer() {
+        backgroundAvailabilityTimer?.invalidate()
+        backgroundAvailabilityTimer = nil
     }
 
     func startDiscovery(showActiveIndicator: Bool = true) {
-        guard discoveryEnabled else { return }
+        guard isEnabled, discoveryEnabled else { return }
         if showActiveIndicator {
             isActivelyScanning = true
             activeScanTimer?.invalidate()
@@ -287,10 +469,11 @@ class AppState: ObservableObject {
         isDiscovering = false
         isActivelyScanning = false
         activeScanTimer?.invalidate()
-        statusMessage = "Discovery stopped"
+        statusMessage = isEnabled ? "Discovery stopped" : "DexoLink is Off"
     }
 
     func setDiscoveryEnabled(_ enabled: Bool) {
+        guard isEnabled else { return }
         discoveryEnabled = enabled
         if enabled {
             startDiscovery(showActiveIndicator: true)
@@ -302,6 +485,10 @@ class AppState: ObservableObject {
     }
 
     func refreshDiscovery() {
+        guard isEnabled else {
+            setMasterEnabled(true)
+            return
+        }
         guard discoveryEnabled else {
             setDiscoveryEnabled(true)
             return
@@ -383,6 +570,10 @@ class AppState: ObservableObject {
     }
 
     func connect(to device: DiscoveredDevice) {
+        guard isEnabled else {
+            print("Cannot connect: DexoLink is turned OFF")
+            return
+        }
         if self.connectionState.isConnected {
             print("Already connected, skipping connect to \(device.name)")
             return
@@ -448,6 +639,10 @@ class AppState: ObservableObject {
     }
 
     func connectDirect(host: String, port: Int) {
+        guard isEnabled else {
+            print("Cannot direct connect: DexoLink is turned OFF")
+            return
+        }
         if self.connectionState.isConnected {
             print("Already connected, skipping direct connect")
             return
@@ -557,13 +752,14 @@ class AppState: ObservableObject {
 
 extension AppState: DiscoveryServiceDelegate {
     func discoveryService(_ service: DiscoveryService, didDiscover devices: [DiscoveredDevice]) {
+        guard self.isEnabled else { return }
         DispatchQueue.main.async {
             // Filter out self if discovered
             let myName = Host.current().localizedName ?? "MacBook"
             self.discoveredDevices = devices.filter { !$0.name.contains(myName) }
 
-            // Strict 1-device policy: only auto-connect if discovery is enabled, NOT explicitly disconnected, currently disconnected, and device is online!
-            if self.discoveryEnabled, !self.userExplicitlyDisconnected, case .disconnected = self.connectionState {
+            // Strict 1-device policy: only auto-connect if master is enabled, discovery is enabled, NOT explicitly disconnected, currently disconnected, and device is online!
+            if self.isEnabled, self.discoveryEnabled, !self.userExplicitlyDisconnected, case .disconnected = self.connectionState {
                 if let paired = TrustStore.shared.getPairedDevice(),
                    let matched = self.discoveredDevices.first(where: { ($0.id == paired.deviceId || $0.name.caseInsensitiveCompare(paired.deviceName) == .orderedSame) && $0.isOnline }) {
                     print("Discovered paired online device: \(matched.name), auto-connecting...")
@@ -574,6 +770,11 @@ extension AppState: DiscoveryServiceDelegate {
     }
 
     func discoveryService(_ service: DiscoveryService, didReceiveIncomingConnection connection: NWConnection) {
+        guard self.isEnabled else {
+            print("Rejecting incoming connection because DexoLink is turned OFF")
+            connection.cancel()
+            return
+        }
         if self.userExplicitlyDisconnected {
             print("Rejecting incoming connection because user explicitly disconnected")
             connection.cancel()
@@ -617,10 +818,10 @@ extension AppState: ConnectionManagerDelegate {
                 self.connectedDeviceId = nil
                 self.pairingPin = nil
                 self.incomingPairingRequest = nil
-                self.statusMessage = "Disconnected"
+                self.statusMessage = self.isEnabled ? "Disconnected" : "DexoLink is Off"
                 self.clipboardManager.direction = .disabled
-                // If discovery is enabled, resume beacons and browsing
-                if self.discoveryEnabled {
+                // If discovery is enabled and master enabled, resume beacons and browsing
+                if self.isEnabled && self.discoveryEnabled {
                     UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
                     if !TrustStore.shared.hasPairedDevice() {
                         self.discoveryService.startBrowsing()
@@ -632,9 +833,9 @@ extension AppState: ConnectionManagerDelegate {
                 self.connectedDeviceId = nil
                 self.pairingPin = nil
                 self.incomingPairingRequest = nil
-                self.statusMessage = "Connection failed: \(err.localizedDescription)"
+                self.statusMessage = self.isEnabled ? "Connection failed: \(err.localizedDescription)" : "DexoLink is Off"
                 self.clipboardManager.direction = .disabled
-                if self.discoveryEnabled {
+                if self.isEnabled && self.discoveryEnabled {
                     UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
                     if !TrustStore.shared.hasPairedDevice() {
                         self.discoveryService.startBrowsing()
