@@ -606,6 +606,14 @@ class ConnectionManager(private val context: Context) {
                 transferManager.handleIncomingMessage(message)
             }
 
+            is ContinuityActivityMessage, is ContinuityAckMessage, is ContinuityDismissMessage, is ContinuityStateMessage -> {
+                try {
+                    com.macdroid.continuity.ContinuityManager.getInstance(context).handleMessage(message)
+                } catch (e: Exception) {
+                    log("Error handling continuity message: ${e.message}")
+                }
+            }
+
             else -> {
                 log("Handled message type: ${message.type}")
             }

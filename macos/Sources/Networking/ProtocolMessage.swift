@@ -22,12 +22,28 @@ public enum ProtocolMessage: Codable, Equatable {
     case clipboardPush(sequenceNumber: Int, content: String)
     case clipboardAck(sequenceNumber: Int)
     case clipboardMode(mode: String)
+    case continuityActivity(
+        activityId: String,
+        activityType: String,
+        title: String,
+        subtitle: String,
+        url: String?,
+        contentPayload: String?,
+        position: Int,
+        progress: Double,
+        timestamp: Int64,
+        sourceDevice: String
+    )
+    case continuityAck(activityId: String, accepted: Bool)
+    case continuityDismiss(activityId: String)
+    case continuityState(enabled: Bool)
 
     private enum CodingKeys: String, CodingKey {
         case type, version, deviceId, deviceName, paired, publicKey, accepted, reason
         case transferId, totalFiles, totalSize, fileId, name, size, mimeType
         case offset, data, sha256, verified, bytesReceived, code, message
         case sequenceNumber, content, mode
+        case activityId, activityType, title, subtitle, url, contentPayload, position, progress, timestamp, sourceDevice, enabled
     }
 
     private enum MessageType: String, Codable {
@@ -52,6 +68,10 @@ public enum ProtocolMessage: Codable, Equatable {
         case clipboardPush = "CLIPBOARD_PUSH"
         case clipboardAck = "CLIPBOARD_ACK"
         case clipboardMode = "CLIPBOARD_MODE"
+        case continuityActivity = "CONTINUITY_ACTIVITY"
+        case continuityAck = "CONTINUITY_ACK"
+        case continuityDismiss = "CONTINUITY_DISMISS"
+        case continuityState = "CONTINUITY_STATE"
     }
 
     public init(from decoder: Decoder) throws {
@@ -145,6 +165,32 @@ public enum ProtocolMessage: Codable, Equatable {
             self = .clipboardAck(sequenceNumber: try container.decode(Int.self, forKey: .sequenceNumber))
         case .clipboardMode:
             self = .clipboardMode(mode: try container.decode(String.self, forKey: .mode))
+        case .continuityActivity:
+            self = .continuityActivity(
+                activityId: try container.decode(String.self, forKey: .activityId),
+                activityType: try container.decode(String.self, forKey: .activityType),
+                title: try container.decode(String.self, forKey: .title),
+                subtitle: try container.decodeIfPresent(String.self, forKey: .subtitle) ?? "",
+                url: try container.decodeIfPresent(String.self, forKey: .url),
+                contentPayload: try container.decodeIfPresent(String.self, forKey: .contentPayload),
+                position: try container.decodeIfPresent(Int.self, forKey: .position) ?? 0,
+                progress: try container.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0,
+                timestamp: try container.decodeIfPresent(Int64.self, forKey: .timestamp) ?? Int64(Date().timeIntervalSince1970 * 1000),
+                sourceDevice: try container.decodeIfPresent(String.self, forKey: .sourceDevice) ?? ""
+            )
+        case .continuityAck:
+            self = .continuityAck(
+                activityId: try container.decode(String.self, forKey: .activityId),
+                accepted: try container.decode(Bool.self, forKey: .accepted)
+            )
+        case .continuityDismiss:
+            self = .continuityDismiss(
+                activityId: try container.decode(String.self, forKey: .activityId)
+            )
+        case .continuityState:
+            self = .continuityState(
+                enabled: try container.decode(Bool.self, forKey: .enabled)
+            )
         }
     }
 
@@ -235,6 +281,28 @@ public enum ProtocolMessage: Codable, Equatable {
         case let .clipboardMode(mode):
             try container.encode(MessageType.clipboardMode, forKey: .type)
             try container.encode(mode, forKey: .mode)
+        case let .continuityActivity(activityId, activityType, title, subtitle, url, contentPayload, position, progress, timestamp, sourceDevice):
+            try container.encode(MessageType.continuityActivity, forKey: .type)
+            try container.encode(activityId, forKey: .activityId)
+            try container.encode(activityType, forKey: .activityType)
+            try container.encode(title, forKey: .title)
+            try container.encode(subtitle, forKey: .subtitle)
+            if let url = url { try container.encode(url, forKey: .url) }
+            if let contentPayload = contentPayload { try container.encode(contentPayload, forKey: .contentPayload) }
+            try container.encode(position, forKey: .position)
+            try container.encode(progress, forKey: .progress)
+            try container.encode(timestamp, forKey: .timestamp)
+            try container.encode(sourceDevice, forKey: .sourceDevice)
+        case let .continuityAck(activityId, accepted):
+            try container.encode(MessageType.continuityAck, forKey: .type)
+            try container.encode(activityId, forKey: .activityId)
+            try container.encode(accepted, forKey: .accepted)
+        case let .continuityDismiss(activityId):
+            try container.encode(MessageType.continuityDismiss, forKey: .type)
+            try container.encode(activityId, forKey: .activityId)
+        case let .continuityState(enabled):
+            try container.encode(MessageType.continuityState, forKey: .type)
+            try container.encode(enabled, forKey: .enabled)
         }
     }
 }

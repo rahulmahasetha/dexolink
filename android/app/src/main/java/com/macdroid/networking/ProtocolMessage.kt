@@ -23,7 +23,11 @@ enum class MessageType(val value: String) {
     PONG("PONG"),
     CLIPBOARD_PUSH("CLIPBOARD_PUSH"),
     CLIPBOARD_ACK("CLIPBOARD_ACK"),
-    CLIPBOARD_MODE("CLIPBOARD_MODE");
+    CLIPBOARD_MODE("CLIPBOARD_MODE"),
+    CONTINUITY_ACTIVITY("CONTINUITY_ACTIVITY"),
+    CONTINUITY_ACK("CONTINUITY_ACK"),
+    CONTINUITY_DISMISS("CONTINUITY_DISMISS"),
+    CONTINUITY_STATE("CONTINUITY_STATE");
 
     companion object {
         fun fromValue(value: String): MessageType? {
@@ -122,6 +126,28 @@ sealed class ProtocolMessage {
                 )
                 MessageType.CLIPBOARD_MODE -> ClipboardModeMessage(
                     mode = json.optString("mode", "two_way")
+                )
+                MessageType.CONTINUITY_ACTIVITY -> ContinuityActivityMessage(
+                    activityId = json.optString("activityId", ""),
+                    activityType = json.optString("activityType", "webpage"),
+                    title = json.optString("title", ""),
+                    subtitle = json.optString("subtitle", ""),
+                    url = if (json.has("url") && !json.isNull("url")) json.getString("url") else null,
+                    contentPayload = if (json.has("contentPayload") && !json.isNull("contentPayload")) json.getString("contentPayload") else null,
+                    position = json.optInt("position", 0),
+                    progress = json.optDouble("progress", 0.0),
+                    timestamp = json.optLong("timestamp", System.currentTimeMillis()),
+                    sourceDevice = json.optString("sourceDevice", "Mac")
+                )
+                MessageType.CONTINUITY_ACK -> ContinuityAckMessage(
+                    activityId = json.optString("activityId", ""),
+                    accepted = json.optBoolean("accepted", false)
+                )
+                MessageType.CONTINUITY_DISMISS -> ContinuityDismissMessage(
+                    activityId = json.optString("activityId", "")
+                )
+                MessageType.CONTINUITY_STATE -> ContinuityStateMessage(
+                    enabled = json.optBoolean("enabled", true)
                 )
             }
         }
@@ -320,3 +346,64 @@ data class ClipboardModeMessage(val mode: String) : ProtocolMessage() {
         put("mode", mode)
     }
 }
+
+data class ContinuityActivityMessage(
+    val activityId: String,
+    val activityType: String,
+    val title: String,
+    val subtitle: String = "",
+    val url: String? = null,
+    val contentPayload: String? = null,
+    val position: Int = 0,
+    val progress: Double = 0.0,
+    val timestamp: Long = System.currentTimeMillis(),
+    val sourceDevice: String = ""
+) : ProtocolMessage() {
+    override val type = MessageType.CONTINUITY_ACTIVITY
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("activityId", activityId)
+        put("activityType", activityType)
+        put("title", title)
+        put("subtitle", subtitle)
+        url?.let { put("url", it) }
+        contentPayload?.let { put("contentPayload", it) }
+        put("position", position)
+        put("progress", progress)
+        put("timestamp", timestamp)
+        put("sourceDevice", sourceDevice)
+    }
+}
+
+data class ContinuityAckMessage(
+    val activityId: String,
+    val accepted: Boolean
+) : ProtocolMessage() {
+    override val type = MessageType.CONTINUITY_ACK
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("activityId", activityId)
+        put("accepted", accepted)
+    }
+}
+
+data class ContinuityDismissMessage(
+    val activityId: String
+) : ProtocolMessage() {
+    override val type = MessageType.CONTINUITY_DISMISS
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("activityId", activityId)
+    }
+}
+
+data class ContinuityStateMessage(
+    val enabled: Boolean
+) : ProtocolMessage() {
+    override val type = MessageType.CONTINUITY_STATE
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("enabled", enabled)
+    }
+}
+

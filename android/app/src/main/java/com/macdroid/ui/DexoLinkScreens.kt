@@ -1557,6 +1557,23 @@ fun HomeScreenContent(
     val isPairing = connectionState is ConnectionState.Pairing
     var showMacOptionsDialog by remember { mutableStateOf(false) }
     var showUnpairConfirmDialog by remember { mutableStateOf(false) }
+    var showHandoffToMacDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val continuityManager = remember { com.macdroid.continuity.ContinuityManager.getInstance(context) }
+    val activeActivity by continuityManager.activeIncomingActivity.collectAsState()
+    val isContinuityEnabled by continuityManager.isContinuityEnabled.collectAsState()
+
+    if (showHandoffToMacDialog) {
+        HandoffToMacDialog(
+            onDismiss = { showHandoffToMacDialog = false },
+            onSend = { activity ->
+                continuityManager.broadcastActivity(activity)
+                showHandoffToMacDialog = false
+                Toast.makeText(context, "Activity sent to Mac: ${activity.title}", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
 
     if (showUnpairConfirmDialog && pairedDevice != null) {
         AlertDialog(
@@ -1667,6 +1684,118 @@ fun HomeScreenContent(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item { Spacer(modifier = Modifier.height(4.dp)) }
+
+        // DexoLink Continuity (Handoff) Incoming Card
+        if (activeActivity != null && isContinuityEnabled) {
+            val act = activeActivity!!
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDFA)),
+                    border = BorderStroke(1.5.dp, Color(0xFF2DD4BF)),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF06B6D4), Color(0xFF0284C7))
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = when (act.activityType) {
+                                        "pdf" -> DexoIcons.CategoryPdf
+                                        "presentation" -> DexoIcons.Sync
+                                        "document" -> DexoIcons.CategoryDoc
+                                        else -> DexoIcons.Globe
+                                    },
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "CONTINUE FROM ${act.sourceDevice.ifBlank { "MAC" }.uppercase()}",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFF0D9488)
+                                )
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Text(
+                                    act.title,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF0F172A),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    act.displaySubtitle,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { continuityManager.dismissIncomingActivity() },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, Color(0xFFCBD5E1))
+                            ) {
+                                Text("Dismiss", fontSize = 12.sp, color = Color(0xFF64748B))
+                            }
+
+                            Button(
+                                onClick = { continuityManager.continueIncomingActivity(context) },
+                                modifier = Modifier.weight(1.5f),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D9488))
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    DexoIcon(
+                                        imageVector = DexoIcons.Send,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Continue on Android",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // 1. Connected Device Card (Phone <--> Mac) matching Screenshot 4
         item {
@@ -2315,6 +2444,78 @@ fun HomeScreenContent(
                             contentDescription = null,
                             tint = Color(0xFF94A3B8),
                             modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                // Card 4: Continuity (Handoff)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (isConnected) {
+                                showHandoffToMacDialog = true
+                            } else {
+                                Toast.makeText(context, "Connect to your Mac to handoff activities", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF06B6D4)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            DexoIcon(
+                                imageVector = DexoIcons.Sync,
+                                contentDescription = "Continuity",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Continuity (Handoff)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    color = if (isContinuityEnabled) Color(0xFFE0F7FA) else Color(0xFFF1F5F9),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        if (isContinuityEnabled) "ON" else "OFF",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isContinuityEnabled) Color(0xFF00838F) else Color(0xFF64748B),
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                if (isConnected) "Tap to Handoff active PDF, doc or web to Mac" else "Continue reading PDFs & browsing across devices",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                        DexoIcon(
+                            imageVector = DexoIcons.ChevronRight,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -3588,6 +3789,57 @@ fun SettingsTabContent(
 
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
 
+                        // Continuity (Handoff) - Independent ON/OFF Toggle
+                        val continuityManager = remember { com.macdroid.continuity.ContinuityManager.getInstance(context) }
+                        val isContinuityEnabled by continuityManager.isContinuityEnabled.collectAsState()
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF06B6D4)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Sync,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Continuity (Handoff)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = if (isContinuityEnabled) Color(0xFFE0F7FA) else Color(0xFFF1F5F9),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            if (isContinuityEnabled) "ON" else "OFF",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (isContinuityEnabled) Color(0xFF00838F) else Color(0xFF64748B),
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                                Text("Continue reading PDFs, docs & browsing across devices", fontSize = 11.sp, color = Color(0xFF64748B))
+                            }
+                            Switch(
+                                checked = isContinuityEnabled,
+                                onCheckedChange = { continuityManager.setContinuityEnabled(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF06B6D4))
+                            )
+                        }
+
+                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+
                         // 4. Show Notifications
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -4087,7 +4339,7 @@ fun DexoLinkBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v2.0.2",
+                    "Developed by Rahul Mahaseth | DexoLink v3.0.0",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF64748B),
@@ -4628,3 +4880,202 @@ fun ClipboardHistoryDialog(
         )
     }
 }
+
+// DexoLink Continuity: Handoff to Mac Dialog
+@Composable
+fun HandoffToMacDialog(
+    onDismiss: () -> Unit,
+    onSend: (com.macdroid.continuity.ContinuityActivity) -> Unit
+) {
+    var activityType by remember { mutableStateOf("webpage") }
+    var title by remember { mutableStateOf("") }
+    var urlOrPath by remember { mutableStateOf("") }
+    var position by remember { mutableStateOf(1) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White,
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 16.dp),
+            shadowElevation = 8.dp
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF06B6D4)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(
+                            imageVector = DexoIcons.Send,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Continue on Mac",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = Color(0xFF0F172A)
+                        )
+                        Text(
+                            "Seamlessly handoff activity to your Mac",
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Type selector row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val types = listOf(
+                        "webpage" to "Webpage",
+                        "pdf" to "PDF",
+                        "presentation" to "Slide",
+                        "document" to "Doc"
+                    )
+                    types.forEach { (typeKey, typeLabel) ->
+                        val isSelected = activityType == typeKey
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) Color(0xFF06B6D4) else Color(0xFFF1F5F9),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { activityType = typeKey }
+                        ) {
+                            Text(
+                                text = typeLabel,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.White else Color(0xFF475569),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text("Title", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    placeholder = {
+                        Text(
+                            if (activityType == "pdf") "e.g. DexoLink Guide.pdf" else "e.g. Wikipedia article",
+                            fontSize = 13.sp
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    if (activityType == "webpage") "Web URL" else "File URL / Name",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF475569)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = urlOrPath,
+                    onValueChange = { urlOrPath = it },
+                    placeholder = { Text("https://example.com/page", fontSize = 13.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                if (activityType == "pdf" || activityType == "presentation" || activityType == "document") {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (activityType == "presentation") "Slide Number" else "Page Number",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF475569)
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { if (position > 1) position-- }) {
+                                Text("-", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Text(
+                                "$position",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+                            IconButton(onClick = { position++ }) {
+                                Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = {
+                            val trimmedUrl = urlOrPath.trim()
+                            val resolvedTitle = title.trim().ifEmpty {
+                                Uri.parse(trimmedUrl).lastPathSegment ?: "DexoLink Activity"
+                            }
+                            val act = com.macdroid.continuity.ContinuityActivity(
+                                activityId = UUID.randomUUID().toString(),
+                                activityType = activityType,
+                                title = resolvedTitle,
+                                subtitle = if (activityType == "webpage") (Uri.parse(trimmedUrl).host ?: "") else "Page $position",
+                                url = trimmedUrl,
+                                contentPayload = null,
+                                position = position,
+                                progress = 0.0,
+                                timestamp = System.currentTimeMillis(),
+                                sourceDevice = Build.MODEL ?: "Android Phone"
+                            )
+                            onSend(act)
+                        },
+                        enabled = urlOrPath.isNotBlank(),
+                        modifier = Modifier.weight(1.3f),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF06B6D4))
+                    ) {
+                        Text("Continue on Mac", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+

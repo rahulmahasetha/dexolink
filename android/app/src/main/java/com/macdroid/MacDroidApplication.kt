@@ -21,6 +21,12 @@ class MacDroidApplication : Application() {
         val discoveryService: DiscoveryService by lazy {
             DiscoveryService(instance.applicationContext)
         }
+
+        val continuityManager: com.macdroid.continuity.ContinuityManager by lazy {
+            com.macdroid.continuity.ContinuityManager.getInstance(instance.applicationContext).apply {
+                setConnectionManager(connectionManager)
+            }
+        }
     }
 
     override fun onCreate() {
@@ -32,7 +38,8 @@ class MacDroidApplication : Application() {
         try {
             val cm = connectionManager
             val ds = discoveryService
-            Log.d(TAG, "Initialized ConnectionManager & DiscoveryService in Application.onCreate")
+            val continuity = continuityManager
+            Log.d(TAG, "Initialized ConnectionManager, DiscoveryService & ContinuityManager in Application.onCreate")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing core services: ${e.message}", e)
         }

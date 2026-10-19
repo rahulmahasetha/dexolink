@@ -11,6 +11,7 @@ struct MenuBarView: View {
     @State private var manualIP = ""
     @State private var manualPort = "52840"
     @State private var isTargetedForDrop = false
+    @State private var showHandoffSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -224,6 +225,19 @@ struct MenuBarView: View {
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
                                 .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+
+                    // MARK: - DexoLink Continuity (Handoff) Incoming Card
+                    if let incoming = appState.continuityManager.incomingActivity {
+                        ContinuityIncomingCard(
+                            activity: incoming,
+                            onContinue: {
+                                _ = appState.continuityManager.continueIncomingActivity()
+                            },
+                            onDismiss: {
+                                appState.continuityManager.dismissIncomingActivity()
+                            }
                         )
                     }
 
@@ -572,6 +586,78 @@ struct MenuBarView: View {
                         .cornerRadius(10)
                     }
 
+                    // MARK: - Continuity (Handoff) Control Card
+                    if isConnected {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                                    .foregroundColor(.cyan)
+                                    .font(.title3)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text("Continuity (Handoff)")
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                        Text(appState.continuityManager.isEnabled ? "ON" : "OFF")
+                                            .font(.system(size: 8, weight: .heavy))
+                                            .foregroundColor(appState.continuityManager.isEnabled ? .cyan : .secondary)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(
+                                                Capsule().fill((appState.continuityManager.isEnabled ? Color.cyan : Color.secondary).opacity(0.15))
+                                            )
+                                    }
+                                    Text("Seamlessly continue PDFs, web & docs across devices")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Toggle("", isOn: Binding(
+                                    get: { appState.continuityManager.isEnabled },
+                                    set: { appState.continuityManager.isEnabled = $0 }
+                                ))
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                                .scaleEffect(0.75)
+                            }
+
+                            if appState.continuityManager.isEnabled {
+                                HStack(spacing: 8) {
+                                    Button(action: {
+                                        showHandoffSheet = true
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "paperplane.fill")
+                                            Text("Handoff to Phone...")
+                                        }
+                                        .font(.caption2)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    if let last = appState.continuityManager.lastSentActivity {
+                                        Spacer()
+                                        Text("Last sent: \(last.title.prefix(18))...")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.cyan.opacity(0.06))
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.cyan.opacity(0.2), lineWidth: 1)
+                        )
+                    }
+
                     // MARK: - Nearby Discovered Devices
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -677,7 +763,7 @@ struct MenuBarView: View {
             // MARK: - Developer Attribution Footer
             HStack {
                 Spacer()
-                Text("Developed by Rahul Mahaseth | DexoLink v2.0.2")
+                Text("Developed by Rahul Mahaseth | DexoLink v3.0.0")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary.opacity(0.8))
                 Spacer()
@@ -701,6 +787,12 @@ struct MenuBarView: View {
                 appState: appState,
                 isPresented: $showHistorySheet,
                 selectedTab: historyInitialTab
+            )
+        }
+        .sheet(isPresented: $showHandoffSheet) {
+            HandoffSheetView(
+                appState: appState,
+                isPresented: $showHandoffSheet
             )
         }
     }
@@ -1500,6 +1592,266 @@ struct HistorySheetView: View {
         f.dateStyle = .short
         f.timeStyle = .short
         return f.string(from: date)
+    }
+}
+
+// MARK: - Continuity Incoming Activity Card (Apple Handoff inspired)
+struct ContinuityIncomingCard: View {
+    let activity: ContinuityActivity
+    let onContinue: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(LinearGradient(
+                            colors: [Color.cyan, Color.blue],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: iconName(for: activity.activityType))
+                        .foregroundColor(.white)
+                        .font(.system(size: 15, weight: .bold))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text("CONTINUE FROM \(activity.sourceDevice.uppercased())")
+                            .font(.system(size: 8, weight: .black))
+                            .foregroundColor(.cyan)
+                        Spacer()
+                    }
+                    Text(activity.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    Text(activity.displaySubtitle)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Button(action: onDismiss) {
+                    Text("Dismiss")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+
+                Button(action: onContinue) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.right.circle.fill")
+                        Text("Continue on Mac")
+                            .fontWeight(.semibold)
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.cyan.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.cyan.opacity(0.4), lineWidth: 1)
+        )
+    }
+
+    private func iconName(for type: String) -> String {
+        switch type {
+        case "webpage": return "safari.fill"
+        case "pdf": return "doc.richtext.fill"
+        case "presentation": return "sparkles.tv"
+        case "document": return "doc.text.fill"
+        default: return "arrow.triangle.2.circlepath"
+        }
+    }
+}
+
+// MARK: - Continuity Outgoing Handoff Sheet
+struct HandoffSheetView: View {
+    @ObservedObject var appState: AppState
+    @Binding var isPresented: Bool
+
+    @State private var activityType = "webpage"
+    @State private var title = ""
+    @State private var urlOrPath = ""
+    @State private var position: Int = 1
+    @State private var progressPercent: Double = 0.0
+
+    let activityTypes = [
+        ("webpage", "Webpage", "safari.fill"),
+        ("pdf", "PDF", "doc.richtext.fill"),
+        ("presentation", "Slide", "sparkles.tv"),
+        ("document", "Doc", "doc.text.fill")
+    ]
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    .foregroundColor(.cyan)
+                    .font(.title3)
+                Text("Continue on Android")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                Spacer()
+                Button("Done") {
+                    isPresented = false
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Picker("Type", selection: $activityType) {
+                ForEach(activityTypes, id: \.0) { item in
+                    Label(item.1, systemImage: item.2).tag(item.0)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Title / Subject")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField(titlePlaceholder, text: $title)
+                    .textFieldStyle(.roundedBorder)
+
+                Text(activityType == "webpage" ? "Web URL" : "File URL or Path")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack {
+                    TextField(urlPlaceholder, text: $urlOrPath)
+                        .textFieldStyle(.roundedBorder)
+                    if activityType == "webpage" {
+                        Button("Paste") {
+                            if let clip = NSPasteboard.general.string(forType: .string),
+                               clip.hasPrefix("http://") || clip.hasPrefix("https://") {
+                                urlOrPath = clip
+                                if title.isEmpty {
+                                    title = URL(string: clip)?.host ?? "Webpage"
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Paste URL from clipboard")
+                    } else {
+                        Button("Browse...") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            if activityType == "pdf" {
+                                panel.allowedContentTypes = [.pdf]
+                            }
+                            if panel.runModal() == .OK, let url = panel.url {
+                                urlOrPath = url.absoluteString
+                                if title.isEmpty {
+                                    title = url.lastPathComponent
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
+                if activityType == "pdf" || activityType == "presentation" || activityType == "document" {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(activityType == "presentation" ? "Slide Number" : "Page Number")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Stepper(value: $position, in: 1...9999) {
+                                Text("\(activityType == "presentation" ? "Slide" : "Page") \(position)")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
+            Spacer()
+
+            Button(action: sendHandoff) {
+                HStack(spacing: 6) {
+                    Image(systemName: "paperplane.fill")
+                    Text("Continue on Android")
+                        .fontWeight(.bold)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.cyan)
+            .disabled(urlOrPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(16)
+        .frame(width: 380, height: 320)
+        .onAppear {
+            if let clip = NSPasteboard.general.string(forType: .string),
+               clip.hasPrefix("http://") || clip.hasPrefix("https://") {
+                urlOrPath = clip
+                title = URL(string: clip)?.host ?? "Webpage"
+            }
+        }
+    }
+
+    private var titlePlaceholder: String {
+        switch activityType {
+        case "webpage": return "e.g. Wikipedia: Quantum Computing"
+        case "pdf": return "e.g. DexoLink Architecture Guide"
+        case "presentation": return "e.g. Q3 Product Roadmap"
+        default: return "e.g. Project Notes"
+        }
+    }
+
+    private var urlPlaceholder: String {
+        switch activityType {
+        case "webpage": return "https://example.com/article"
+        case "pdf": return "https://example.com/doc.pdf or file path"
+        default: return "URL or file name"
+        }
+    }
+
+    private func sendHandoff() {
+        let trimmedUrl = urlOrPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUrl.isEmpty else { return }
+
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?
+            (URL(string: trimmedUrl)?.lastPathComponent ?? "DexoLink Activity") : title
+
+        let activity = ContinuityActivity(
+            activityId: UUID().uuidString,
+            activityType: activityType,
+            title: resolvedTitle,
+            subtitle: activityType == "webpage" ? (URL(string: trimmedUrl)?.host ?? "") : "Page \(position)",
+            url: trimmedUrl,
+            contentPayload: nil,
+            position: position > 0 ? position : 0,
+            progress: progressPercent,
+            timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+            sourceDevice: Host.current().localizedName ?? "MacBook"
+        )
+
+        appState.continuityManager.broadcastActivity(activity)
+        isPresented = false
     }
 }
 

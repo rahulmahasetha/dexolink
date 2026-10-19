@@ -132,6 +132,22 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- DexoLink Continuity (Handoff) Components -->
+        <activity
+            android:name=".continuity.PdfViewerActivity"
+            android:exported="false"
+            android:label="PDF Continuity"
+            android:theme="@style/Theme.MacDroid" />
+
+        <receiver
+            android:name=".continuity.ContinuityActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.macdroid.continuity.ACTION_CONTINUE" />
+                <action android:name="com.macdroid.continuity.ACTION_DISMISS" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

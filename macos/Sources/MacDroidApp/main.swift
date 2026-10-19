@@ -27,14 +27,19 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
     let appState = AppState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Configure native system notifications for device pairing
+        // Configure native system notifications for device pairing and continuity
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
         let acceptAction = UNNotificationAction(identifier: "ACCEPT_PAIRING", title: "Accept", options: [.foreground])
         let rejectAction = UNNotificationAction(identifier: "REJECT_PAIRING", title: "Reject", options: [.destructive])
         let category = UNNotificationCategory(identifier: "PAIRING_CATEGORY", actions: [acceptAction, rejectAction], intentIdentifiers: [], options: [])
-        center.setNotificationCategories([category])
+
+        let continueAction = UNNotificationAction(identifier: "CONTINUE_ACTION", title: "Continue on Mac", options: [.foreground])
+        let dismissAction = UNNotificationAction(identifier: "DISMISS_ACTION", title: "Dismiss", options: [.destructive])
+        let continuityCategory = UNNotificationCategory(identifier: "CONTINUITY_CATEGORY", actions: [continueAction, dismissAction], intentIdentifiers: [], options: [])
+
+        center.setNotificationCategories([category, continuityCategory])
 
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if granted {
@@ -105,6 +110,14 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         } else if response.actionIdentifier == "REJECT_PAIRING" {
             DispatchQueue.main.async {
                 self.appState.rejectIncomingPairing()
+            }
+        } else if response.actionIdentifier == "CONTINUE_ACTION" {
+            DispatchQueue.main.async {
+                _ = self.appState.continuityManager.continueIncomingActivity()
+            }
+        } else if response.actionIdentifier == "DISMISS_ACTION" {
+            DispatchQueue.main.async {
+                self.appState.continuityManager.dismissIncomingActivity()
             }
         } else {
             DispatchQueue.main.async {
@@ -313,6 +326,7 @@ class AppState: ObservableObject {
     let transferManager: TransferManager
     let clipboardManager = ClipboardManager()
     let pairingManager = PairingManager()
+    let continuityManager = ContinuityManager.shared
 
     @Published var isEnabled: Bool
     @Published var isDiscovering = false
@@ -355,6 +369,7 @@ class AppState: ObservableObject {
         connectionManager.delegate = self
         clipboardManager.setConnectionManager(connectionManager)
         clipboardManager.delegate = self
+        continuityManager.setConnectionManager(connectionManager)
         transferManager.delegate = self
 
         if isEnabled {
@@ -407,6 +422,7 @@ class AppState: ObservableObject {
             connectedDeviceId = nil
             pairingPin = nil
             incomingPairingRequest = nil
+            continuityManager.incomingActivity = nil
 
             // 2. Stop Discovery & Browsing
             discoveryService.stopBrowsing()
@@ -1034,6 +1050,9 @@ extension AppState: ConnectionManagerDelegate {
 
             case .clipboardPush, .clipboardAck:
                 self.clipboardManager.handleMessage(message)
+
+            case .continuityActivity, .continuityAck, .continuityDismiss, .continuityState:
+                self.continuityManager.handleMessage(message)
 
             default:
                 self.transferManager.handleMessage(message)

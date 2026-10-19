@@ -55,7 +55,7 @@ let package = Package(
         ),
         .testTarget(
             name: "NetworkingTests",
-            dependencies: ["Networking"],
+            dependencies: ["Networking", "Core"],
             path: "Tests/NetworkingTests"
         )
     ]
