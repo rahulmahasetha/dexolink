@@ -142,6 +142,9 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
             Log.d(TAG, "Initiating auto-reconnect to last known Mac: $lastHost:$lastPort")
             connectionManager.connect(lastHost, lastPort)
         }
+
+        // Notify Quick Settings tile of active service
+        DexoLinkTileService.requestUpdate(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -220,6 +223,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
         discoveryService.removeListener(this)
         releaseLocks()
         instance = null
+        DexoLinkTileService.requestUpdate(this)
         super.onDestroy()
     }
 
@@ -284,6 +288,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener {
 
     override fun onStateChanged(state: ConnectionState) {
         updateNotification(state)
+        DexoLinkTileService.requestUpdate(this)
 
         when (state) {
             is ConnectionState.Authenticated, is ConnectionState.Connected -> {

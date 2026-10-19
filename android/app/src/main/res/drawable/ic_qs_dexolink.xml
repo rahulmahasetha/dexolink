@@ -1,0 +1,50 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Center circle (antenna transmitter node) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,10.5m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
+    
+    <!-- Antenna mast line -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,12.5 L12,21" />
+
+    <!-- Inner left wave -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M8.18,6.68 A5.4,5.4 0,0 0 8.18,14.32" />
+
+    <!-- Inner right wave -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M15.82,6.68 A5.4,5.4 0,0 1 15.82,14.32" />
+
+    <!-- Outer left wave -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5.64,4.14 A9,9 0,0 0 5.64,16.86" />
+
+    <!-- Outer right wave -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18.36,4.14 A9,9 0,0 1 18.36,16.86" />
+</vector>

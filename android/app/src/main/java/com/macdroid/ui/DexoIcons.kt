@@ -465,6 +465,35 @@ object DexoIcons {
             lineTo(12.01f, 20f)
         }
     }
+    val Antenna: ImageVector = strokedIcon("Antenna") {
+        path(
+            fill = SolidColor(Color.Black)
+        ) {
+            moveTo(10f, 10.5f)
+            curveTo(10f, 9.4f, 10.9f, 8.5f, 12f, 8.5f)
+            curveTo(13.1f, 8.5f, 14f, 9.4f, 14f, 10.5f)
+            curveTo(14f, 11.6f, 13.1f, 12.5f, 12f, 12.5f)
+            curveTo(10.9f, 12.5f, 10f, 11.6f, 10f, 10.5f)
+            close()
+        }
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(12f, 12.5f)
+            lineTo(12f, 21f)
+            moveTo(8.18f, 6.68f)
+            arcTo(5.4f, 5.4f, 0f, false, false, 8.18f, 14.32f)
+            moveTo(15.82f, 6.68f)
+            arcTo(5.4f, 5.4f, 0f, false, true, 15.82f, 14.32f)
+            moveTo(5.64f, 4.14f)
+            arcTo(9.0f, 9.0f, 0f, false, false, 5.64f, 16.86f)
+            moveTo(18.36f, 4.14f)
+            arcTo(9.0f, 9.0f, 0f, false, true, 18.36f, 16.86f)
+        }
+    }
     val Flash: ImageVector = strokedIcon("Flash") {
         path(
             stroke = SolidColor(Color.Black),
