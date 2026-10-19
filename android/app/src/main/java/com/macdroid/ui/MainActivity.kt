@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     // UI state
     private val connectionState = mutableStateOf<ConnectionState>(ConnectionState.Disconnected)
     private val currentSyncMode = mutableStateOf(ClipboardSyncMode.TWO_WAY)
+    private val isEnhancedClipboardEnabled = mutableStateOf(false)
     private val discoveredDevices = mutableStateListOf<DiscoveredDevice>()
     private val pairedDevice = mutableStateOf<TrustedDevice?>(null)
     private val logs = mutableStateListOf<String>()
@@ -128,6 +129,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         // 4. Initial state sync
         connectionState.value = connectionManager.state
         currentSyncMode.value = connectionManager.clipboardManager.syncMode
+        isEnhancedClipboardEnabled.value = connectionManager.clipboardManager.isEnhancedClipboardEnabled
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         localDeviceName.value = connectionManager.deviceName
@@ -164,6 +166,12 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     activeTransfers = activeTransfers,
                     completedTransfers = completedTransfers,
                     receivedFiles = receivedFiles,
+                    isEnhancedClipboardEnabled = isEnhancedClipboardEnabled.value,
+                    onToggleEnhancedClipboard = { enabled ->
+                        connectionManager.clipboardManager.isEnhancedClipboardEnabled = enabled
+                        isEnhancedClipboardEnabled.value = enabled
+                        log("Enhanced Clipboard ${if (enabled) "enabled" else "disabled"}")
+                    },
                     onModeSelected = { mode ->
                         currentSyncMode.value = mode
                         connectionManager.setClipboardSyncMode(mode)
@@ -455,6 +463,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         super.onResume()
         connectionState.value = connectionManager.state
         currentSyncMode.value = connectionManager.clipboardManager.syncMode
+        isEnhancedClipboardEnabled.value = connectionManager.clipboardManager.isEnhancedClipboardEnabled
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         refreshReceivedFiles()

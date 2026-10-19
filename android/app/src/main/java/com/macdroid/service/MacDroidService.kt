@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.macdroid.MacDroidApplication
 import com.macdroid.R
+import com.macdroid.core.EnhancedClipboardHelper
 import com.macdroid.core.TransferEventListener
 import com.macdroid.core.TransferItem
 import com.macdroid.core.TransferStatus
@@ -35,8 +36,11 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
     companion object {
         private const val TAG = "MacDroidService"
         private const val NOTIFICATION_ID = 1001
+        private const val PASTE_ASSISTANT_NOTIFICATION_ID = 1004
         private const val CHANNEL_ID = "macdroid_foreground_service"
         private const val CHANNEL_NAME = "DexoLink Service"
+        private const val CHANNEL_PASTE_ASSIST_ID = "dexolink_clipboard_assist"
+        private const val CHANNEL_PASTE_ASSIST_NAME = "DexoLink Paste Assistant"
 
         const val ACTION_START = "com.macdroid.action.START"
         const val ACTION_STOP = "com.macdroid.action.STOP"
@@ -45,10 +49,12 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         const val ACTION_ACCEPT_PAIRING = "com.macdroid.action.ACCEPT_PAIRING"
         const val ACTION_REJECT_PAIRING = "com.macdroid.action.REJECT_PAIRING"
         const val ACTION_CANCEL_TRANSFER = "com.macdroid.action.CANCEL_TRANSFER"
+        const val ACTION_PASTE_CLEAN = "com.macdroid.action.PASTE_CLEAN"
 
         const val EXTRA_HOST = "extra_host"
         const val EXTRA_PORT = "extra_port"
         const val EXTRA_TRANSFER_ID = "extra_transfer_id"
+        const val EXTRA_CLIP_TEXT = "extra_clip_text"
 
         @Volatile
         var instance: MacDroidService? = null
@@ -156,6 +162,9 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         // Register clipboard listener (sync runs quietly without toasts)
         try {
             connectionManager.clipboardManager.addClipChangedListener(clipListener)
+            connectionManager.clipboardManager.onEnhancedClipReceived = { text ->
+                showPasteAssistantNotification(text)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error adding clipboard listener: ${e.message}", e)
         }
@@ -227,6 +236,14 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
                     connectionManager.transferManager.cancelAll()
                 }
                 syncTransferNotification()
+            }
+
+            ACTION_PASTE_CLEAN -> {
+                val text = intent?.getStringExtra(EXTRA_CLIP_TEXT)
+                if (!text.isNullOrBlank()) {
+                    connectionManager.clipboardManager.setCleanPlainText(text)
+                }
+                notificationManager?.cancel(PASTE_ASSISTANT_NOTIFICATION_ID)
             }
 
             ACTION_START -> {
@@ -449,6 +466,18 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
                 setSound(null, null)
             }
             notificationManager?.createNotificationChannel(channel)
+
+            val assistChannel = NotificationChannel(
+                CHANNEL_PASTE_ASSIST_ID,
+                CHANNEL_PASTE_ASSIST_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Alternative paste assistance for restricted websites and browser fields"
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
+            notificationManager?.createNotificationChannel(assistChannel)
         }
     }
 
@@ -585,4 +614,48 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         if (seconds < 3600L) return "${seconds / 60}m ${seconds % 60}s"
         return "${seconds / 3600}h ${(seconds % 3600) / 60}m"
     }
+
+    private fun showPasteAssistantNotification(text: String) {
+        if (!connectionManager.clipboardManager.isEnhancedClipboardEnabled) return
+        if (text.isBlank()) return
+
+        val cleanIntent = Intent(this, MacDroidService::class.java).apply {
+            action = ACTION_PASTE_CLEAN
+            putExtra(EXTRA_CLIP_TEXT, text)
+        }
+        val cleanPendingIntent = PendingIntent.getService(
+            this,
+            201,
+            cleanIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val shareIntent = EnhancedClipboardHelper.createDirectShareIntent(text)
+        val sharePendingIntent = PendingIntent.getActivity(
+            this,
+            202,
+            shareIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val snippet = text.replace('\n', ' ').trim().take(40)
+        val notification = NotificationCompat.Builder(this, CHANNEL_PASTE_ASSIST_ID)
+            .setContentTitle("DexoLink Paste Assistant")
+            .setContentText("\"$snippet\" ready for restricted sites")
+            .setSmallIcon(R.drawable.ic_qs_dexolink)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(60000L) // Auto dismiss after 1 minute
+            .addAction(android.R.drawable.ic_menu_edit, "Clean Text", cleanPendingIntent)
+            .addAction(android.R.drawable.ic_menu_share, "Share to App", sharePendingIntent)
+            .build()
+
+        try {
+            notificationManager?.notify(PASTE_ASSISTANT_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to post paste assistant notification: ${e.message}")
+        }
+    }
 }
+

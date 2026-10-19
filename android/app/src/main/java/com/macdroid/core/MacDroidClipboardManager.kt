@@ -4,6 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.security.MessageDigest
 
 enum class ClipboardSyncMode(val id: String, val title: String, val description: String) {
@@ -32,6 +35,7 @@ class MacDroidClipboardManager(private val context: Context) {
         private const val PREFS_NAME = "dexolink_clipboard_prefs"
         private const val KEY_SYNC_MODE = "clipboard_sync_mode"
         private const val KEY_CLIPBOARD_HISTORY = "clipboard_history"
+        private const val KEY_ENHANCED_CLIPBOARD = "enhanced_clipboard_enabled"
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -43,6 +47,22 @@ class MacDroidClipboardManager(private val context: Context) {
             Log.d(TAG, "ClipboardSyncMode persisted: ${value.title}")
         }
 
+    /**
+     * Enhanced Clipboard setting (OFF by default).
+     * When enabled, improves paste compatibility across web editors (Google Docs, Notion, etc.)
+     * and provides alternative paste workflows for restricted web inputs.
+     */
+    var isEnhancedClipboardEnabled: Boolean = prefs.getBoolean(KEY_ENHANCED_CLIPBOARD, false)
+        set(value) {
+            field = value
+            prefs.edit().putBoolean(KEY_ENHANCED_CLIPBOARD, value).apply()
+            _isEnhancedClipboardEnabledFlow.value = value
+            Log.d(TAG, "Enhanced Clipboard persisted: $value")
+        }
+
+    private val _isEnhancedClipboardEnabledFlow = MutableStateFlow(isEnhancedClipboardEnabled)
+    val isEnhancedClipboardEnabledFlow: StateFlow<Boolean> = _isEnhancedClipboardEnabledFlow.asStateFlow()
+
     private val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     private var lastReceivedHash: String = ""
     private var lastSentHash: String = ""
@@ -52,6 +72,7 @@ class MacDroidClipboardManager(private val context: Context) {
 
     private val history = java.util.Collections.synchronizedList(mutableListOf<ClipboardHistoryItem>())
     var onHistoryChanged: (() -> Unit)? = null
+    var onEnhancedClipReceived: ((String) -> Unit)? = null
 
     init {
         loadHistory()
@@ -179,9 +200,15 @@ class MacDroidClipboardManager(private val context: Context) {
         lastSyncedSnippet = content
 
         val applied = try {
-            val clip = ClipData.newPlainText("DexoLink", content)
+            val clip = if (isEnhancedClipboardEnabled) {
+                val cleanPlain = EnhancedClipboardHelper.sanitizePlainText(content)
+                val html = EnhancedClipboardHelper.toHtmlRepresentation(content)
+                ClipData.newHtmlText("DexoLink", cleanPlain, html)
+            } else {
+                ClipData.newPlainText("DexoLink", content)
+            }
             clipboardManager?.setPrimaryClip(clip)
-            Log.d(TAG, "[Clipboard Receipt] Set Android clipboard: \"${content.take(30)}...\" (${content.length} chars)")
+            Log.d(TAG, "[Clipboard Receipt] Set Android clipboard (enhanced=$isEnhancedClipboardEnabled): \"${content.take(30)}...\" (${content.length} chars)")
             true
         } catch (e: Exception) {
             Log.e(TAG, "[Clipboard Error] Failed to set clipboard: ${e.message}", e)
@@ -189,8 +216,26 @@ class MacDroidClipboardManager(private val context: Context) {
         }
         if (applied) {
             addToHistory(content, isOutgoing = false)
+            if (isEnhancedClipboardEnabled) {
+                onEnhancedClipReceived?.invoke(content)
+            }
         }
         return applied
+    }
+
+    /**
+     * Manually sets clean plain text on clipboard (used by Paste Assistant actions).
+     */
+    fun setCleanPlainText(text: String): Boolean {
+        return try {
+            val clean = EnhancedClipboardHelper.sanitizePlainText(text)
+            val clip = ClipData.newPlainText("DexoLink", clean)
+            clipboardManager?.setPrimaryClip(clip)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set clean plain text: ${e.message}")
+            false
+        }
     }
 
     /**

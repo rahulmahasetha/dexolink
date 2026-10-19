@@ -458,7 +458,9 @@ fun MainScreenRoot(
     onDeleteTransfers: (Set<String>) -> Unit = {},
     onDeleteClipboardItem: (String) -> Unit = {},
     onDeleteClipboardItems: (Set<String>) -> Unit = {},
-    onClearClipboardHistory: () -> Unit = {}
+    onClearClipboardHistory: () -> Unit = {},
+    isEnhancedClipboardEnabled: Boolean = false,
+    onToggleEnhancedClipboard: (Boolean) -> Unit = {}
 ) {
     val backStack = remember { mutableStateListOf(NavTab.HOME) }
     val currentTab = backStack.lastOrNull() ?: NavTab.HOME
@@ -1519,7 +1521,9 @@ fun MainScreenRoot(
                         },
                         onShowSecurity = { showSecurityDialog = true },
                         onSendPing = onSendPing,
-                        onOpenClipboardHistory = { showClipboardHistorySheet = true }
+                        onOpenClipboardHistory = { showClipboardHistorySheet = true },
+                        isEnhancedClipboardEnabled = isEnhancedClipboardEnabled,
+                        onToggleEnhancedClipboard = onToggleEnhancedClipboard
                     )
                 }
             }
@@ -3596,13 +3600,16 @@ fun SettingsTabContent(
     onOpenRenamePaired: () -> Unit,
     onShowSecurity: () -> Unit,
     onSendPing: () -> Unit,
-    onOpenClipboardHistory: () -> Unit = {}
+    onOpenClipboardHistory: () -> Unit = {},
+    isEnhancedClipboardEnabled: Boolean = false,
+    onToggleEnhancedClipboard: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     var quickFileSharingEnabled by remember { mutableStateOf(true) }
     var notificationsEnabled by remember { mutableStateOf(true) }
     var largeFilesSyncEnabled by remember { mutableStateOf(true) }
     var autoAcceptEnabled by remember { mutableStateOf(false) }
+    var showEnhancedClipboardInfoDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -3711,6 +3718,82 @@ fun SettingsTabContent(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF0066FF)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF64748B),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+
+                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+
+                        // Enhanced Clipboard - Independent ON/OFF Toggle (OFF by default)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF6366F1)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Sparkles,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Enhanced Clipboard", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFFEEF2FF))
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
+                                    }
+                                }
+                                Text("Rich text & web paste compatibility", fontSize = 11.sp, color = Color(0xFF64748B))
+                            }
+                            Switch(
+                                checked = isEnhancedClipboardEnabled,
+                                onCheckedChange = { onToggleEnhancedClipboard(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF6366F1))
+                            )
+                        }
+
+                        // Compatibility & Limitations Info Clickable Row
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showEnhancedClipboardInfoDialog = true }
+                                .padding(vertical = 4.dp, horizontal = 4.dp)
+                        ) {
+                            DexoIcon(
+                                imageVector = DexoIcons.Shield,
+                                contentDescription = null,
+                                tint = Color(0xFF6366F1),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Compatibility, Security & Limitations",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF6366F1)
                             )
                             Spacer(modifier = Modifier.weight(1f))
                             DexoIcon(
@@ -4275,6 +4358,130 @@ fun SettingsTabContent(
         }
 
         item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+
+    if (showEnhancedClipboardInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showEnhancedClipboardInfoDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF6366F1)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(
+                            imageVector = DexoIcons.Sparkles,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        "Enhanced Clipboard",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "Enhanced Clipboard improves cross-device copy-paste across web browsers, rich-text editors, and restricted web inputs while strictly preserving system security.",
+                        fontSize = 12.sp,
+                        color = Color(0xFF475569),
+                        lineHeight = 17.sp
+                    )
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("1. Multi-Representation Output", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF0F172A))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "Sets both clean plain text and rich HTML (text/html) on the clipboard. Editors like Google Docs, Notion, Slack, and Samsung Notes receive proper paragraph structure without collapsing lines or losing formatting.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B),
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("2. Sanitization & Normalization", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF0F172A))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "Normalizes Windows/Mac carriage returns (\\r\\n -> \\n) and strips invisible zero-width characters (\\u200B, \\uFEFF) that cause web form validation failures and double-spaced inputs.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B),
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("3. Alternative Paste Workflow", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF0F172A))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "When websites block standard pasting via onpaste event listeners or browser gesture restrictions, use the DexoLink Paste Assistant notification or Share-to-App action to deliver text directly.",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B),
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF2F2)),
+                        border = BorderStroke(1.dp, Color(0xFFFEE2E2)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("Security Boundaries & Limitations", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF991B1B))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "DexoLink does not defeat browser security controls, bypass authentication protections, or inject unauthorized scripts into web pages. Pure canvas-rendered interfaces (e.g. Figma canvas, Google Docs canvas mode) or secure OS PIN fields require manual keyboard input.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB91C1C),
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showEnhancedClipboardInfoDialog = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF6366F1))
+                ) {
+                    Text("Got it", fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 }
 

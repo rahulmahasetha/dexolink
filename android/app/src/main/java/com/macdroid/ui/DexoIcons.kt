@@ -827,6 +827,22 @@ object DexoIcons {
             lineTo(20f, 8f)
         }
     }
+
+    val Sparkles: ImageVector = strokedIcon("Sparkles") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(12f, 3f)
+            curveTo(12f, 7.5f, 15.5f, 11f, 20f, 11f)
+            curveTo(15.5f, 11f, 12f, 14.5f, 12f, 19f)
+            curveTo(12f, 14.5f, 8.5f, 11f, 4f, 11f)
+            curveTo(8.5f, 11f, 12f, 7.5f, 12f, 3f)
+            close()
+        }
+    }
 }
 
 /**

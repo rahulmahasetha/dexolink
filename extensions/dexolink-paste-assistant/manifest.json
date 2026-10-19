@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "DexoLink Paste Assistant",
+  "version": "1.0.0",
+  "description": "Legitimate browser paste assistant for DexoLink on restricted websites with explicit user permission.",
+  "permissions": [
+    "contextMenus",
+    "activeTab",
+    "clipboardRead",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "DexoLink Paste Assistant"
+  }
+}
