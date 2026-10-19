@@ -59,3 +59,7 @@ DerivedData/
 # Temporary Scratch Files & Logs
 scratch/
 *.log
+
+# Python Cache
+__pycache__/
+*.pyc

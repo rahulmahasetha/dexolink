@@ -22,8 +22,20 @@ Lightweight, high-performance, zero-external-dependency companion engine for Win
 - Python 3.8+ (uses only Python standard library: `socket`, `struct`, `hashlib`, `json`, `ctypes`, `threading`, `uuid`, `webbrowser`).
 - Windows 10 / Windows 11.
 
-## Running the Engine
+## Easy-to-Use Desktop App
+- **1-Click Launch:** Double-click [`run_windows_gui.bat`](run_windows_gui.bat) or [`dexolink.pyw`](dexolink.pyw) to launch the modern graphical user interface.
+- **Features in GUI:**
+  - One-click file picker and drag-and-drop file sender with live progress bar.
+  - Universal Clipboard quick sender and history viewer.
+  - Continuity web page launcher.
+  - Device list with 1-click pairing and **Multiple Paired Devices toggle** (OFF by default).
+
+## Running via Command Line
 ```bash
+# Launch modern desktop GUI:
+python dexolink_gui.py
+
+# Or launch background headless engine:
 python dexolink_windows.py
 ```
 

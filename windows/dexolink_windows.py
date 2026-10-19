@@ -263,8 +263,17 @@ class DexoLinkWindowsEngine:
         self.server_socket: Optional[socket.socket] = None
         self.active_connections: Dict[str, socket.socket] = {}
         self.transfers_in_progress: Dict[str, Dict[str, Any]] = {}
+        self.discovered_devices: Dict[str, Dict[str, Any]] = {}
         self.download_dir = os.path.expanduser("~/Downloads/DexoLink")
         os.makedirs(self.download_dir, exist_ok=True)
+        # Event callbacks for GUI
+        self.on_device_discovered = None
+        self.on_device_connected = None
+        self.on_device_disconnected = None
+        self.on_clipboard_received = None
+        self.on_transfer_progress = None
+        self.on_transfer_complete = None
+        self.on_continuity_received = None
 
     def start(self):
         self.running = True
@@ -274,8 +283,9 @@ class DexoLinkWindowsEngine:
         self.server_socket.bind(("0.0.0.0", self.port))
         self.server_socket.listen(5)
         threading.Thread(target=self._server_loop, daemon=True).start()
-        # Start UDP Discovery
+        # Start UDP Discovery Broadcaster & Listener
         threading.Thread(target=self._udp_beacon_broadcast, daemon=True).start()
+        threading.Thread(target=self._udp_beacon_listen, daemon=True).start()
         print(f"[DexoLink Windows] Engine v4.0.0 listening on port {self.port} (ID: {self.device_id})")
 
     def stop(self):
@@ -452,13 +462,20 @@ class DexoLinkWindowsEngine:
             f_id = msg.get("fileId")
             expected_hash = msg.get("sha256", "").lower()
             verified = False
+            file_name = f"file_{f_id}"
             for t_id, t_info in self.transfers_in_progress.items():
                 if f_id in t_info.get("files", {}):
                     f_info = t_info["files"][f_id]
+                    file_name = f_info["name"]
                     f_info["handle"].close()
                     computed_hash = f_info["hasher"].hexdigest().lower()
                     verified = (computed_hash == expected_hash)
-                    print(f"[DexoLink Windows] File {f_info['name']} received. Verified: {verified}")
+                    print(f"[DexoLink Windows] File {file_name} received. Verified: {verified}")
+                    if self.on_transfer_complete:
+                        try:
+                            self.on_transfer_complete(file_name, verified)
+                        except Exception:
+                            pass
                     break
             return {"type": "FILE_ACK", "fileId": f_id, "verified": verified}, None
 
@@ -466,6 +483,124 @@ class DexoLinkWindowsEngine:
             return {"type": "PONG"}, None
 
         return None, None
+
+    def push_clipboard(self, text: str):
+        """Pushes clipboard text to all active connected devices."""
+        h = self.clipboard.compute_hash(text)
+        self.clipboard.last_sent_hash = h
+        self.clipboard.sequence_number += 1
+        msg = {
+            "type": "CLIPBOARD_PUSH",
+            "sequenceNumber": self.clipboard.sequence_number,
+            "content": text
+        }
+        encoded = ProtocolCodec.encode_message(msg)
+        for dev_id, sock in list(self.active_connections.items()):
+            try:
+                sock.sendall(encoded)
+            except Exception:
+                pass
+
+    def send_continuity_url(self, url: str, title: str = "Web Page"):
+        """Sends a Continuity Handoff URL to connected devices."""
+        msg = {
+            "type": "CONTINUITY_ACTIVITY",
+            "activityId": str(uuid.uuid4()),
+            "activityType": "web_browsing",
+            "title": title,
+            "url": url,
+            "timestamp": time.time(),
+            "sourceDeviceId": self.device_id
+        }
+        encoded = ProtocolCodec.encode_message(msg)
+        for dev_id, sock in list(self.active_connections.items()):
+            try:
+                sock.sendall(encoded)
+            except Exception:
+                pass
+
+    def send_file(self, peer_ip: str, peer_port: int, file_path: str, progress_callback=None) -> bool:
+        """Sends a file in 64KB chunks with SHA-256 integrity over TCP to a peer."""
+        if not os.path.exists(file_path):
+            return False
+        file_size = os.path.getsize(file_path)
+        file_name = os.path.basename(file_path)
+        transfer_id = str(uuid.uuid4())
+        file_id = str(uuid.uuid4())
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(15.0)
+            s.connect((peer_ip, peer_port))
+
+            # 1. Hello Handshake
+            s.sendall(ProtocolCodec.encode_message({
+                "type": "HELLO",
+                "version": PROTOCOL_VERSION,
+                "deviceId": self.device_id,
+                "deviceName": self.device_name
+            }))
+            # Wait for HELLO_ACK
+            data = s.recv(4096)
+            ack_msg, _, _ = ProtocolCodec.decode_frame(bytearray(data))
+            if not ack_msg or ack_msg.get("type") != "HELLO_ACK":
+                s.close()
+                return False
+
+            # 2. Transfer Request
+            s.sendall(ProtocolCodec.encode_message({
+                "type": "TRANSFER_REQUEST",
+                "transferId": transfer_id,
+                "totalFiles": 1,
+                "totalSize": file_size
+            }))
+            data = s.recv(4096)
+            trans_resp, _, _ = ProtocolCodec.decode_frame(bytearray(data))
+            if not trans_resp or not trans_resp.get("accepted"):
+                s.close()
+                return False
+
+            # 3. File Meta
+            s.sendall(ProtocolCodec.encode_message({
+                "type": "FILE_META",
+                "transferId": transfer_id,
+                "fileId": file_id,
+                "name": file_name,
+                "size": file_size,
+                "mimeType": "application/octet-stream"
+            }))
+
+            # 4. Stream 64KB Chunks
+            hasher = hashlib.sha256()
+            bytes_sent = 0
+            with open(file_path, "rb") as f:
+                while True:
+                    chunk = f.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    chunk_frame = ProtocolCodec.encode_file_chunk(file_id, bytes_sent, chunk)
+                    s.sendall(chunk_frame)
+                    bytes_sent += len(chunk)
+                    if progress_callback:
+                        progress_callback(file_name, bytes_sent, file_size)
+
+            # 5. File Complete
+            s.sendall(ProtocolCodec.encode_message({
+                "type": "FILE_COMPLETE",
+                "fileId": file_id,
+                "sha256": hasher.hexdigest().lower()
+            }))
+
+            # 6. File Ack
+            data = s.recv(4096)
+            file_ack, _, _ = ProtocolCodec.decode_frame(bytearray(data))
+            verified = file_ack and file_ack.get("verified", False)
+            s.close()
+            return bool(verified)
+        except Exception as e:
+            print(f"[DexoLink Windows] send_file error: {e}")
+            return False
 
     def _udp_beacon_broadcast(self):
         """Broadcasts UDP beacon for local network discovery."""
@@ -486,6 +621,36 @@ class DexoLinkWindowsEngine:
                 pass
             time.sleep(3)
 
+    def _udp_beacon_listen(self):
+        """Listens for UDP beacons from other DexoLink devices on the local network."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", BEACON_PORT))
+            while self.running:
+                data, addr = sock.recvfrom(2048)
+                try:
+                    payload = json.loads(data.decode("utf-8"))
+                    dev_id = payload.get("deviceId")
+                    if dev_id and dev_id != self.device_id:
+                        device_info = {
+                            "deviceId": dev_id,
+                            "deviceName": payload.get("deviceName", "Remote Device"),
+                            "ip": addr[0],
+                            "port": payload.get("port", DEFAULT_PORT),
+                            "lastSeen": time.time()
+                        }
+                        self.discovered_devices[dev_id] = device_info
+                        if self.on_device_discovered:
+                            try:
+                                self.on_device_discovered(device_info)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[DexoLink Windows] UDP Listener error (non-fatal): {e}")
+
 
 if __name__ == "__main__":
     engine = DexoLinkWindowsEngine()
@@ -495,3 +660,4 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         engine.stop()
+
