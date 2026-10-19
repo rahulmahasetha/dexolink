@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
@@ -20,26 +22,36 @@ import com.macdroid.ui.MainActivity
 
 /**
  * Android Quick Settings Tile for DexoLink.
- * Operates like native Wi-Fi / Bluetooth toggles:
- * - Single tap to toggle DexoLink On / Off.
- * - If already paired, turning On immediately searches & reconnects without prompting for pairing.
- * - If not yet paired, tapping opens DexoLink to perform one-time pairing.
- * - Icon matches the antenna broadcast symbol from the macOS menu bar / DMG app.
+ * Provides instant, zero-lag On/Off toggling synchronized with MacDroidService.
  */
 class DexoLinkTileService : TileService(), ConnectionEventListener {
 
     companion object {
         private const val TAG = "DexoLinkTileService"
 
+        @Volatile
+        private var activeInstance: DexoLinkTileService? = null
+        private val mainHandler = Handler(Looper.getMainLooper())
+
         /**
-         * Requests the Android System UI to refresh the DexoLink Quick Settings Tile.
+         * Instantly refreshes any actively listening Quick Settings tile in the notification shade.
+         */
+        fun onServiceStateChanged() {
+            val service = activeInstance ?: return
+            mainHandler.post {
+                service.updateTileState()
+            }
+        }
+
+        /**
+         * Requests the system to schedule a tile update when not actively listening.
          */
         fun requestUpdate(context: Context) {
             try {
                 val component = ComponentName(context, DexoLinkTileService::class.java)
                 requestListeningState(context, component)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to requestListeningState: ${e.message}")
+                Log.w(TAG, "Failed requestListeningState: ${e.message}")
             }
         }
     }
@@ -49,6 +61,7 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
 
     override fun onStartListening() {
         super.onStartListening()
+        activeInstance = this
         try {
             connectionManager.addListener(this)
         } catch (e: Exception) {
@@ -58,6 +71,9 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
     }
 
     override fun onStopListening() {
+        if (activeInstance === this) {
+            activeInstance = null
+        }
         try {
             connectionManager.removeListener(this)
         } catch (e: Exception) {
@@ -71,22 +87,35 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
         val trustStore = TrustStore.getInstance(this)
         val paired = trustStore.getPairedDevice()
 
-        // If no device has been paired yet, open the app directly to set up
         if (paired == null) {
             openMainActivity()
             return
         }
 
-        // Toggle service ON / OFF like native Bluetooth & Wi-Fi
-        if (MacDroidService.isRunning()) {
-            Log.d(TAG, "Quick Settings: Toggling DexoLink OFF")
+        val tile = qsTile ?: return
+        val currentlyRunning = MacDroidService.isRunning()
+
+        if (currentlyRunning) {
+            // Turning OFF: Synchronously update tile visual state to INACTIVE immediately
+            tile.state = Tile.STATE_INACTIVE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                tile.subtitle = "Off (${paired.deviceName})"
+            }
+            tile.icon = Icon.createWithResource(this, R.drawable.ic_qs_dexolink)
+            tile.updateTile()
+
             MacDroidService.stop(this)
         } else {
-            Log.d(TAG, "Quick Settings: Toggling DexoLink ON (auto-reconnecting to ${paired.deviceName})")
+            // Turning ON: Synchronously update tile visual state to ACTIVE immediately
+            tile.state = Tile.STATE_ACTIVE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                tile.subtitle = "Searching ${paired.deviceName}..."
+            }
+            tile.icon = Icon.createWithResource(this, R.drawable.ic_qs_dexolink)
+            tile.updateTile()
+
             MacDroidService.start(this)
         }
-
-        updateTileState()
     }
 
     private fun openMainActivity() {
@@ -108,7 +137,7 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
         }
     }
 
-    private fun updateTileState() {
+    fun updateTileState() {
         val tile = qsTile ?: return
         val isServiceRunning = MacDroidService.isRunning()
         val trustStore = TrustStore.getInstance(this)
@@ -124,30 +153,13 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
                 tile.subtitle = if (paired != null) "Off (${paired.deviceName})" else "Tap to Set Up"
             }
         } else {
-            when (state) {
-                is ConnectionState.Authenticated -> {
-                    tile.state = Tile.STATE_ACTIVE
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        tile.subtitle = "Connected: ${state.peerName}"
-                    }
-                }
-                is ConnectionState.Connecting -> {
-                    tile.state = Tile.STATE_ACTIVE
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        tile.subtitle = "Connecting..."
-                    }
-                }
-                is ConnectionState.Connected -> {
-                    tile.state = Tile.STATE_ACTIVE
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        tile.subtitle = "Connected: ${state.peerName}"
-                    }
-                }
-                else -> {
-                    tile.state = Tile.STATE_ACTIVE
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        tile.subtitle = if (paired != null) "Searching ${paired.deviceName}..." else "Active"
-                    }
+            tile.state = Tile.STATE_ACTIVE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                tile.subtitle = when (state) {
+                    is ConnectionState.Authenticated -> "Connected: ${state.peerName}"
+                    is ConnectionState.Connecting -> "Connecting..."
+                    is ConnectionState.Connected -> "Connected: ${state.peerName}"
+                    else -> if (paired != null) "Searching ${paired.deviceName}..." else "Active"
                 }
             }
         }
