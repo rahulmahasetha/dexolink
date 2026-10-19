@@ -27,7 +27,7 @@
 
 The following diagram and step-by-step phases illustrate the end-to-end operation of DexoLink between Android and macOS:
 
-> 🎮 **Interactive Architecture & Protocol Engine:** Open [`demo/dexolink-architecture.html`](demo/dexolink-architecture.html) in your browser for an animated, step-by-step interactive diagram with real-time packet animation, play/pause controls, live UI simulators, wire frame inspector, and sequence flows.
+> 🎮 **Interactive Protocol Demo:** Open [`demo/dexolink-demo.html`](demo/dexolink-demo.html) in your browser for a live UI simulator and animated end-to-end flow demo.
 
 ```mermaid
 sequenceDiagram
