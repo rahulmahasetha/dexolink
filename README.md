@@ -1,6 +1,6 @@
 # DexoLink 🚀
 
-[![Version](https://img.shields.io/badge/Release-v2.0.2-blue.svg)](https://github.com/rahulmahasetha/dexolink/releases)
+[![Version](https://img.shields.io/badge/Release-v3.0.0-blue.svg)](https://github.com/rahulmahasetha/dexolink/releases)
 [![CI/CD Pipeline](https://github.com/rahulmahasetha/dexolink/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulmahasetha/dexolink/actions/workflows/ci.yml)
 [![Platform - macOS](https://img.shields.io/badge/Platform-macOS%2013%2B-black?logo=apple)](https://github.com/rahulmahasetha/dexolink)
 [![Platform - Android](https://img.shields.io/badge/Platform-Android%208.0%2B-green?logo=android)](https://github.com/rahulmahasetha/dexolink)
@@ -10,16 +10,16 @@
 
 ---
 
-## 📦 Public App Downloads (v2.0.2)
+## 📦 Public App Downloads (v3.0.0)
 
 > **Note:** Even though the project source code repository is kept private on GitHub, the compiled application packages are **publicly distributed** for anyone to install and run without building from source or logging in.
 
 | Platform | Download Asset | Supported OS | Description |
 |:---|:---|:---|:---|
 | **macOS** | [**DexoLink.dmg**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink.dmg) | macOS 13.0+ (Ventura, Sonoma, Sequoia) | Drag & drop menu bar application (`DexoLink.app`) |
-| **macOS (v2.0.2)** | [**DexoLink-v2.0.2.dmg**](https://github.com/rahulmahasetha/dexolink/releases/download/v2.0.2/DexoLink-v2.0.2.dmg) | macOS 13.0+ | Exact versioned DMG disk image |
+| **macOS (v3.0.0)** | [**DexoLink-v3.0.0.dmg**](https://github.com/rahulmahasetha/dexolink/releases/download/v3.0.0/DexoLink-v3.0.0.dmg) | macOS 13.0+ | Exact versioned DMG disk image |
 | **Android** | [**DexoLink-Android.apk**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink-Android.apk) | Android 8.0+ (Oreo through Android 15) | Standalone APK package |
-| **Android (v2.0.2)** | [**DexoLink-v2.0.2.apk**](https://github.com/rahulmahasetha/dexolink/releases/download/v2.0.2/DexoLink-v2.0.2.apk) | Android 8.0+ | Exact versioned APK package |
+| **Android (v3.0.0)** | [**DexoLink-v3.0.0.apk**](https://github.com/rahulmahasetha/dexolink/releases/download/v3.0.0/DexoLink-v3.0.0.apk) | Android 8.0+ | Exact versioned APK package |
 
 ---
 
@@ -168,7 +168,7 @@ dexolink/
 │   │   │   │   └── ui/          # Jetpack Compose UI & System ShareActivity
 │   │   │   ├── res/             # Vector icons & branding resources
 │   │   │   └── AndroidManifest.xml
-│   │   └── build.gradle.kts     # Android Gradle build configuration (v2.0.2)
+│   │   └── build.gradle.kts     # Android Gradle build configuration (v3.0.0)
 │   ├── gradlew
 │   └── settings.gradle.kts
 ├── macos/
@@ -180,7 +180,7 @@ dexolink/
 │   │   └── MacDroidApp/         # App entrypoint, ShareWindowView & State coordination
 │   ├── Tests/                   # Unit & protocol codec tests
 │   ├── scripts/
-│   │   └── package_dmg.sh       # Automated DMG packaging script (v2.0.2)
+│   │   └── package_dmg.sh       # Automated DMG packaging script (v3.0.0)
 │   └── Package.swift
 ├── docs/
 │   └── PROTOCOL.md              # Binary framing & message specs

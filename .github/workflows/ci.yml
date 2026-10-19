@@ -15,10 +15,10 @@ on:
         type: boolean
         default: true
       tag_name:
-        description: 'Release Tag Name (e.g. v2.0.2)'
+        description: 'Release Tag Name (e.g. v3.0.0)'
         required: false
         type: string
-        default: 'v2.0.2'
+        default: 'v3.0.0'
 
 permissions:
   contents: write
@@ -48,7 +48,7 @@ jobs:
         run: |
           mkdir -p macos_artifacts
           cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink.dmg
-          cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink-v2.0.2.dmg
+          cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink-v3.0.0.dmg
           ls -lh macos_artifacts/
 
       - name: Upload macOS DMG Artifact
@@ -81,17 +81,18 @@ jobs:
           cd android
           ./gradlew test
 
-      - name: Build Android Debug APK
+      - name: Build Android APK
         run: |
           cd android
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease assembleDebug
 
       - name: Stage Android Release Artifacts
         run: |
           mkdir -p android_artifacts
-          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v2.0.2.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-Android.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/app-debug.apk
+          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-v3.0.0.apk || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v3.0.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-Android.apk || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-Android.apk
+          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/app-release.apk 2>/dev/null || true
+          cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/app-debug.apk 2>/dev/null || true
           ls -lh android_artifacts/
 
       - name: Upload Android APK Artifact
@@ -128,9 +129,9 @@ jobs:
       - name: Prepare Release Assets
         run: |
           mkdir -p release_assets
-          cp artifacts/macos/DexoLink-v2.0.2.dmg release_assets/DexoLink-v2.0.2.dmg 2>/dev/null || cp artifacts/macos/DexoLink.dmg release_assets/DexoLink-v2.0.2.dmg
+          cp artifacts/macos/DexoLink-v3.0.0.dmg release_assets/DexoLink-v3.0.0.dmg 2>/dev/null || cp artifacts/macos/DexoLink.dmg release_assets/DexoLink-v3.0.0.dmg 2>/dev/null || true
           cp artifacts/macos/DexoLink.dmg release_assets/DexoLink.dmg 2>/dev/null || true
-          cp artifacts/android/DexoLink-v2.0.2.apk release_assets/DexoLink-v2.0.2.apk 2>/dev/null || cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-v2.0.2.apk
+          cp artifacts/android/DexoLink-v3.0.0.apk release_assets/DexoLink-v3.0.0.apk 2>/dev/null || cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-v3.0.0.apk 2>/dev/null || true
           cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-Android.apk 2>/dev/null || true
           ls -lh release_assets/
 
@@ -144,8 +145,8 @@ jobs:
             echo "TAG=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
             echo "TITLE=DexoLink ${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
           else
-            echo "TAG=v2.0.2" >> $GITHUB_OUTPUT
-            echo "TITLE=DexoLink v2.0.2" >> $GITHUB_OUTPUT
+            echo "TAG=v3.0.0" >> $GITHUB_OUTPUT
+            echo "TITLE=DexoLink v3.0.0" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release
