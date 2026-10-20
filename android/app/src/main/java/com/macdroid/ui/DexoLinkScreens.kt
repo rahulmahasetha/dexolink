@@ -27,6 +27,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -3262,6 +3263,12 @@ fun HomeScreenContent(
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamStopMessage(streamId, "User stopped viewing remote screen")
                 )
+            },
+            onSendInput = { eventType, x, y, button, key ->
+                val streamId = screenStreamManager.getActiveStreamId()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    DesktopInputEventMessage(streamId, eventType, x, y, button, key)
+                )
             }
         )
     }
@@ -3601,9 +3608,14 @@ fun ScreenStreamViewerDialog(
     bitmap: Bitmap?,
     fps: Int,
     deviceName: String,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onSendInput: (eventType: String, x: Double, y: Double, button: Int, key: String?) -> Unit
 ) {
     var rotationAngle by remember { mutableStateOf(0f) }
+    var showWriteDialog by remember { mutableStateOf(false) }
+    var showTrackpadOverlay by remember { mutableStateOf(false) }
+    var posX by remember { mutableStateOf(0.5) }
+    var posY by remember { mutableStateOf(0.5) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -3617,14 +3629,25 @@ fun ScreenStreamViewerDialog(
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
-            // Live Display Stream Feed
+            // Live Display Stream Feed with Interactive Screen Control
             if (bitmap != null) {
                 androidx.compose.foundation.Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "$deviceName Screen Stream",
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { rotationZ = rotationAngle },
+                        .graphicsLayer { rotationZ = rotationAngle }
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { offset ->
+                                    val normX = (offset.x / size.width.toFloat()).toDouble().coerceIn(0.0, 1.0)
+                                    val normY = (offset.y / size.height.toFloat()).toDouble().coerceIn(0.0, 1.0)
+                                    posX = normX
+                                    posY = normY
+                                    onSendInput("click", normX, normY, 0, null)
+                                }
+                            )
+                        },
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
             } else {
@@ -3714,6 +3737,27 @@ fun ScreenStreamViewerDialog(
                             )
                         }
 
+                        // Write / Keyboard Option
+                        Button(
+                            onClick = { showWriteDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text("Write", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
+                        }
+
+                        // Trackpad Control Option
+                        OutlinedButton(
+                            onClick = { showTrackpadOverlay = !showTrackpadOverlay },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF10B981)),
+                            border = BorderStroke(1.dp, Color(0xFF059669)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(if (showTrackpadOverlay) "Hide Pad" else "Trackpad", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF10B981))
+                        }
+
                         // Route Orientation Cycle Button
                         OutlinedButton(
                             onClick = {
@@ -3739,7 +3783,7 @@ fun ScreenStreamViewerDialog(
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                         ) {
-                            Text("Stop Mirroring", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                            Text("Stop", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
                         }
 
                         IconButton(
@@ -3756,11 +3800,184 @@ fun ScreenStreamViewerDialog(
                 }
             }
 
+            // Write / Type Text to Remote Screen Dialog
+            if (showWriteDialog) {
+                var textInput by remember { mutableStateOf("") }
+                AlertDialog(
+                    onDismissRequest = { showWriteDialog = false },
+                    containerColor = Color.White,
+                    shape = RoundedCornerShape(20.dp),
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFEEF2FF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(imageVector = DexoIcons.Sparkles, contentDescription = null, tint = Color(0xFF4F46E5), modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("Write to Remote Screen", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF0F172A))
+                                Text("Host: $deviceName", fontSize = 11.sp, color = Color(0xFF64748B))
+                            }
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                "Type text or commands to send directly to your remote computer or device.",
+                                fontSize = 12.sp,
+                                color = Color(0xFF475569)
+                            )
+
+                            OutlinedTextField(
+                                value = textInput,
+                                onValueChange = { textInput = it },
+                                label = { Text("Text or command to write...") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = false,
+                                maxLines = 4,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+
+                            // Quick Key Actions
+                            Text("Quick Keys:", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF334155))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = { onSendInput("key_press", 0.0, 0.0, 0, "return") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Enter", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { onSendInput("key_press", 0.0, 0.0, 0, "backspace") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF64748B)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Backspace", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { onSendInput("key_press", 0.0, 0.0, 0, "space") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF64748B)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Space", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { onSendInput("key_press", 0.0, 0.0, 0, "tab") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF64748B)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Tab", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (textInput.isNotEmpty()) {
+                                    onSendInput("write", 0.0, 0.0, 0, textInput)
+                                    textInput = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Send Text", fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showWriteDialog = false }) {
+                            Text("Done", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                )
+            }
+
+            // Virtual Trackpad Floating Overlay
+            if (showTrackpadOverlay) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 72.dp, start = 16.dp, end = 16.dp)
+                        .fillMaxWidth(0.9f)
+                        .height(170.dp),
+                    color = Color(0xE60F172A),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                    tonalElevation = 8.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Virtual Trackpad (Drag to Move)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFCBD5E1))
+                            IconButton(onClick = { showTrackpadOverlay = false }, modifier = Modifier.size(24.dp)) {
+                                Icon(imageVector = DexoIcons.Close, contentDescription = "Close Trackpad", tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(80.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E293B))
+                                .pointerInput(Unit) {
+                                    detectDragGestures { change, dragAmount ->
+                                        change.consume()
+                                        posX = (posX + (dragAmount.x / 400.0)).coerceIn(0.0, 1.0)
+                                        posY = (posY + (dragAmount.y / 300.0)).coerceIn(0.0, 1.0)
+                                        onSendInput("mouse_move", posX, posY, 0, null)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Slide finger to navigate cursor", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(
+                                onClick = { onSendInput("click", posX, posY, 0, null) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(vertical = 4.dp)
+                            ) {
+                                Text("Left Click", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = { onSendInput("click", posX, posY, 1, null) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF475569)),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(vertical = 4.dp)
+                            ) {
+                                Text("Right Click", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
             // Bottom Directional Route Dock (Up, Right, Down, Left)
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 28.dp),
+                    .padding(bottom = 24.dp),
                 color = Color(0xCC0F172A),
                 shape = RoundedCornerShape(24.dp),
                 tonalElevation = 6.dp

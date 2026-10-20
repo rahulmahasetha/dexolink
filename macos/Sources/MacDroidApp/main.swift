@@ -533,6 +533,21 @@ class AppState: ObservableObject {
                 try? self.connectionManager.send(message: .streamStop(streamId: streamId, reason: "User closed screen mirror viewer on Mac"))
             }
         }
+        ScreenStreamWindowController.shared.viewModel.onSendInput = { [weak self] eventType, x, y, button, key in
+            guard let self = self else { return }
+            let streamId = ScreenStreamWindowController.shared.viewModel.streamId
+            if !streamId.isEmpty {
+                let msg = ProtocolMessage.desktopInputEvent(
+                    streamId: streamId,
+                    eventType: eventType,
+                    x: x,
+                    y: y,
+                    button: button,
+                    key: key
+                )
+                try? self.connectionManager.send(message: msg)
+            }
+        }
 
         if isEnabled {
             // Start advertiser listener

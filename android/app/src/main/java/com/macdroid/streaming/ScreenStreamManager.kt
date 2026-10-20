@@ -77,6 +77,8 @@ class ScreenStreamManager private constructor(private val context: Context) {
     private val sequenceNumber = AtomicLong(0)
     private var activeStreamId: String = ""
 
+    fun getActiveStreamId(): String = if (activeStreamId.isNotEmpty()) activeStreamId else "screen_session"
+
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming: StateFlow<Boolean> = _isStreaming.asStateFlow()
 

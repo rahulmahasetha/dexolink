@@ -856,8 +856,32 @@ class DexoLinkWindowsEngine:
                     user32.SetCursorPos(pixel_x, pixel_y)
                     event_flag = 0x0004 if button == 0 else 0x0010
                     user32.mouse_event(event_flag, 0, 0, 0, 0)
+                elif event_type == "click":
+                    user32.SetCursorPos(pixel_x, pixel_y)
+                    down_flag = 0x0002 if button == 0 else 0x0008
+                    up_flag = 0x0004 if button == 0 else 0x0010
+                    user32.mouse_event(down_flag, 0, 0, 0, 0)
+                    user32.mouse_event(up_flag, 0, 0, 0, 0)
+                elif event_type in ("text_input", "write"):
+                    if key:
+                        for char in key:
+                            user32.keybd_event(0, ord(char), 0x0004, 0)
+                            user32.keybd_event(0, ord(char), 0x0004 | 0x0002, 0)
+                elif event_type == "key_press":
+                    if key:
+                        k_lower = key.lower()
+                        vk_map = {
+                            "return": 0x0D, "enter": 0x0D,
+                            "backspace": 0x08, "delete": 0x2E,
+                            "tab": 0x09, "space": 0x20, "escape": 0x1B,
+                            "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27
+                        }
+                        vk = vk_map.get(k_lower, 0)
+                        if vk:
+                            user32.keybd_event(vk, 0, 0, 0)
+                            user32.keybd_event(vk, 0, 2, 0)
             except Exception as e:
-                print(f"[DexoLink Windows Desktop Mode] Error simulating input: {e}")
+                print(f"[DexoLink Windows Remote Control] Error simulating input: {e}")
 
     def push_clipboard(self, text: str):
         """Pushes clipboard text to all active connected devices."""

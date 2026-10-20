@@ -14,6 +14,7 @@ public class ScreenStreamViewModel: ObservableObject {
     private var lastFpsTime: Date = Date()
 
     public var onStopRequested: (() -> Void)?
+    public var onSendInput: ((String, Double, Double, Int, String?) -> Void)?
 
     public func routeNextOrientation() {
         rotationAngle = (rotationAngle + 90.0).truncatingRemainder(dividingBy: 360.0)
@@ -55,6 +56,8 @@ public class ScreenStreamViewModel: ObservableObject {
 
 public struct ScreenStreamView: View {
     @ObservedObject var viewModel: ScreenStreamViewModel
+    @State private var showWritePopover: Bool = false
+    @State private var writeText: String = ""
 
     public var body: some View {
         ZStack {
@@ -62,12 +65,30 @@ public struct ScreenStreamView: View {
                 .edgesIgnoringSafeArea(.all)
 
             if let image = viewModel.currentImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .rotationEffect(.degrees(viewModel.rotationAngle))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
+                GeometryReader { geo in
+                    ZStack {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .rotationEffect(.degrees(viewModel.rotationAngle))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color.black)
+
+                        // Interactive Click Gesture Layer
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onEnded { value in
+                                        let w = max(geo.size.width, 1.0)
+                                        let h = max(geo.size.height, 1.0)
+                                        let normX = min(max(Double(value.location.x / w), 0.0), 1.0)
+                                        let normY = min(max(Double(value.location.y / h), 0.0), 1.0)
+                                        viewModel.onSendInput?("click", normX, normY, 0, nil)
+                                    }
+                            )
+                    }
+                }
             } else {
                 VStack(spacing: 14) {
                     ProgressView()
@@ -126,6 +147,52 @@ public struct ScreenStreamView: View {
                     .padding(.vertical, 4)
                     .background(Color.black.opacity(0.7))
                     .cornerRadius(6)
+
+                    // Write / Type to Remote Screen
+                    Button(action: {
+                        showWritePopover.toggle()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "keyboard")
+                            Text("Write")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.indigo.opacity(0.85))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showWritePopover) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Write to Remote Screen")
+                                .font(.headline)
+                            Text("Type text to send directly to \(viewModel.deviceName).")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            TextField("Enter text or command...", text: $writeText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 260)
+                            HStack {
+                                Button("Enter") {
+                                    viewModel.onSendInput?("key_press", 0.0, 0.0, 0, "return")
+                                }
+                                Button("Backspace") {
+                                    viewModel.onSendInput?("key_press", 0.0, 0.0, 0, "backspace")
+                                }
+                                Spacer()
+                                Button("Send") {
+                                    if !writeText.isEmpty {
+                                        viewModel.onSendInput?("write", 0.0, 0.0, 0, writeText)
+                                        writeText = ""
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        }
+                        .padding(14)
+                    }
 
                     // Route Orientation Button
                     Button(action: {

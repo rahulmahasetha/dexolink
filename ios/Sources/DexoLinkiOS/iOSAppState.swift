@@ -412,6 +412,28 @@ public class iOSAppState: ObservableObject {
         }
     }
 
+    public func sendDesktopInput(eventType: String, x: Double = 0.0, y: Double = 0.0, button: Int = 0, key: String? = nil) {
+        var payload: [String: Any] = [
+            "type": "DESKTOP_INPUT_EVENT",
+            "streamId": "screen_session",
+            "eventType": eventType,
+            "x": x,
+            "y": y,
+            "button": button
+        ]
+        if let k = key {
+            payload["key"] = k
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        var lengthPrefix = UInt32(data.count).bigEndian
+        var packet = Data(bytes: &lengthPrefix, count: 4)
+        packet.append(data)
+        for (_, conn) in activeConnections {
+            conn.send(content: packet, completion: .idempotent)
+        }
+        print("[DexoLink iOS] Sent desktop input event: \(eventType)")
+    }
+
     public func openHandoffInSafari(_ item: ContinuityHandoffItem) {
         if let url = URL(string: item.urlString) {
             UIApplication.shared.open(url)

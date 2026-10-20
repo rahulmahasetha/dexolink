@@ -6,6 +6,8 @@ struct DevicesView: View {
     @State private var previewRotation: Double = 0.0
     @State private var showingScreenPreview: Bool = false
     @State private var screenPreviewRotation: Double = 0.0
+    @State private var showingWriteSheet: Bool = false
+    @State private var writeText: String = ""
     @State private var showingConnectOnlineSheet: Bool = false
     @State private var remoteHostInput: String = ""
     @State private var remotePortInput: String = "52840"
@@ -348,6 +350,24 @@ struct DevicesView: View {
                                 Text("Real-time WebRTC display mirroring active")
                                     .font(.caption)
                                     .foregroundColor(.gray)
+                                Text("Tap anywhere on the mirror to click and control")
+                                    .font(.caption2)
+                                    .foregroundColor(.cyan.opacity(0.8))
+                            }
+
+                            GeometryReader { geo in
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .gesture(
+                                        SpatialTapGesture()
+                                            .onEnded { event in
+                                                let w = max(geo.size.width, 1.0)
+                                                let h = max(geo.size.height, 1.0)
+                                                let normX = max(0.0, min(1.0, event.location.x / w))
+                                                let normY = max(0.0, min(1.0, event.location.y / h))
+                                                appState.sendDesktopInput(eventType: "click", x: normX, y: normY, button: 0)
+                                            }
+                                    )
                             }
                         }
                         .rotationEffect(.degrees(screenPreviewRotation))
@@ -371,6 +391,21 @@ struct DevicesView: View {
                             .cornerRadius(6)
 
                             Spacer()
+
+                            Button(action: {
+                                showingWriteSheet = true
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "keyboard")
+                                    Text("Write")
+                                }
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.green.opacity(0.85))
+                                .cornerRadius(6)
+                            }
 
                             Button(action: {
                                 showingScreenPreview = false
@@ -405,6 +440,94 @@ struct DevicesView: View {
                         .background(Color.black.opacity(0.5))
                         .cornerRadius(16)
                         .padding(.bottom, 24)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingWriteSheet) {
+                NavigationStack {
+                    VStack(spacing: 16) {
+                        Text("Send keystrokes, text, and commands directly to the remote screen host (Mac / Windows).")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+
+                        TextField("Type text to send to remote host...", text: $writeText)
+                            .textFieldStyle(.roundedBorder)
+                            .padding(.horizontal)
+
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                if !writeText.isEmpty {
+                                    appState.sendDesktopInput(eventType: "write", key: writeText)
+                                    writeText = ""
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "paperplane.fill")
+                                    Text("Send Text")
+                                }
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(writeText.isEmpty ? Color.gray : Color.blue)
+                                .cornerRadius(8)
+                            }
+                            .disabled(writeText.isEmpty)
+                        }
+
+                        Divider()
+                            .padding(.horizontal)
+
+                        Text("Quick Control Keys")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+
+                        HStack(spacing: 10) {
+                            Button("Enter") {
+                                appState.sendDesktopInput(eventType: "key_press", key: "enter")
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Backspace") {
+                                appState.sendDesktopInput(eventType: "key_press", key: "backspace")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Space") {
+                                appState.sendDesktopInput(eventType: "key_press", key: "space")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Tab") {
+                                appState.sendDesktopInput(eventType: "key_press", key: "tab")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        HStack(spacing: 10) {
+                            Button("Left Click") {
+                                appState.sendDesktopInput(eventType: "click", x: 0.5, y: 0.5, button: 0)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Right Click") {
+                                appState.sendDesktopInput(eventType: "click", x: 0.5, y: 0.5, button: 1)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.top, 20)
+                    .navigationTitle("Remote Write & Control")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") {
+                                showingWriteSheet = false
+                            }
+                        }
                     }
                 }
             }

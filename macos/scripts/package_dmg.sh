@@ -157,6 +157,9 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
 </plist>
 EOF
 
+echo "Signing DexoLink.app bundle with identifier com.dexolink.macos..."
+codesign --force --deep --sign - --identifier "com.dexolink.macos" "$APP_BUNDLE"
+
 echo "Staging DMG creation..."
 mkdir -p "$STAGE_DIR"
 cp -R "$APP_BUNDLE" "$STAGE_DIR/"

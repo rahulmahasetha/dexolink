@@ -51,6 +51,7 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     // Screen capture cache
     private var latestScreenFrame: CapturedFrameData?
+    private var screenCaptureFailedCount: Int = 0
 
     // Camera capture session components
     private var captureSession: AVCaptureSession?
@@ -283,12 +284,12 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     }
 
     public func handleDesktopInput(streamId: String, eventType: String, x: Double, y: Double, button: Int, key: String?) {
-        guard isDesktopModeEnabled else { return }
+        guard isDesktopModeEnabled || isScreenSharingEnabled else { return }
 
         // Security check: Check Accessibility permissions for input simulation and prompt if needed
         let isTrusted = checkAccessibilityPermission()
         guard isTrusted else {
-            print("[DexoLink Desktop Mode] Remote input ignored: macOS Accessibility permissions not granted.")
+            print("[DexoLink Remote Control] Remote input ignored: macOS Accessibility permissions not granted.")
             return
         }
 
@@ -301,16 +302,67 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         case "mouse_move":
             let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)
             event?.post(tap: .cghidEventTap)
+
         case "mouse_down":
             let mouseType: CGEventType = button == 1 ? .rightMouseDown : .leftMouseDown
             let mouseButton: CGMouseButton = button == 1 ? .right : .left
             let event = CGEvent(mouseEventSource: nil, mouseType: mouseType, mouseCursorPosition: point, mouseButton: mouseButton)
             event?.post(tap: .cghidEventTap)
+
         case "mouse_up":
             let mouseType: CGEventType = button == 1 ? .rightMouseUp : .leftMouseUp
             let mouseButton: CGMouseButton = button == 1 ? .right : .left
             let event = CGEvent(mouseEventSource: nil, mouseType: mouseType, mouseCursorPosition: point, mouseButton: mouseButton)
             event?.post(tap: .cghidEventTap)
+
+        case "click":
+            let mouseButton: CGMouseButton = button == 1 ? .right : .left
+            let down = CGEvent(mouseEventSource: nil, mouseType: button == 1 ? .rightMouseDown : .leftMouseDown, mouseCursorPosition: point, mouseButton: mouseButton)
+            down?.post(tap: .cghidEventTap)
+            let up = CGEvent(mouseEventSource: nil, mouseType: button == 1 ? .rightMouseUp : .leftMouseUp, mouseCursorPosition: point, mouseButton: mouseButton)
+            up?.post(tap: .cghidEventTap)
+
+        case "scroll":
+            let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(button == 0 ? 20 : -20), wheel2: 0, wheel3: 0)
+            event?.post(tap: .cghidEventTap)
+
+        case "text_input", "write":
+            if let text = key, !text.isEmpty {
+                for char in text.utf16 {
+                    var utf16Char = char
+                    let downEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)
+                    downEvent?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &utf16Char)
+                    downEvent?.post(tap: .cghidEventTap)
+
+                    let upEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
+                    upEvent?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &utf16Char)
+                    upEvent?.post(tap: .cghidEventTap)
+                }
+            }
+
+        case "key_press":
+            if let keyName = key?.lowercased() {
+                var vk: CGKeyCode = 0
+                switch keyName {
+                case "return", "enter": vk = 36
+                case "backspace", "delete": vk = 51
+                case "tab": vk = 48
+                case "space": vk = 49
+                case "escape", "esc": vk = 53
+                case "up", "arrow_up": vk = 126
+                case "down", "arrow_down": vk = 125
+                case "left", "arrow_left": vk = 123
+                case "right", "arrow_right": vk = 124
+                default: vk = 0
+                }
+                if vk > 0 {
+                    let down = CGEvent(keyboardEventSource: nil, virtualKey: vk, keyDown: true)
+                    down?.post(tap: .cghidEventTap)
+                    let up = CGEvent(keyboardEventSource: nil, virtualKey: vk, keyDown: false)
+                    up?.post(tap: .cghidEventTap)
+                }
+            }
+
         default:
             break
         }
@@ -359,12 +411,11 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             if #available(macOS 14.0, *) {
                 Task { [weak self] in
                     while let self = self, self.activeStreams[streamId] != nil {
-                        if self.hasScreenCaptureAccess() {
-                            if let scFrame = await self.captureScreenWithScreenCaptureKit() {
-                                self.latestScreenFrame = scFrame
-                            }
+                        if let scFrame = await self.captureScreenWithScreenCaptureKit() {
+                            self.latestScreenFrame = scFrame
+                            self.screenCaptureFailedCount = 0
                         } else {
-                            self.latestScreenFrame = nil
+                            self.screenCaptureFailedCount += 1
                         }
                         try? await Task.sleep(nanoseconds: 80_000_000) // ~12 FPS
                     }
@@ -402,7 +453,12 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     public func captureCurrentFrame(for type: StreamType) -> CapturedFrameData {
         switch type {
         case .screen, .desktopMode:
-            if !hasScreenCaptureAccess() {
+            if let cached = latestScreenFrame, !cached.base64.isEmpty {
+                return cached
+            }
+
+            // Only show permission banner if capture has consistently failed and preflight confirms lack of permission
+            if screenCaptureFailedCount > 15 && !hasScreenCaptureAccess() {
                 _ = checkScreenCapturePermission()
                 return generatePermissionBanner(
                     title: "Screen Recording Permission Required",
@@ -411,44 +467,7 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
                 )
             }
 
-            if let cached = latestScreenFrame, !cached.base64.isEmpty {
-                return cached
-            }
-
-            let displayId = CGMainDisplayID()
-            if let imageRef = CGDisplayCreateImage(displayId) {
-                let origW = imageRef.width
-                let origH = imageRef.height
-                let targetSize = ScreenDisplayHelper.calculateProportionalTargetSize(sourceWidth: origW, sourceHeight: origH, maxEdge: 1280)
-
-                let finalImage: CGImage
-                if origW > targetSize.width || origH > targetSize.height {
-                    if let colorSpace = imageRef.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
-                       let context = CGContext(
-                            data: nil,
-                            width: targetSize.width,
-                            height: targetSize.height,
-                            bitsPerComponent: 8,
-                            bytesPerRow: targetSize.width * 4,
-                            space: colorSpace,
-                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                       ) {
-                        context.interpolationQuality = .high
-                        context.draw(imageRef, in: CGRect(x: 0, y: 0, width: targetSize.width, height: targetSize.height))
-                        finalImage = context.makeImage() ?? imageRef
-                    } else {
-                        finalImage = imageRef
-                    }
-                } else {
-                    finalImage = imageRef
-                }
-
-                let bitmapRep = NSBitmapImageRep(cgImage: finalImage)
-                if let jpegData = bitmapRep.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.6)]) {
-                    return CapturedFrameData(base64: jpegData.base64EncodedString(), width: targetSize.width, height: targetSize.height)
-                }
-            }
-            return generateFallbackBanner(title: "DexoLink Screen Sharing", subtitle: "Mirroring macOS Display")
+            return generateFallbackBanner(title: "DexoLink Screen Sharing", subtitle: "Connecting to macOS Display Stream...")
 
         case .camera:
             if let liveFrame = latestCameraFrameBase64, !liveFrame.isEmpty {
