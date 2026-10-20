@@ -114,11 +114,19 @@ public class iOSAppState: ObservableObject {
     @Published public var isCameraSharingEnabled: Bool {
         didSet { UserDefaults.standard.set(isCameraSharingEnabled, forKey: "dexolink_ios_camera_sharing") }
     }
+    @Published public var isFrontCamera: Bool {
+        didSet { UserDefaults.standard.set(isFrontCamera, forKey: "dexolink_ios_front_camera") }
+    }
     @Published public var isScreenSharingEnabled: Bool {
         didSet { UserDefaults.standard.set(isScreenSharingEnabled, forKey: "dexolink_ios_screen_sharing") }
     }
     @Published public var isDesktopModeEnabled: Bool {
         didSet { UserDefaults.standard.set(isDesktopModeEnabled, forKey: "dexolink_ios_desktop_mode") }
+    }
+
+    public func toggleCameraLens() {
+        self.isFrontCamera.toggle()
+        print("[DexoLink iOS] Switched camera lens to: \(isFrontCamera ? "Front" : "Back")")
     }
 
     public func setCameraSharingEnabled(_ enabled: Bool) {
@@ -162,6 +170,7 @@ public class iOSAppState: ObservableObject {
         self.autoClipboardSync = UserDefaults.standard.object(forKey: "dexolink_ios_auto_clip") as? Bool ?? true
         self.enhancedClipboard = UserDefaults.standard.bool(forKey: "dexolink_ios_enhanced_clip")
         self.isCameraSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_camera_sharing")
+        self.isFrontCamera = UserDefaults.standard.bool(forKey: "dexolink_ios_front_camera")
         self.isScreenSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_screen_sharing")
         self.isDesktopModeEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_desktop_mode")
         

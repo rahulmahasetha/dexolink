@@ -128,8 +128,20 @@ class CameraStreamManager private constructor(private val context: Context) {
         _remoteCameraFps.value = 0
     }
 
-    // Handle incoming stream request from Mac/Windows
+    // Active camera lens facing (back vs front)
+    private var currentLensFacing: Int = CameraCharacteristics.LENS_FACING_BACK
+    private val _isFrontCamera = MutableStateFlow(false)
+    val isFrontCamera: StateFlow<Boolean> = _isFrontCamera.asStateFlow()
+
+    // Handle incoming stream request from Mac/Windows/iOS/Android
     fun handleIncomingStreamRequest(req: StreamRequestMessage) {
+        val action = req.options?.get("action")
+        if (action == "switch_camera") {
+            Log.d(TAG, "Received remote switch_camera request for stream ${req.streamId}")
+            switchCamera()
+            return
+        }
+
         val settings = DexoLinkSettings.getInstance(context)
         val isEnabled = settings.cameraSharing.value
 
@@ -145,8 +157,36 @@ class CameraStreamManager private constructor(private val context: Context) {
             return
         }
 
+        if (action == "request_stream") {
+            // Remote device wants Android phone to stream its camera
+            val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) {
+                val response = StreamResponseMessage(
+                    streamId = req.streamId,
+                    streamType = req.streamType,
+                    accepted = false,
+                    reason = "Camera permission not granted on Android phone"
+                )
+                MacDroidApplication.connectionManager.sendMessage(response)
+                Log.w(TAG, "Rejected StreamRequest ${req.streamId}: Camera permission missing")
+                return
+            }
+
+            val response = StreamResponseMessage(
+                streamId = req.streamId,
+                streamType = req.streamType,
+                accepted = true,
+                reason = null
+            )
+            MacDroidApplication.connectionManager.sendMessage(response)
+            Log.d(TAG, "Accepted request_stream ${req.streamId}, starting camera feed...")
+
+            startCameraStreaming(req.streamId)
+            return
+        }
+
         val direction = req.options?.get("direction") ?: "outgoing"
-        if (direction == "outgoing" || req.options?.get("sender") == "mac" || req.options?.get("sender") == "windows") {
+        if (direction == "outgoing" || req.options?.get("sender") in listOf("mac", "windows", "ios", "android")) {
             // Remote device wants to stream ITS camera TO Android
             val senderName = req.options?.get("senderName") ?: "Remote Device"
             startViewingRemoteCamera(req.streamId, senderName)
@@ -192,6 +232,40 @@ class CameraStreamManager private constructor(private val context: Context) {
         if (activeStreamId == stop.streamId || isStreamingActive.get() || _isViewingRemoteCamera.value) {
             stopCameraStreaming()
             stopViewingRemoteCamera()
+        }
+    }
+
+    fun switchCamera() {
+        val newFacing = if (currentLensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+            CameraCharacteristics.LENS_FACING_FRONT
+        } else {
+            CameraCharacteristics.LENS_FACING_BACK
+        }
+        setCameraFacing(newFacing)
+    }
+
+    fun setCameraFacing(facing: Int) {
+        if (currentLensFacing == facing) return
+        currentLensFacing = facing
+        _isFrontCamera.value = (facing == CameraCharacteristics.LENS_FACING_FRONT)
+        Log.d(TAG, "Switched camera lens to: ${if (_isFrontCamera.value) "FRONT" else "BACK"}")
+
+        if (isStreamingActive.get()) {
+            stopHardwareCameraCapture()
+            syntheticStreamJob?.cancel()
+            syntheticStreamJob = null
+
+            val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            if (hasPermission) {
+                try {
+                    startHardwareCameraCapture()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error restarting hardware camera capture after lens switch: ${e.message}")
+                    startSyntheticStreamLoop()
+                }
+            } else {
+                startSyntheticStreamLoop()
+            }
         }
     }
 
@@ -250,7 +324,7 @@ class CameraStreamManager private constructor(private val context: Context) {
         val cameraId = try {
             cameraManager.cameraIdList.firstOrNull { id ->
                 val chars = cameraManager.getCameraCharacteristics(id)
-                chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+                chars.get(CameraCharacteristics.LENS_FACING) == currentLensFacing
             } ?: cameraManager.cameraIdList.firstOrNull()
         } catch (e: Exception) {
             null
@@ -425,10 +499,11 @@ class CameraStreamManager private constructor(private val context: Context) {
                 }
                 canvas.drawText("Device: ${Build.MANUFACTURER} ${Build.MODEL}", 30f, 100f, paint)
 
-                // Timestamp & Seq
+                // Timestamp, Seq & Lens
                 val timeStr = timeFormat.format(Date())
                 val seq = sequenceNumber.get()
-                canvas.drawText("Time: $timeStr | Frame #$seq", 30f, 135f, paint)
+                val lensName = if (currentLensFacing == CameraCharacteristics.LENS_FACING_FRONT) "Front Lens" else "Rear Lens"
+                canvas.drawText("Time: $timeStr | Frame #$seq | $lensName", 30f, 135f, paint)
 
                 // Live status badge
                 paint.color = Color.rgb(34, 197, 94)

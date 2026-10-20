@@ -13,6 +13,15 @@ public class CameraStreamViewModel: ObservableObject {
     private var lastFpsTime: Date = Date()
 
     public var onStopRequested: (() -> Void)?
+    public var onFlipCameraRequested: (() -> Void)?
+
+    public var isMobilePeer: Bool {
+        let lower = deviceName.lowercased()
+        if lower.contains("mac") || lower.contains("windows") || lower.contains("pc") || lower.contains("laptop") || lower.contains("desktop") {
+            return false
+        }
+        return true
+    }
 
     public init(streamId: String = "", deviceName: String = "Android Device") {
         self.streamId = streamId
@@ -52,10 +61,10 @@ public struct CameraStreamView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                         .scaleEffect(1.2)
-                    Text("Connecting to Android camera feed...")
+                    Text("Connecting to camera feed...")
                         .font(.headline)
                         .foregroundColor(.secondary)
-                    Text("Make sure Camera Sharing is allowed and turned ON on your phone.")
+                    Text("Make sure Camera Sharing is allowed and turned ON on \(viewModel.deviceName).")
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.8))
                 }
@@ -101,6 +110,25 @@ public struct CameraStreamView: View {
                     .padding(.vertical, 4)
                     .background(Color.black.opacity(0.65))
                     .cornerRadius(6)
+
+                    // Flip camera button: only shown for mobile devices (phones/tablets with front and rear cameras)
+                    if viewModel.isMobilePeer {
+                        Button(action: {
+                            viewModel.onFlipCameraRequested?()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "camera.rotate")
+                                Text("Flip Camera")
+                            }
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.85))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                    }
 
                     Button(action: {
                         viewModel.onStopRequested?()

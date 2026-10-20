@@ -499,6 +499,10 @@ class DexoLinkWindowsEngine:
             return {"type": "FILE_ACK", "fileId": f_id, "verified": verified}, None
 
         elif msg_type == "STREAM_REQUEST":
+            options = msg.get("options") or {}
+            if options.get("action") == "switch_camera":
+                # Laptops / PCs have a single built-in webcam
+                return None, None
             stream_id = msg.get("streamId", str(uuid.uuid4()))
             stream_type = msg.get("streamType", "")
             

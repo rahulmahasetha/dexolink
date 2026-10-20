@@ -228,7 +228,7 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         guard let button = statusItem.button else { return }
 
         if popover.isShown {
-            popover.performClose(nil)
+            popover.close()
             stopDismissalMonitors()
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -239,6 +239,10 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
     }
 
     // MARK: - NSPopoverDelegate & Outside Click Dismissal
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        return true
+    }
+
     func popoverWillShow(_ notification: Notification) {
         startDismissalMonitors()
     }
@@ -251,20 +255,25 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         stopDismissalMonitors()
 
         // 1. Global monitor: Intercepts clicks on external apps, the desktop, or other menu bar items (Wi-Fi, Bluetooth)
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             guard let self = self, self.popover.isShown else { return }
             DispatchQueue.main.async {
-                self.popover.performClose(nil)
+                if self.popover.isShown {
+                    self.popover.close()
+                }
             }
         }
 
         // 2. Local monitor: Intercepts clicks within our own process (e.g. outside popover window but on other elements)
-        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             guard let self = self, self.popover.isShown else { return event }
 
-            // Allow interaction inside the popover window
-            if let popoverWindow = self.popover.contentViewController?.view.window, event.window == popoverWindow {
-                return event
+            // Allow interaction inside the popover window or any sheet window attached to it
+            let popoverWindow = self.popover.contentViewController?.view.window
+            if let pw = popoverWindow {
+                if event.window == pw || event.window?.sheetParent == pw {
+                    return event
+                }
             }
 
             // Allow toggle clicks directly on the status bar icon button
@@ -276,7 +285,9 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
             }
 
             DispatchQueue.main.async {
-                self.popover.performClose(nil)
+                if self.popover.isShown {
+                    self.popover.close()
+                }
             }
             return event
         }
@@ -500,6 +511,18 @@ class AppState: ObservableObject {
             if !streamId.isEmpty {
                 self.streamManager.stopStream(streamId: streamId)
                 try? self.connectionManager.send(message: .streamStop(streamId: streamId, reason: "User closed camera viewer on Mac"))
+            }
+        }
+        CameraStreamWindowController.shared.viewModel.onFlipCameraRequested = { [weak self] in
+            guard let self = self else { return }
+            let streamId = CameraStreamWindowController.shared.viewModel.streamId
+            if !streamId.isEmpty {
+                let msg = ProtocolMessage.streamRequest(
+                    streamId: streamId,
+                    streamType: "camera",
+                    options: ["action": "switch_camera", "lens": "toggle"]
+                )
+                try? self.connectionManager.send(message: msg)
             }
         }
         ScreenStreamWindowController.shared.onClose = { [weak self] in
@@ -826,7 +849,7 @@ class AppState: ObservableObject {
         let msg = ProtocolMessage.streamRequest(
             streamId: streamId,
             streamType: "camera",
-            options: ["direction": "outgoing", "sender": "mac", "senderName": myName]
+            options: ["direction": "outgoing", "sender": "mac", "senderName": myName, "deviceType": "laptop"]
         )
         try? connectionManager.send(message: msg)
     }
@@ -869,7 +892,7 @@ class AppState: ObservableObject {
         let msg = ProtocolMessage.streamRequest(
             streamId: streamId,
             streamType: "screen",
-            options: ["direction": "outgoing", "sender": "mac", "senderName": myName]
+            options: ["direction": "outgoing", "sender": "mac", "senderName": myName, "deviceType": "laptop"]
         )
         try? connectionManager.send(message: msg)
     }

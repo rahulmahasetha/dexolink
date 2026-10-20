@@ -616,7 +616,7 @@ class DexoLinkGUI:
             "type": "STREAM_REQUEST",
             "streamId": stream_id,
             "streamType": "camera",
-            "options": {"direction": "outgoing", "sender": "windows", "senderName": self.engine.device_name}
+            "options": {"direction": "outgoing", "sender": "windows", "senderName": self.engine.device_name, "deviceType": "laptop"}
         })
         messagebox.showinfo("Camera Stream", f"Camera stream requested with {target_name}. Local camera feed is ready.")
 
@@ -636,7 +636,7 @@ class DexoLinkGUI:
             "type": "STREAM_REQUEST",
             "streamId": stream_id,
             "streamType": "screen",
-            "options": {"direction": "outgoing", "sender": "windows", "senderName": self.engine.device_name}
+            "options": {"direction": "outgoing", "sender": "windows", "senderName": self.engine.device_name, "deviceType": "laptop"}
         })
         messagebox.showinfo("Screen Mirroring", f"Screen mirroring started with {target_name}.")
 

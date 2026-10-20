@@ -122,6 +122,30 @@ struct DevicesView: View {
                         }
                     }
 
+                    if appState.isCameraSharingEnabled {
+                        HStack {
+                            Text("Active Camera Sensor")
+                                .font(.subheadline)
+                            Spacer()
+                            Button(action: {
+                                appState.toggleCameraLens()
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "camera.rotate")
+                                    Text(appState.isFrontCamera ? "Front Camera" : "Rear Camera")
+                                }
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.blue)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(Color.blue.opacity(0.12))
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+
                     Toggle(isOn: $appState.isScreenSharingEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Screen Sharing")

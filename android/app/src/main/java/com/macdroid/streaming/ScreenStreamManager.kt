@@ -149,8 +149,22 @@ class ScreenStreamManager private constructor(private val context: Context) {
             return
         }
 
+        val action = req.options?.get("action")
+        if (action == "request_stream") {
+            // Remote device is asking Android to send phone screen
+            val response = StreamResponseMessage(
+                streamId = req.streamId,
+                streamType = req.streamType,
+                accepted = true,
+                reason = null
+            )
+            MacDroidApplication.connectionManager.sendMessage(response)
+            Log.d(TAG, "Accepted request to stream Android screen ${req.streamId}")
+            return
+        }
+
         val direction = req.options?.get("direction") ?: "outgoing"
-        if (direction == "outgoing" || req.options?.get("sender") == "mac" || req.options?.get("sender") == "windows") {
+        if (direction == "outgoing" || req.options?.get("sender") in listOf("mac", "windows", "ios", "android")) {
             // Remote device wants to mirror ITS screen TO Android
             val senderName = req.options?.get("senderName") ?: "Remote Device"
             startViewingRemoteScreen(req.streamId, senderName)
@@ -165,7 +179,7 @@ class ScreenStreamManager private constructor(private val context: Context) {
             return
         }
 
-        // Remote device is asking Android to send phone screen
+        // Default: Remote device is asking Android to send phone screen
         val response = StreamResponseMessage(
             streamId = req.streamId,
             streamType = req.streamType,

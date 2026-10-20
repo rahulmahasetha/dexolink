@@ -1629,6 +1629,7 @@ fun HomeScreenContent(
     val remoteCameraBitmap by cameraStreamManager.remoteCameraBitmap.collectAsState()
     val remoteCameraFps by cameraStreamManager.remoteCameraFps.collectAsState()
     val remoteCameraDeviceName by cameraStreamManager.remoteDeviceName.collectAsState()
+    val isFrontCamera by cameraStreamManager.isFrontCamera.collectAsState()
 
     if (showHandoffToMacDialog) {
         HandoffToMacDialog(
@@ -3166,6 +3167,8 @@ fun HomeScreenContent(
             hasPermission = hasCam,
             isConnected = isConnected,
             connectedDeviceName = connectedDeviceName,
+            isFrontCamera = isFrontCamera,
+            onSwitchCamera = { cameraStreamManager.switchCamera() },
             onRequestPermission = {
                 homeCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             },
@@ -3277,6 +3280,16 @@ fun HomeScreenContent(
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamStopMessage(streamId, "User stopped viewing remote camera")
                 )
+            },
+            onFlipCamera = {
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamRequestMessage(
+                        streamId = streamId,
+                        streamType = "camera",
+                        options = mapOf("action" to "switch_camera", "lens" to "toggle")
+                    )
+                )
             }
         )
     }
@@ -3301,6 +3314,8 @@ fun CameraSharingDialog(
     hasPermission: Boolean,
     isConnected: Boolean,
     connectedDeviceName: String?,
+    isFrontCamera: Boolean = false,
+    onSwitchCamera: (() -> Unit)? = null,
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartStream: () -> Unit,
@@ -3403,6 +3418,26 @@ fun CameraSharingDialog(
                                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Verified Connected Device: $connectedDeviceName", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF0F172A))
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Active Camera Lens:", fontSize = 11.sp, color = Color(0xFF475569), fontWeight = FontWeight.Medium)
+                                OutlinedButton(
+                                    onClick = { onSwitchCamera?.invoke() },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        if (isFrontCamera) "Front Camera" else "Rear Camera",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0284C7)
+                                    )
+                                }
                             }
 
                             Button(
@@ -3551,6 +3586,11 @@ fun ScreenSharingDialog(
     )
 }
 
+fun isLaptopDevice(deviceName: String): Boolean {
+    val lower = deviceName.lowercase()
+    return lower.contains("macbook") || lower.contains("mac") || lower.contains("windows") || lower.contains("pc") || lower.contains("laptop") || lower.contains("desktop")
+}
+
 @Composable
 fun ScreenStreamViewerDialog(
     onDismiss: () -> Unit,
@@ -3559,64 +3599,137 @@ fun ScreenStreamViewerDialog(
     deviceName: String,
     onStop: () -> Unit
 ) {
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F172A),
-        shape = RoundedCornerShape(20.dp),
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF22C55E)))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("$deviceName Display", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-                }
-                Text("$fps FPS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF22C55E))
-            }
-        },
-        text = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                if (bitmap != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Remote Screen",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            // Live Display Stream Feed
+            if (bitmap != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "$deviceName Screen Stream",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
+            } else {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFF38BDF8),
+                        modifier = Modifier.size(44.dp)
                     )
-                } else {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Color(0xFF38BDF8), modifier = Modifier.size(36.dp))
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text("Waiting for display stream...", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "Waiting for display stream from $deviceName...",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Ensure Screen Sharing is active on the sending device",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // Top Floating Header Bar
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 36.dp, start = 14.dp, end = 14.dp),
+                color = Color(0xCC0F172A),
+                shape = RoundedCornerShape(14.dp),
+                tonalElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF22C55E))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "LIVE MIRROR",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = Color(0xFF22C55E)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = deviceName,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = Color(0x2222C55E),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = if (bitmap != null) "${bitmap.width}x${bitmap.height} ${fps} FPS" else "${fps} FPS",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = Color(0xFF22C55E),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = onStop,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text("Stop Mirroring", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                        }
+
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = DexoIcons.Close,
+                                contentDescription = "Close Viewer",
+                                tint = Color(0xFF94A3B8)
+                            )
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = onStop,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Stop Mirroring", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Hide", color = Color(0xFF94A3B8))
-            }
         }
-    )
+    }
 }
 
 @Composable
@@ -3625,66 +3738,155 @@ fun CameraStreamViewerDialog(
     bitmap: Bitmap?,
     fps: Int,
     deviceName: String,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onFlipCamera: (() -> Unit)? = null
 ) {
-    AlertDialog(
+    val isLaptop = isLaptopDevice(deviceName)
+
+    Dialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F172A),
-        shape = RoundedCornerShape(20.dp),
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFEF4444)))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("$deviceName Camera", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-                }
-                Text("$fps FPS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF22C55E))
-            }
-        },
-        text = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(4f / 3f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                if (bitmap != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Remote Camera Feed",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            // Live Camera Feed
+            if (bitmap != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "$deviceName Camera Feed",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
+            } else {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFFEC4899),
+                        modifier = Modifier.size(44.dp)
                     )
-                } else {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Color(0xFFEC4899), modifier = Modifier.size(36.dp))
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text("Waiting for remote camera feed...", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "Connecting to $deviceName camera feed...",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Make sure Camera Sharing is allowed and turned ON on $deviceName",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // Top Floating Header Bar
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 36.dp, start = 14.dp, end = 14.dp),
+                color = Color(0xCC0F172A),
+                shape = RoundedCornerShape(14.dp),
+                tonalElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEF4444))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "LIVE CAMERA",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = Color(0xFFEF4444)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = deviceName,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = Color(0x2222C55E),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = if (bitmap != null) "${bitmap.width}x${bitmap.height} ${fps} FPS" else "${fps} FPS",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = Color(0xFF22C55E),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        // Flip Camera button: only shown for mobile devices (laptops only have a single built-in webcam)
+                        if (!isLaptop && onFlipCamera != null) {
+                            OutlinedButton(
+                                onClick = onFlipCamera,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                                border = BorderStroke(1.dp, Color(0xFF0284C7)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("Flip Camera", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF38BDF8))
+                            }
+                        }
+
+                        Button(
+                            onClick = onStop,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text("Stop Feed", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                        }
+
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = DexoIcons.Close,
+                                contentDescription = "Close Viewer",
+                                tint = Color(0xFF94A3B8)
+                            )
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = onStop,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Stop Feed", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Hide", color = Color(0xFF94A3B8))
-            }
         }
-    )
+    }
 }
 
 @Composable
