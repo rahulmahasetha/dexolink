@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -201,13 +203,19 @@ func encodeFileChunk(fileID string, offset int64, chunk []byte) ([]byte, error) 
 }
 
 // TCP Server
-func (e *DexoLinkEngine) startTCPServer() {
+func (e *DexoLinkEngine) startTCPServer(ready chan<- error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", DefaultPort))
 	if err != nil {
-		fmt.Printf("[DexoLink Windows] TCP Server error: %v\n", err)
+		fmt.Printf("[DexoLink Windows] TCP Server error: Failed to bind port %d: %v\n", DefaultPort, err)
+		if ready != nil {
+			ready <- err
+		}
 		return
 	}
 	fmt.Printf("[DexoLink Windows] TCP Server listening on port %d\n", DefaultPort)
+	if ready != nil {
+		ready <- nil
+	}
 
 	for {
 		conn, err := ln.Accept()
@@ -602,22 +610,136 @@ func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) 
 	return verified, nil
 }
 
-// Browser Launch Helper
-func openBrowser(url string) {
-	var cmd *exec.Cmd
+// Helper to verify if path exists and is a regular file
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// openGUIWindow opens the DexoLink user interface window.
+// On Windows, it attempts Microsoft Edge standalone App Mode, then Chrome App Mode,
+// then falls back to Windows Shell (cmd /c start), PowerShell, and Explorer.
+// On Darwin, it uses 'open', on Linux 'xdg-open'.
+func openGUIWindow(url string) bool {
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		// Tier 1: Microsoft Edge App Mode (Standalone borderless application window on Windows 10/11)
+		edgeCandidates := []string{
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "Edge", "Application", "msedge.exe"),
+		}
+		for _, p := range edgeCandidates {
+			if p != "" && fileExists(p) {
+				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+				if err := cmd.Start(); err == nil {
+					fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Microsoft Edge App Mode.")
+					return true
+				}
+			}
+		}
+		if p, err := exec.LookPath("msedge.exe"); err == nil {
+			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+			if err := cmd.Start(); err == nil {
+				fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Microsoft Edge App Mode.")
+				return true
+			}
+		}
+
+		// Tier 2: Google Chrome App Mode
+		chromeCandidates := []string{
+			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Google", "Chrome", "Application", "chrome.exe"),
+		}
+		for _, p := range chromeCandidates {
+			if p != "" && fileExists(p) {
+				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+				if err := cmd.Start(); err == nil {
+					fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Google Chrome App Mode.")
+					return true
+				}
+			}
+		}
+		if p, err := exec.LookPath("chrome.exe"); err == nil {
+			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+			if err := cmd.Start(); err == nil {
+				fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Google Chrome App Mode.")
+				return true
+			}
+		}
+
+		// Tier 3: Windows Shell Execution via cmd.exe
+		cmd := exec.Command("cmd.exe", "/c", "start", "", url)
+		if err := cmd.Start(); err == nil {
+			fmt.Println("[DexoLink Windows] DexoLink GUI opened in default browser via Windows Shell.")
+			return true
+		}
+
+		// Tier 4: PowerShell Start-Process
+		psCmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", fmt.Sprintf("Start-Process '%s'", url))
+		if err := psCmd.Start(); err == nil {
+			fmt.Println("[DexoLink Windows] DexoLink GUI opened in default browser via PowerShell.")
+			return true
+		}
+
+		// Tier 5: Windows Explorer Shell
+		expCmd := exec.Command("explorer.exe", url)
+		if err := expCmd.Start(); err == nil {
+			fmt.Println("[DexoLink Windows] DexoLink GUI opened via Windows Explorer.")
+			return true
+		}
+
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd := exec.Command("open", url)
+		if err := cmd.Start(); err == nil {
+			return true
+		}
+
 	default:
-		cmd = exec.Command("xdg-open", url)
+		cmd := exec.Command("xdg-open", url)
+		if err := cmd.Start(); err == nil {
+			return true
+		}
 	}
-	_ = cmd.Start()
+
+	return false
+}
+
+// openBrowser is used for Continuity links and general URL opening
+func openBrowser(url string) {
+	if openGUIWindow(url) {
+		return
+	}
+	fmt.Printf("[DexoLink Windows] Notice: Could not open URL automatically: %s\n", url)
+}
+
+// checkIfInstanceRunning probes if another DexoLink process is currently active on WebUIPort
+func checkIfInstanceRunning() bool {
+	client := http.Client{Timeout: 350 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/status", WebUIPort))
+	if err == nil && resp != nil {
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}
+	return false
+}
+
+// checkPortAvailable tests whether a TCP port can be bound
+func checkPortAvailable(port int) error {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return err
+	}
+	_ = ln.Close()
+	return nil
 }
 
 // Web UI Dashboard Server (runs on 127.0.0.1:52842)
-func startWebDashboard() {
+func startWebDashboard(ready chan<- error) {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, webUIHTML)
@@ -777,23 +899,86 @@ func startWebDashboard() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", WebUIPort))
+	if err != nil {
+		fmt.Printf("[DexoLink Windows] Web UI server error: Failed to bind port %d: %v\n", WebUIPort, err)
+		if ready != nil {
+			ready <- err
+		}
+		return
+	}
 	fmt.Printf("[DexoLink Windows] Web UI server listening on http://localhost:%d\n", WebUIPort)
-	_ = http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", WebUIPort), nil)
+	if ready != nil {
+		ready <- nil
+	}
+	_ = http.Serve(ln, nil)
 }
 
 func main() {
+	fmt.Println("======================================================")
+	fmt.Printf("  DexoLink for Windows v4.0.1 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Println("  Universal Cross-Platform Synchronization")
+	fmt.Println("======================================================")
+
+	// Step 1: Detect whether DexoLink is already running to avoid duplicate server instances
+	if checkIfInstanceRunning() {
+		fmt.Printf("[DexoLink Windows] An active DexoLink instance is already running on port %d / %d.\n", DefaultPort, WebUIPort)
+		fmt.Println("[DexoLink Windows] Activating DexoLink GUI application window...")
+		openGUIWindow(fmt.Sprintf("http://localhost:%d", WebUIPort))
+		os.Exit(0)
+	}
+
+	// Step 2: Validate that required ports are available before starting
+	if err := checkPortAvailable(DefaultPort); err != nil {
+		fmt.Printf("[DexoLink Windows] Fatal Startup Error: TCP port %d is already occupied (%v).\n", DefaultPort, err)
+		fmt.Println("[DexoLink Windows] Please terminate conflicting processes and restart DexoLink.")
+		os.Exit(1)
+	}
+	if err := checkPortAvailable(WebUIPort); err != nil {
+		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI port %d is already occupied (%v).\n", WebUIPort, err)
+		fmt.Println("[DexoLink Windows] Please terminate conflicting processes and restart DexoLink.")
+		os.Exit(1)
+	}
+
+	// Step 3: Initialize engine and synchronize startup
 	engine = initEngine()
-	go engine.startTCPServer()
+	fmt.Printf("[DexoLink Windows] Initialized DexoLink engine for %s\n", engine.DeviceName)
+
+	tcpReady := make(chan error, 1)
+	webReady := make(chan error, 1)
+
+	go engine.startTCPServer(tcpReady)
 	go engine.startUDPBeacon()
 	go engine.startUDPListener()
-	go startWebDashboard()
+	go startWebDashboard(webReady)
 
-	// Wait 500ms then launch browser dashboard
-	time.Sleep(500 * time.Millisecond)
-	openBrowser(fmt.Sprintf("http://localhost:%d", WebUIPort))
+	// Verify servers initialized without error
+	if err := <-webReady; err != nil {
+		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI server could not start: %v\n", err)
+		os.Exit(1)
+	}
+	if err := <-tcpReady; err != nil {
+		fmt.Printf("[DexoLink Windows] Fatal Startup Error: TCP server could not start: %v\n", err)
+		os.Exit(1)
+	}
 
-	// Keep running
-	select {}
+	// Step 4: Automatically open DexoLink GUI window
+	guiURL := fmt.Sprintf("http://localhost:%d", WebUIPort)
+	fmt.Println("[DexoLink Windows] Opening DexoLink GUI application window...")
+	if openGUIWindow(guiURL) {
+		fmt.Println("[DexoLink Windows] DexoLink GUI window opened successfully.")
+	} else {
+		fmt.Printf("[DexoLink Windows] Notice: Automatic window launch was blocked or unavailable.\n")
+	}
+	fmt.Printf("[DexoLink Windows] Local Web UI dashboard is accessible at: %s\n", guiURL)
+	fmt.Println("[DexoLink Windows] DexoLink is ready. Press Ctrl+C to stop.")
+
+	// Step 5: Graceful termination on OS interrupt
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+	fmt.Println("\n[DexoLink Windows] Shutting down DexoLink servers gracefully...")
+	os.Exit(0)
 }
 
 const webUIHTML = `<!DOCTYPE html>
@@ -847,6 +1032,9 @@ const webUIHTML = `<!DOCTYPE html>
         <div class="status-dot"></div>
         <span id="devName">Windows PC (Ready)</span>
       </div>
+      <a href="http://localhost:52842" target="_blank" style="text-decoration:none; font-size:11px; font-weight:600; color:var(--cyan); background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.3); padding:6px 10px; border-radius:6px;">
+        Web UI: localhost:52842
+      </a>
       <button class="btn" onclick="openSettingsModal()" style="display:flex; align-items:center; gap:6px; background:var(--card); border:1px solid var(--border); color:var(--text); padding:7px 14px; font-size:12px; font-weight:700; border-radius:8px; cursor:pointer;">
         Settings
       </button>
