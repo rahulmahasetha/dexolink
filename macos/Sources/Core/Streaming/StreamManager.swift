@@ -302,6 +302,18 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
     }
 
+    public struct CapturedFrameData {
+        public let base64: String
+        public let width: Int
+        public let height: Int
+
+        public init(base64: String, width: Int, height: Int) {
+            self.base64 = base64
+            self.width = width
+            self.height = height
+        }
+    }
+
     private func startStreamingLoop(streamId: String, type: StreamType) {
         var seq: Int64 = 0
         let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] t in
@@ -311,37 +323,72 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             }
 
             seq += 1
-            // Generate optimized JPEG frame
-            let frameBase64 = self.captureCurrentFrame(for: type)
-            if !frameBase64.isEmpty {
-                self.onFrameGenerated?(streamId, seq, frameBase64)
-                let msg = ProtocolMessage.streamFrame(streamId: streamId, sequence: seq, format: "jpeg", width: 640, height: 480, data: frameBase64)
+            // Generate optimized JPEG frame with dynamic proportional dimensions
+            let frame = self.captureCurrentFrame(for: type)
+            if !frame.base64.isEmpty {
+                self.onFrameGenerated?(streamId, seq, frame.base64)
+                let msg = ProtocolMessage.streamFrame(
+                    streamId: streamId,
+                    sequence: seq,
+                    format: "jpeg",
+                    width: frame.width,
+                    height: frame.height,
+                    data: frame.base64
+                )
                 self.connectionManager?.send(message: msg)
             }
         }
         streamTimers[streamId] = timer
     }
 
-    private func captureCurrentFrame(for type: StreamType) -> String {
+    public func captureCurrentFrame(for type: StreamType) -> CapturedFrameData {
         switch type {
         case .screen, .desktopMode:
-            if let imageRef = CGDisplayCreateImage(CGMainDisplayID()) {
-                let bitmapRep = NSBitmapImageRep(cgImage: imageRef)
+            let displayId = CGMainDisplayID()
+            if let imageRef = CGDisplayCreateImage(displayId) {
+                let origW = imageRef.width
+                let origH = imageRef.height
+                let targetSize = ScreenDisplayHelper.calculateProportionalTargetSize(sourceWidth: origW, sourceHeight: origH, maxEdge: 1280)
+
+                let finalImage: CGImage
+                if origW > targetSize.width || origH > targetSize.height {
+                    if let colorSpace = imageRef.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+                       let context = CGContext(
+                            data: nil,
+                            width: targetSize.width,
+                            height: targetSize.height,
+                            bitsPerComponent: 8,
+                            bytesPerRow: targetSize.width * 4,
+                            space: colorSpace,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                       ) {
+                        context.interpolationQuality = .high
+                        context.draw(imageRef, in: CGRect(x: 0, y: 0, width: targetSize.width, height: targetSize.height))
+                        finalImage = context.makeImage() ?? imageRef
+                    } else {
+                        finalImage = imageRef
+                    }
+                } else {
+                    finalImage = imageRef
+                }
+
+                let bitmapRep = NSBitmapImageRep(cgImage: finalImage)
                 if let jpegData = bitmapRep.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.6)]) {
-                    return jpegData.base64EncodedString()
+                    return CapturedFrameData(base64: jpegData.base64EncodedString(), width: targetSize.width, height: targetSize.height)
                 }
             }
             return generateFallbackBanner(title: "DexoLink Screen Sharing", subtitle: "Mirroring macOS Display")
+
         case .camera:
             if let liveFrame = latestCameraFrameBase64, !liveFrame.isEmpty {
-                return liveFrame
+                return CapturedFrameData(base64: liveFrame, width: 640, height: 480)
             }
             return generateFallbackBanner(title: "DexoLink Camera Feed", subtitle: "Live Camera Stream Active")
         }
     }
 
-    private func generateFallbackBanner(title: String, subtitle: String) -> String {
-        let size = NSSize(width: 640, height: 480)
+    private func generateFallbackBanner(title: String, subtitle: String) -> CapturedFrameData {
+        let size = NSSize(width: 960, height: 540)
         let image = NSImage(size: size)
         image.lockFocus()
 
@@ -362,8 +409,8 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             .paragraphStyle: pStyle
         ]
 
-        let titleRect = NSRect(x: 20, y: 250, width: size.width - 40, height: 40)
-        let subRect = NSRect(x: 20, y: 210, width: size.width - 40, height: 30)
+        let titleRect = NSRect(x: 20, y: 280, width: size.width - 40, height: 40)
+        let subRect = NSRect(x: 20, y: 240, width: size.width - 40, height: 30)
 
         (title as NSString).draw(in: titleRect, withAttributes: titleAttrs)
         (subtitle as NSString).draw(in: subRect, withAttributes: subAttrs)
@@ -373,9 +420,9 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         if let tiff = image.tiffRepresentation,
            let rep = NSBitmapImageRep(data: tiff),
            let jpegData = rep.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.6)]) {
-            return jpegData.base64EncodedString()
+            return CapturedFrameData(base64: jpegData.base64EncodedString(), width: Int(size.width), height: Int(size.height))
         }
-        return ""
+        return CapturedFrameData(base64: "", width: Int(size.width), height: Int(size.height))
     }
 
     public func stopStream(streamId: String) {

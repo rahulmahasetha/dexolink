@@ -22,6 +22,8 @@ import threading
 import time
 import uuid
 import webbrowser
+import base64
+import io
 from typing import Dict, List, Optional, Tuple, Any
 
 # Protocol Constants
@@ -171,6 +173,64 @@ class ProtocolCodec:
             return None, None, total_frame_len
 
 
+class WindowsDisplayHelper:
+    """Display dimension and multi-monitor resolution helper adapted from p2p.kiwi."""
+    DISPLAY_MATCH_PX = 8
+
+    @staticmethod
+    def display_pixel_size(bounds: dict, scale_factor: float = 1.0) -> dict:
+        """Computes physical pixel size from bounds and scale factor."""
+        scale = scale_factor if scale_factor > 0 else 1.0
+        return {
+            "width": int(round(bounds.get("width", 0) * scale)),
+            "height": int(round(bounds.get("height", 0) * scale))
+        }
+
+    @staticmethod
+    def frame_matches_display(frame: dict, displays: list, tolerance_px: int = 8) -> bool:
+        """Checks if a frame matches any display within tolerance."""
+        fw = frame.get("width", 0)
+        fh = frame.get("height", 0)
+        for d in displays:
+            dw = d.get("width", 0)
+            dh = d.get("height", 0)
+            if abs(fw - dw) <= tolerance_px and abs(fh - dh) <= tolerance_px:
+                return True
+        return False
+
+    @staticmethod
+    def share_surface_from_frame(reported: Optional[str], frame: dict, displays: list) -> Optional[str]:
+        """Infers whether capture is a full monitor or cropped window."""
+        if reported in ("window", "browser"):
+            return reported
+        fw = frame.get("width", 0)
+        fh = frame.get("height", 0)
+        sized = fw > 0 and fh > 0
+        matches = sized and WindowsDisplayHelper.frame_matches_display(frame, displays)
+        if sized and not matches:
+            return "window"
+        if reported == "monitor" or matches:
+            return "monitor"
+        return None
+
+    @staticmethod
+    def calculate_proportional_target_size(source_width: int, source_height: int, max_edge: int = 1280) -> Tuple[int, int]:
+        """Calculates proportional target dimensions maintaining exact aspect ratio."""
+        if source_width <= 0 or source_height <= 0:
+            return (960, 540)
+        max_dim = max(source_width, source_height)
+        if max_dim <= max_edge:
+            return (source_width, source_height)
+        scale = float(max_edge) / float(max_dim)
+        target_w = int(round(source_width * scale))
+        target_h = int(round(source_height * scale))
+        if target_w % 2 != 0:
+            target_w -= 1
+        if target_h % 2 != 0:
+            target_h -= 1
+        return (max(target_w, 2), max(target_h, 2))
+
+
 class WindowsClipboardSync:
     """Cross-platform clipboard helper with Windows CRLF normalization and loop prevention."""
     def __init__(self):
@@ -287,6 +347,7 @@ class DexoLinkWindowsEngine:
         self.on_continuity_received = None
         self.on_stream_started = None
         self.on_stream_stopped = None
+        self.on_frame_received = None
 
     def start(self):
         self.running = True
@@ -533,9 +594,11 @@ class DexoLinkWindowsEngine:
                 }, None
             
             # Feature is enabled
+            is_remote_sending_feed = options.get("direction") == "outgoing" or options.get("sender") in ("android", "mac", "ios", "windows")
             self.active_streams[stream_id] = {
                 "streamId": stream_id,
                 "streamType": stream_type,
+                "direction": "incoming" if is_remote_sending_feed else "outgoing",
                 "startedAt": time.time(),
                 "peerId": peer_id or "unknown"
             }
@@ -544,6 +607,8 @@ class DexoLinkWindowsEngine:
                     self.on_stream_started(stream_id, stream_type)
                 except Exception:
                     pass
+            if not is_remote_sending_feed and getattr(self, "running", False):
+                threading.Thread(target=self._start_streaming_loop, args=(stream_id, stream_type), daemon=True).start()
             return {
                 "type": "STREAM_RESPONSE",
                 "streamId": stream_id,
@@ -556,6 +621,12 @@ class DexoLinkWindowsEngine:
             accepted = msg.get("accepted", False)
             if not accepted and stream_id in self.active_streams:
                 del self.active_streams[stream_id]
+            elif accepted and stream_id in self.active_streams and getattr(self, "running", False):
+                info = self.active_streams[stream_id]
+                if info.get("direction") == "outgoing" and not info.get("loopStarted"):
+                    info["loopStarted"] = True
+                    st = info.get("streamType", "screen")
+                    threading.Thread(target=self._start_streaming_loop, args=(stream_id, st), daemon=True).start()
             return None, None
 
         elif msg_type == "STREAM_STOP":
@@ -614,6 +685,74 @@ class DexoLinkWindowsEngine:
         self.desktop_mode_enabled = enabled
         if not enabled:
             self._stop_streams_of_type("desktop", "Desktop Mode was disabled in Settings")
+
+    def capture_screen_frame(self, max_edge: int = 1280) -> Tuple[str, int, int]:
+        """Captures active screen frame and returns (base64_jpeg, width, height)."""
+        try:
+            from PIL import ImageGrab, Image
+            img = ImageGrab.grab()
+            orig_w, orig_h = img.size
+            tw, th = WindowsDisplayHelper.calculate_proportional_target_size(orig_w, orig_h, max_edge=max_edge)
+            if orig_w > tw or orig_h > th:
+                resample_filter = getattr(Image, "Resampling", Image).LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS
+                img = img.resize((tw, th), resample_filter)
+
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=65)
+            b64_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return (b64_data, img.width, img.height)
+        except Exception:
+            return self._generate_fallback_banner("DexoLink Screen Sharing", "Windows Display Mirroring Active", 960, 540)
+
+    def _generate_fallback_banner(self, title: str, subtitle: str, width: int = 960, height: int = 540) -> Tuple[str, int, int]:
+        """Generates a sleek fallback display banner frame."""
+        try:
+            from PIL import Image, ImageDraw
+            img = Image.new("RGB", (width, height), color=(15, 23, 42))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([12, 12, width - 12, height - 12], outline=(37, 99, 235), width=3)
+            draw.rectangle([12, 12, width - 12, 60], fill=(30, 41, 59))
+            draw.text((24, 28), title, fill=(255, 255, 255))
+            draw.text((24, 80), subtitle, fill=(148, 163, 184))
+            draw.text((24, 120), f"Source: {self.device_name} (Windows Display)", fill=(148, 163, 184))
+            draw.text((24, 150), f"Resolution: {width}x{height}", fill=(148, 163, 184))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=65)
+            b64_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return (b64_data, width, height)
+        except Exception:
+            return ("", width, height)
+
+    def _start_streaming_loop(self, stream_id: str, stream_type: str):
+        """Streaming background loop transmitting JPEG frames over active connections."""
+        seq = 0
+        while self.running and stream_id in self.active_streams:
+            seq += 1
+            if stream_type in ("screen", "desktop"):
+                b64_data, w, h = self.capture_screen_frame(max_edge=1280)
+            else:
+                b64_data, w, h = self._generate_fallback_banner("DexoLink Camera Feed", "Live Camera Stream Active", 640, 480)
+
+            if b64_data:
+                msg = {
+                    "type": "STREAM_FRAME",
+                    "streamId": stream_id,
+                    "sequence": seq,
+                    "format": "jpeg",
+                    "width": w,
+                    "height": h,
+                    "data": b64_data
+                }
+                encoded = ProtocolCodec.encode_message(msg)
+                for sock in list(self.active_connections.values()):
+                    try:
+                        sock.sendall(encoded)
+                    except Exception:
+                        pass
+            time.sleep(0.08)  # ~12 FPS
 
     def _stop_streams_of_type(self, stream_type: str, reason: str):
         for s_id, s_info in list(self.active_streams.items()):

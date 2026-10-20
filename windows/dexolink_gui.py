@@ -8,9 +8,18 @@ import sys
 import os
 import time
 import threading
+import uuid
+import base64
+import io
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Optional, Dict, Any
+
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 from dexolink_windows import DexoLinkWindowsEngine, TrustStore
 
@@ -27,6 +36,87 @@ COLOR_SUCCESS = "#22C55E"    # Green
 COLOR_DANGER = "#EF4444"     # Red
 COLOR_BORDER = "#334155"
 
+class ScreenViewerWindow(tk.Toplevel):
+    """Full-featured live screen viewing window for Windows."""
+    def __init__(self, master, stream_id: str, engine, device_name: str = "Remote Device"):
+        super().__init__(master)
+        self.stream_id = stream_id
+        self.engine = engine
+        self.device_name = device_name
+        self.title(f"DexoLink Screen Mirroring — {device_name}")
+        self.geometry("960x600")
+        self.minsize(540, 380)
+        self.configure(bg="#000000")
+
+        self.frame_count = 0
+        self.last_fps_time = time.time()
+        self.current_fps = 0
+        self.current_photo = None
+
+        self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _build_ui(self):
+        # Top status bar
+        self.header_frame = tk.Frame(self, bg="#0F172A", height=42, padx=12, pady=6)
+        self.header_frame.pack(side=tk.TOP, fill=tk.X)
+
+        lbl_live = tk.Label(self.header_frame, text="LIVE MIRROR", font=("Segoe UI", 9, "bold"), fg="#22C55E", bg="#0F172A")
+        lbl_live.pack(side=tk.LEFT, padx=(4, 10))
+
+        self.lbl_title = tk.Label(self.header_frame, text=self.device_name, font=("Segoe UI", 10, "bold"), fg="#F8FAFC", bg="#0F172A")
+        self.lbl_title.pack(side=tk.LEFT, padx=4)
+
+        btn_stop = tk.Button(self.header_frame, text="Stop Mirroring", font=("Segoe UI", 9, "bold"), fg="#FFFFFF", bg="#DC2626", activebackground="#B91C1C", activeforeground="#FFFFFF", relief=tk.FLAT, padx=10, pady=2, command=self._on_close)
+        btn_stop.pack(side=tk.RIGHT, padx=4)
+
+        self.lbl_fps = tk.Label(self.header_frame, text="0 FPS", font=("Segoe UI", 9, "bold"), fg="#22C55E", bg="#0F172A")
+        self.lbl_fps.pack(side=tk.RIGHT, padx=10)
+
+        self.lbl_res = tk.Label(self.header_frame, text="960 x 540", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A")
+        self.lbl_res.pack(side=tk.RIGHT, padx=4)
+
+        # Canvas for live frame
+        self.canvas = tk.Canvas(self, bg="#000000", highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+    def update_frame(self, data_b64: str, width: int, height: int):
+        self.frame_count += 1
+        now = time.time()
+        elapsed = now - self.last_fps_time
+        if elapsed >= 1.0:
+            self.current_fps = int(self.frame_count / elapsed)
+            self.frame_count = 0
+            self.last_fps_time = now
+            self.lbl_fps.config(text=f"{self.current_fps} FPS")
+
+        self.lbl_res.config(text=f"{width} x {height}")
+
+        if not HAS_PIL:
+            return
+
+        try:
+            raw_bytes = base64.b64decode(data_b64)
+            img = Image.open(io.BytesIO(raw_bytes))
+
+            cw = self.canvas.winfo_width()
+            ch = self.canvas.winfo_height()
+            if cw > 10 and ch > 10:
+                scale = min(cw / img.width, ch / img.height)
+                new_w = max(int(img.width * scale), 1)
+                new_h = max(int(img.height * scale), 1)
+                resample_filter = getattr(Image, "Resampling", Image).BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR
+                img = img.resize((new_w, new_h), resample_filter)
+                self.current_photo = ImageTk.PhotoImage(img)
+                self.canvas.delete("all")
+                self.canvas.create_image(cw // 2, ch // 2, anchor=tk.CENTER, image=self.current_photo)
+        except Exception:
+            pass
+
+    def _on_close(self):
+        self.engine.stop_stream(self.stream_id, reason="User closed viewer")
+        self.destroy()
+
 class DexoLinkGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -39,6 +129,9 @@ class DexoLinkGUI:
         self.engine = DexoLinkWindowsEngine()
         self.engine.on_device_discovered = self._on_device_discovered
         self.engine.on_transfer_complete = self._on_transfer_complete
+        self.active_viewers = {}
+        self.engine.on_frame_received = self._on_stream_frame_received
+        self.engine.on_stream_stopped = self._on_stream_stopped
         self.engine.start()
 
         # UI State
@@ -632,6 +725,13 @@ class DexoLinkGUI:
             messagebox.showinfo("Enable Feature", "Please turn ON Screen Sharing in Settings first.")
             return
         stream_id = str(uuid.uuid4())
+        self.engine.active_streams[stream_id] = {
+            "streamId": stream_id,
+            "streamType": "screen",
+            "direction": "outgoing",
+            "startedAt": time.time(),
+            "peerId": "remote"
+        }
         self.engine.send_protocol_message({
             "type": "STREAM_REQUEST",
             "streamId": stream_id,
@@ -718,6 +818,22 @@ class DexoLinkGUI:
         if hasattr(self, 'lbl_fc_badge'):
             self.lbl_fc_badge.config(text=f"{self.get_active_features_count()} ACTIVE")
         self.root.after(2000, self._periodic_ui_refresh)
+
+    def _on_stream_frame_received(self, stream_id: str, data_b64: str, width: int, height: int, fmt: str):
+        def _update():
+            if stream_id not in self.active_viewers:
+                target_name = self.device_combo.get() or "Remote Device"
+                viewer = ScreenViewerWindow(self.root, stream_id, self.engine, device_name=target_name)
+                self.active_viewers[stream_id] = viewer
+            self.active_viewers[stream_id].update_frame(data_b64, width, height)
+        self.root.after(0, _update)
+
+    def _on_stream_stopped(self, stream_id: str):
+        def _stop():
+            viewer = self.active_viewers.pop(stream_id, None)
+            if viewer and viewer.winfo_exists():
+                viewer.destroy()
+        self.root.after(0, _stop)
 
     def _on_close(self):
         self.engine.stop()

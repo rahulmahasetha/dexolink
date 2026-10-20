@@ -321,5 +321,46 @@ final class CoreTests: XCTestCase {
         streamManager.stopStream(streamId: "remote-screen-1")
         waitForExpectations(timeout: 2.0)
     }
+
+    func testScreenDisplayHelper_displayPixelSizeAndSurfaceMatching() {
+        // Test displayPixelSize calculation (adapted from p2p.kiwi)
+        let bounds = CGSize(width: 1440, height: 900)
+        let sizeRetina = ScreenDisplayHelper.displayPixelSize(bounds: bounds, scaleFactor: 2.0)
+        XCTAssertEqual(sizeRetina.width, 2880)
+        XCTAssertEqual(sizeRetina.height, 1800)
+
+        let sizeStandard = ScreenDisplayHelper.displayPixelSize(bounds: bounds, scaleFactor: 1.0)
+        XCTAssertEqual(sizeStandard.width, 1440)
+        XCTAssertEqual(sizeStandard.height, 900)
+
+        // Test frameMatchesDisplay with tolerance
+        let displays = [FrameSize(width: 2880, height: 1800), FrameSize(width: 1920, height: 1080)]
+        XCTAssertTrue(ScreenDisplayHelper.frameMatchesDisplay(frame: FrameSize(width: 2880, height: 1800), displays: displays))
+        XCTAssertTrue(ScreenDisplayHelper.frameMatchesDisplay(frame: FrameSize(width: 2884, height: 1798), displays: displays))
+        XCTAssertFalse(ScreenDisplayHelper.frameMatchesDisplay(frame: FrameSize(width: 1280, height: 720), displays: displays))
+
+        // Test shareSurfaceFromFrame
+        XCTAssertEqual(ScreenDisplayHelper.shareSurfaceFromFrame(reported: "window", frame: FrameSize(width: 800, height: 600), displays: displays), "window")
+        XCTAssertEqual(ScreenDisplayHelper.shareSurfaceFromFrame(reported: "monitor", frame: FrameSize(width: 2880, height: 1800), displays: displays), "monitor")
+        XCTAssertEqual(ScreenDisplayHelper.shareSurfaceFromFrame(reported: nil, frame: FrameSize(width: 2880, height: 1800), displays: displays), "monitor")
+        XCTAssertEqual(ScreenDisplayHelper.shareSurfaceFromFrame(reported: nil, frame: FrameSize(width: 800, height: 600), displays: displays), "window")
+
+        // Test calculateProportionalTargetSize
+        let targetRetina = ScreenDisplayHelper.calculateProportionalTargetSize(sourceWidth: 2880, sourceHeight: 1800, maxEdge: 1280)
+        XCTAssertEqual(targetRetina.width, 1280)
+        XCTAssertEqual(targetRetina.height, 800)
+
+        let targetSmall = ScreenDisplayHelper.calculateProportionalTargetSize(sourceWidth: 640, sourceHeight: 480, maxEdge: 1280)
+        XCTAssertEqual(targetSmall.width, 640)
+        XCTAssertEqual(targetSmall.height, 480)
+    }
+
+    func testCaptureCurrentFrame_returnsValidProportionalDimensions() {
+        let streamManager = StreamManager.shared
+        let screenFrame = streamManager.captureCurrentFrame(for: .screen)
+        XCTAssertFalse(screenFrame.base64.isEmpty)
+        XCTAssertGreaterThan(screenFrame.width, 0)
+        XCTAssertGreaterThan(screenFrame.height, 0)
+    }
 }
 

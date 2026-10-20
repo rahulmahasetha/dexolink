@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "DexoLinkiOS",
     platforms: [
-        .iOS(.v16)
+        .iOS(.v16),
+        .macOS(.v13)
     ],
     products: [
         .library(name: "DexoLinkiOS", targets: ["DexoLinkiOS"])

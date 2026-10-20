@@ -9,7 +9,7 @@ import sys
 
 # Ensure windows directory is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from dexolink_windows import ProtocolCodec, TrustStore, WindowsClipboardSync, DexoLinkWindowsEngine
+from dexolink_windows import ProtocolCodec, TrustStore, WindowsClipboardSync, DexoLinkWindowsEngine, WindowsDisplayHelper
 
 class TestWindowsProtocol(unittest.TestCase):
 
@@ -246,6 +246,37 @@ class TestWindowsProtocol(unittest.TestCase):
         engine._process_message(msg, None, None)
         self.assertEqual(len(received_frames), 1)
         self.assertEqual(received_frames[0], ("test-stream-101", 960, 540, "jpeg"))
+
+    def test_windows_display_helper_pixel_size_and_matching(self):
+        # display_pixel_size
+        bounds = {"width": 1920, "height": 1080}
+        pixel_size = WindowsDisplayHelper.display_pixel_size(bounds, scale_factor=1.25)
+        self.assertEqual(pixel_size["width"], 2400)
+        self.assertEqual(pixel_size["height"], 1350)
+
+        # frame_matches_display
+        displays = [{"width": 1920, "height": 1080}, {"width": 2560, "height": 1440}]
+        self.assertTrue(WindowsDisplayHelper.frame_matches_display({"width": 1920, "height": 1080}, displays))
+        self.assertTrue(WindowsDisplayHelper.frame_matches_display({"width": 1924, "height": 1078}, displays))
+        self.assertFalse(WindowsDisplayHelper.frame_matches_display({"width": 1280, "height": 720}, displays))
+
+        # share_surface_from_frame
+        self.assertEqual(WindowsDisplayHelper.share_surface_from_frame("window", {"width": 800, "height": 600}, displays), "window")
+        self.assertEqual(WindowsDisplayHelper.share_surface_from_frame("monitor", {"width": 1920, "height": 1080}, displays), "monitor")
+        self.assertEqual(WindowsDisplayHelper.share_surface_from_frame(None, {"width": 1920, "height": 1080}, displays), "monitor")
+        self.assertEqual(WindowsDisplayHelper.share_surface_from_frame(None, {"width": 800, "height": 600}, displays), "window")
+
+        # calculate_proportional_target_size
+        tw, th = WindowsDisplayHelper.calculate_proportional_target_size(2560, 1440, max_edge=1280)
+        self.assertEqual(tw, 1280)
+        self.assertEqual(th, 720)
+
+    def test_engine_capture_screen_frame(self):
+        engine = DexoLinkWindowsEngine(port=52998)
+        b64, w, h = engine.capture_screen_frame(max_edge=1280)
+        self.assertTrue(len(b64) > 0)
+        self.assertGreater(w, 0)
+        self.assertGreater(h, 0)
 
 
 if __name__ == "__main__":

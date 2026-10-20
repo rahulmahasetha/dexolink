@@ -35,10 +35,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 class ScreenStreamManager private constructor(private val context: Context) {
 
+    data class FrameSize(val width: Int, val height: Int)
+
     companion object {
         private const val TAG = "ScreenStreamManager"
-        private const val TARGET_WIDTH = 960
-        private const val TARGET_HEIGHT = 540
+        private const val DEFAULT_MAX_DIMENSION = 1280
         private const val TARGET_FPS = 15
 
         @Volatile
@@ -48,6 +49,24 @@ class ScreenStreamManager private constructor(private val context: Context) {
             return instance ?: synchronized(this) {
                 instance ?: ScreenStreamManager(context.applicationContext).also { instance = it }
             }
+        }
+
+        /**
+         * Computes proportional capture dimensions preserving exact screen aspect ratio.
+         * Adapted from p2p.kiwi displayPixelSize.
+         */
+        fun computeTargetDimensions(displayMetrics: DisplayMetrics, maxDimension: Int = DEFAULT_MAX_DIMENSION): FrameSize {
+            val screenW = displayMetrics.widthPixels
+            val screenH = displayMetrics.heightPixels
+            if (screenW <= 0 || screenH <= 0) return FrameSize(960, 540)
+
+            val maxDim = maxOf(screenW, screenH)
+            val scale = if (maxDim > maxDimension) maxDimension.toDouble() / maxDim.toDouble() else 1.0
+            var targetW = (screenW * scale).toInt()
+            var targetH = (screenH * scale).toInt()
+            if (targetW % 2 != 0) targetW -= 1
+            if (targetH % 2 != 0) targetH -= 1
+            return FrameSize(maxOf(targetW, 2), maxOf(targetH, 2))
         }
     }
 
@@ -257,10 +276,12 @@ class ScreenStreamManager private constructor(private val context: Context) {
         windowManager?.defaultDisplay?.getMetrics(metrics)
         val densityDpi = if (metrics.densityDpi > 0) metrics.densityDpi else 320
 
+        val targetSize = computeTargetDimensions(metrics, DEFAULT_MAX_DIMENSION)
+
         backgroundThread = HandlerThread("ScreenCaptureThread").also { it.start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
 
-        imageReader = ImageReader.newInstance(TARGET_WIDTH, TARGET_HEIGHT, PixelFormat.RGBA_8888, 2).apply {
+        imageReader = ImageReader.newInstance(targetSize.width, targetSize.height, PixelFormat.RGBA_8888, 2).apply {
             setOnImageAvailableListener({ reader ->
                 if (!isStreamingActive.get()) return@setOnImageAvailableListener
                 try {
@@ -276,15 +297,15 @@ class ScreenStreamManager private constructor(private val context: Context) {
         try {
             virtualDisplay = proj.createVirtualDisplay(
                 "DexoLinkScreenMirror",
-                TARGET_WIDTH,
-                TARGET_HEIGHT,
+                targetSize.width,
+                targetSize.height,
                 densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader?.surface,
                 null,
                 backgroundHandler
             )
-            Log.d(TAG, "VirtualDisplay created: ${TARGET_WIDTH}x${TARGET_HEIGHT} @ ${densityDpi}dpi")
+            Log.d(TAG, "VirtualDisplay created: ${targetSize.width}x${targetSize.height} @ ${densityDpi}dpi")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create VirtualDisplay: ${e.message}", e)
             startSyntheticScreenStream()
@@ -319,7 +340,7 @@ class ScreenStreamManager private constructor(private val context: Context) {
         val jpegBytes = stream.toByteArray()
         cleanBitmap.recycle()
 
-        sendEncodedJpegFrame(jpegBytes, TARGET_WIDTH, TARGET_HEIGHT)
+        sendEncodedJpegFrame(jpegBytes, image.width, image.height)
     }
 
     private fun sendEncodedJpegFrame(jpegBytes: ByteArray, width: Int, height: Int) {
@@ -354,12 +375,20 @@ class ScreenStreamManager private constructor(private val context: Context) {
     private fun startSyntheticScreenStream() {
         if (syntheticStreamJob != null && syntheticStreamJob?.isActive == true) return
 
+        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager?.defaultDisplay?.getMetrics(metrics)
+        val targetSize = computeTargetDimensions(metrics, DEFAULT_MAX_DIMENSION)
+        val targetWidth = targetSize.width
+        val targetHeight = targetSize.height
+
         syntheticStreamJob = scope.launch {
             val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
             val delayMs = 1000L / TARGET_FPS
 
             while (isActive && isStreamingActive.get()) {
-                val bmp = Bitmap.createBitmap(TARGET_WIDTH, TARGET_HEIGHT, Bitmap.Config.ARGB_8888)
+                val bmp = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(bmp)
 
                 // Sleek desktop display representation
@@ -370,42 +399,42 @@ class ScreenStreamManager private constructor(private val context: Context) {
                     style = Paint.Style.STROKE
                     strokeWidth = 4f
                 }
-                canvas.drawRect(12f, 12f, (TARGET_WIDTH - 12).toFloat(), (TARGET_HEIGHT - 12).toFloat(), paint)
+                canvas.drawRect(12f, 12f, (targetWidth - 12).toFloat(), (targetHeight - 12).toFloat(), paint)
 
                 // Top app bar
                 paint.apply {
                     color = Color.rgb(30, 41, 59)
                     style = Paint.Style.FILL
                 }
-                canvas.drawRect(12f, 12f, (TARGET_WIDTH - 12).toFloat(), 70f, paint)
+                canvas.drawRect(12f, 12f, (targetWidth - 12).toFloat(), 70f, paint)
 
                 paint.apply {
                     color = Color.WHITE
-                    textSize = 26f
+                    textSize = 24f
                     typeface = Typeface.DEFAULT_BOLD
                 }
-                canvas.drawText("DexoLink Display Mirroring", 30f, 50f, paint)
+                canvas.drawText("DexoLink Display Mirroring", 24f, 50f, paint)
 
                 // Device & System Info
                 paint.apply {
                     color = Color.rgb(148, 163, 184)
-                    textSize = 22f
+                    textSize = 20f
                     typeface = Typeface.DEFAULT
                 }
-                canvas.drawText("Source: ${Build.MANUFACTURER} ${Build.MODEL} (Android Screen)", 30f, 120f, paint)
-                canvas.drawText("Resolution: ${TARGET_WIDTH}x${TARGET_HEIGHT} @ 60Hz", 30f, 160f, paint)
+                canvas.drawText("Source: ${Build.MANUFACTURER} ${Build.MODEL} (Android Screen)", 24f, 115f, paint)
+                canvas.drawText("Resolution: ${targetWidth}x${targetHeight} @ 60Hz", 24f, 155f, paint)
 
                 val timeStr = timeFormat.format(Date())
                 val seq = sequenceNumber.get()
-                canvas.drawText("Timestamp: $timeStr | Frame #$seq", 30f, 200f, paint)
+                canvas.drawText("Timestamp: $timeStr | Frame #$seq", 24f, 195f, paint)
 
                 // Active Badge
                 paint.color = Color.rgb(34, 197, 94)
-                canvas.drawCircle(45f, 250f, 12f, paint)
+                canvas.drawCircle(36f, 245f, 10f, paint)
                 paint.color = Color.WHITE
-                paint.textSize = 20f
+                paint.textSize = 18f
                 paint.typeface = Typeface.DEFAULT_BOLD
-                canvas.drawText("DISPLAY MIRRORING ACTIVE", 70f, 257f, paint)
+                canvas.drawText("DISPLAY MIRRORING ACTIVE", 56f, 252f, paint)
 
                 // Mirrored device canvas frame
                 paint.apply {
@@ -413,19 +442,21 @@ class ScreenStreamManager private constructor(private val context: Context) {
                     style = Paint.Style.STROKE
                     strokeWidth = 2f
                 }
-                val previewLeft = 40f
-                val previewTop = 290f
-                val previewRight = (TARGET_WIDTH - 40).toFloat()
-                val previewBottom = (TARGET_HEIGHT - 30).toFloat()
-                canvas.drawRoundRect(previewLeft, previewTop, previewRight, previewBottom, 12f, 12f, paint)
+                val previewLeft = 24f
+                val previewTop = 280f
+                val previewRight = (targetWidth - 24).toFloat()
+                val previewBottom = (targetHeight - 24).toFloat()
+                if (previewBottom > previewTop + 40f && previewRight > previewLeft + 40f) {
+                    canvas.drawRoundRect(previewLeft, previewTop, previewRight, previewBottom, 12f, 12f, paint)
 
-                paint.apply {
-                    color = Color.rgb(100, 116, 139)
-                    style = Paint.Style.FILL
-                    textSize = 18f
-                    typeface = Typeface.DEFAULT
+                    paint.apply {
+                        color = Color.rgb(100, 116, 139)
+                        style = Paint.Style.FILL
+                        textSize = 16f
+                        typeface = Typeface.DEFAULT
+                    }
+                    canvas.drawText("Real-time low-latency wireless mirror feed connected.", previewLeft + 16f, previewTop + 40f, paint)
                 }
-                canvas.drawText("Real-time low-latency wireless mirror feed connected.", previewLeft + 20f, previewTop + 50f, paint)
 
                 // Compress
                 val stream = ByteArrayOutputStream()
@@ -433,7 +464,7 @@ class ScreenStreamManager private constructor(private val context: Context) {
                 val jpegBytes = stream.toByteArray()
                 bmp.recycle()
 
-                sendEncodedJpegFrame(jpegBytes, TARGET_WIDTH, TARGET_HEIGHT)
+                sendEncodedJpegFrame(jpegBytes, targetWidth, targetHeight)
 
                 delay(delayMs)
             }

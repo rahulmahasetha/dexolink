@@ -6,7 +6,7 @@ import AVFoundation
 
 // MARK: - Models for iOS
 
-public struct DiscoveredDevice: Identifiable, Equatable {
+public struct DiscoveredDevice: Identifiable, Equatable, Hashable {
     public let id: String
     public let name: String
     public let endpoint: String
@@ -19,6 +19,41 @@ public struct DiscoveredDevice: Identifiable, Equatable {
         self.endpoint = endpoint
         self.port = port
         self.isPaired = isPaired
+    }
+}
+
+public struct iOSFrameSize: Equatable, Codable {
+    public var width: Int
+    public var height: Int
+    public init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+    }
+}
+
+public enum iOSScreenDisplayHelper {
+    public static func displayPixelSize(bounds: CGSize, scale: CGFloat) -> iOSFrameSize {
+        let s = scale > 0 ? scale : 1.0
+        return iOSFrameSize(
+            width: Int((bounds.width * s).rounded()),
+            height: Int((bounds.height * s).rounded())
+        )
+    }
+
+    public static func calculateProportionalTargetSize(sourceWidth: Int, sourceHeight: Int, maxEdge: Int = 1280) -> iOSFrameSize {
+        guard sourceWidth > 0 && sourceHeight > 0 else {
+            return iOSFrameSize(width: 960, height: 540)
+        }
+        let maxDim = max(sourceWidth, sourceHeight)
+        if maxDim <= maxEdge {
+            return iOSFrameSize(width: sourceWidth, height: sourceHeight)
+        }
+        let scale = Double(maxEdge) / Double(maxDim)
+        var targetW = Int((Double(sourceWidth) * scale).rounded())
+        var targetH = Int((Double(sourceHeight) * scale).rounded())
+        if targetW % 2 != 0 { targetW -= 1 }
+        if targetH % 2 != 0 { targetH -= 1 }
+        return iOSFrameSize(width: max(targetW, 2), height: max(targetH, 2))
     }
 }
 
