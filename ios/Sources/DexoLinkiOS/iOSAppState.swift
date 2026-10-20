@@ -2,6 +2,7 @@ import SwiftUI
 import Foundation
 import Network
 import Combine
+import AVFoundation
 
 // MARK: - Models for iOS
 
@@ -118,6 +119,32 @@ public class iOSAppState: ObservableObject {
     }
     @Published public var isDesktopModeEnabled: Bool {
         didSet { UserDefaults.standard.set(isDesktopModeEnabled, forKey: "dexolink_ios_desktop_mode") }
+    }
+
+    public func setCameraSharingEnabled(_ enabled: Bool) {
+        guard isCameraSharingEnabled != enabled else { return }
+        if enabled {
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            switch status {
+            case .authorized:
+                self.isCameraSharingEnabled = true
+            case .notDetermined:
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    DispatchQueue.main.async {
+                        self.isCameraSharingEnabled = granted
+                    }
+                }
+            case .denied, .restricted:
+                self.isCameraSharingEnabled = false
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            @unknown default:
+                self.isCameraSharingEnabled = false
+            }
+        } else {
+            self.isCameraSharingEnabled = false
+        }
     }
 
     // Active Transfers & History

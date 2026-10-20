@@ -1,13 +1,19 @@
 package com.macdroid.ui
 
+import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.pdf.PdfRenderer
 import android.media.ThumbnailUtils
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.ContextCompat
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
@@ -20,6 +26,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -56,8 +64,7 @@ import com.macdroid.core.TransferItem
 import com.macdroid.core.TransferStatus
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import com.macdroid.networking.ConnectionState
-import com.macdroid.networking.DiscoveredDevice
+import com.macdroid.networking.*
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.macdroid.storage.TrustedDevice
@@ -1576,6 +1583,39 @@ fun HomeScreenContent(
     val screenSharingEnabled by settings.screenSharing.collectAsState()
     val desktopModeEnabled by settings.desktopMode.collectAsState()
 
+    var showCameraSharingDialog by remember { mutableStateOf(false) }
+    var showScreenSharingDialog by remember { mutableStateOf(false) }
+    var showDesktopModeDialog by remember { mutableStateOf(false) }
+
+    val homeCameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            settings.setCameraSharing(true)
+            Toast.makeText(context, "Camera permission granted. Camera Sharing is active.", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Camera permission required to stream camera.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val homeMediaProjectionManager = remember {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+    }
+    val homeScreenCaptureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            settings.setScreenSharing(true)
+            Toast.makeText(context, "Screen capture permission granted. Screen mirroring active.", Toast.LENGTH_SHORT).show()
+            val streamId = UUID.randomUUID().toString()
+            com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                StreamRequestMessage(streamId, "screen", mapOf("fps" to "15"))
+            )
+        } else {
+            Toast.makeText(context, "Screen capture permission was cancelled.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     if (showHandoffToMacDialog) {
         HandoffToMacDialog(
             onDismiss = { showHandoffToMacDialog = false },
@@ -2690,7 +2730,7 @@ fun HomeScreenContent(
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onNavigateSettings() }
+                            .clickable { showCameraSharingDialog = true }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -2757,7 +2797,7 @@ fun HomeScreenContent(
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onNavigateSettings() }
+                            .clickable { showScreenSharingDialog = true }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -2824,7 +2864,7 @@ fun HomeScreenContent(
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onNavigateSettings() }
+                            .clickable { showDesktopModeDialog = true }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -3027,6 +3067,355 @@ fun HomeScreenContent(
 
         item { Spacer(modifier = Modifier.height(10.dp)) }
     }
+
+    if (showCameraSharingDialog) {
+        val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        CameraSharingDialog(
+            onDismiss = { showCameraSharingDialog = false },
+            hasPermission = hasCam,
+            onRequestPermission = {
+                homeCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            },
+            onOpenSettings = {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                }
+                context.startActivity(intent)
+            },
+            onStartStream = {
+                showCameraSharingDialog = false
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamRequestMessage(streamId, "camera", mapOf("quality" to "medium"))
+                )
+                Toast.makeText(context, "Streaming camera feed to connected device...", Toast.LENGTH_SHORT).show()
+            },
+            onRequestRemoteStream = {
+                showCameraSharingDialog = false
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamRequestMessage(streamId, "camera", mapOf("direction" to "incoming"))
+                )
+                Toast.makeText(context, "Requested camera stream from ${pairedDevice?.deviceName ?: "connected device"}", Toast.LENGTH_SHORT).show()
+            },
+            onStopStream = {
+                showCameraSharingDialog = false
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamStopMessage(streamId, "User stopped feed")
+                )
+                Toast.makeText(context, "Camera feed stopped", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    if (showScreenSharingDialog) {
+        ScreenSharingDialog(
+            onDismiss = { showScreenSharingDialog = false },
+            onStartMirroring = {
+                showScreenSharingDialog = false
+                if (homeMediaProjectionManager != null) {
+                    homeScreenCaptureLauncher.launch(homeMediaProjectionManager.createScreenCaptureIntent())
+                } else {
+                    Toast.makeText(context, "Screen capture service unavailable", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onStopMirroring = {
+                showScreenSharingDialog = false
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamStopMessage(streamId, "Screen sharing stopped")
+                )
+                Toast.makeText(context, "Screen sharing stopped", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    if (showDesktopModeDialog) {
+        DesktopModeDialog(
+            onDismiss = { showDesktopModeDialog = false },
+            pairedDeviceName = pairedDevice?.deviceName,
+            onSendInput = { eventType, x, y, button ->
+                val streamId = "desktop_session"
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    DesktopInputEventMessage(streamId, eventType, x, y, button, null)
+                )
+            }
+        )
+    }
+}
+
+@Composable
+fun CameraSharingDialog(
+    onDismiss: () -> Unit,
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onStartStream: () -> Unit,
+    onRequestRemoteStream: () -> Unit,
+    onStopStream: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFFCE7F3)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    DexoIcon(imageVector = DexoIcons.CategoryVideo, contentDescription = null, tint = Color(0xFFEC4899), modifier = Modifier.size(20.dp))
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text("Camera Sharing", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color(0xFF0F172A))
+                    Text(if (hasPermission) "Hardware Access: Allowed" else "Hardware Access: Permission Required", fontSize = 11.sp, color = if (hasPermission) Color(0xFF16A34A) else Color(0xFFDC2626))
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Stream your phone's camera feed directly to your Mac or Windows PC, or request remote camera video over local Wi-Fi.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF475569)
+                )
+
+                if (!hasPermission) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1F2)),
+                        border = BorderStroke(1.dp, Color(0xFFFECDD3)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("Camera Permission Required", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF9F1239))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Grant camera permission so DexoLink can capture video frames.", fontSize = 11.sp, color = Color(0xFFBE123C))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = onRequestPermission,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE11D48)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Grant Access", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                OutlinedButton(
+                                    onClick = onOpenSettings,
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("App Settings", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(
+                                onClick = onStartStream,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEC4899)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Start Streaming Phone Camera", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = onRequestRemoteStream,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Request Remote Camera Stream", fontSize = 12.sp, color = Color(0xFF0F172A))
+                            }
+                            OutlinedButton(
+                                onClick = onStopStream,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Stop Active Feed", fontSize = 12.sp, color = Color(0xFFDC2626))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun ScreenSharingDialog(
+    onDismiss: () -> Unit,
+    onStartMirroring: () -> Unit,
+    onStopMirroring: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFEFF6FF)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    DexoIcon(imageVector = DexoIcons.DeviceMac, contentDescription = null, tint = Color(0xFF2563EB), modifier = Modifier.size(20.dp))
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text("Screen Sharing", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color(0xFF0F172A))
+                    Text("Display Mirroring", fontSize = 11.sp, color = Color(0xFF64748B))
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Mirror your device display to paired screens in real time using local hardware-accelerated capture.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF475569)
+                )
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(
+                            onClick = onStartMirroring,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Start Screen Mirroring Now", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onStopMirroring,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Stop Screen Mirroring", fontSize = 12.sp, color = Color(0xFFDC2626))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun DesktopModeDialog(
+    onDismiss: () -> Unit,
+    pairedDeviceName: String?,
+    onSendInput: (String, Double, Double, Int) -> Unit
+) {
+    var posX by remember { mutableStateOf(0.5) }
+    var posY by remember { mutableStateOf(0.5) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFD1FAE5)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    DexoIcon(imageVector = DexoIcons.Globe, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text("Desktop Mode (Beta)", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color(0xFF0F172A))
+                    Text(if (pairedDeviceName != null) "Host: $pairedDeviceName" else "Host: Not Connected", fontSize = 11.sp, color = if (pairedDeviceName != null) Color(0xFF16A34A) else Color(0xFF64748B))
+                }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Touch and drag inside the trackpad below to control your Mac or Windows cursor in real time.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF475569)
+                )
+
+                // Virtual Trackpad
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF0F172A))
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                posX = (posX + (dragAmount.x / 400.0)).coerceIn(0.0, 1.0)
+                                posY = (posY + (dragAmount.y / 300.0)).coerceIn(0.0, 1.0)
+                                onSendInput("mouse_move", posX, posY, 0)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        DexoIcon(imageVector = DexoIcons.Sparkles, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Interactive Trackpad Area", fontSize = 12.sp, color = Color(0xFFCBD5E1), fontWeight = FontWeight.SemiBold)
+                        Text("Drag to move pointer", fontSize = 10.sp, color = Color(0xFF64748B))
+                    }
+                }
+
+                // Mouse Click Actions
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            onSendInput("mouse_down", posX, posY, 0)
+                            onSendInput("mouse_up", posX, posY, 0)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Left Click", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            onSendInput("mouse_down", posX, posY, 1)
+                            onSendInput("mouse_up", posX, posY, 1)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Right Click", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close Trackpad", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+            }
+        }
+    )
 }
 
 // Files Tab Screen Content
@@ -3985,6 +4374,35 @@ fun SettingsTabContent(
     val screenSharingEnabled by settings.screenSharing.collectAsState()
     val desktopModeEnabled by settings.desktopMode.collectAsState()
     var showEnhancedClipboardInfoDialog by remember { mutableStateOf(false) }
+    var showCameraPermissionDialog by remember { mutableStateOf(false) }
+    var showDesktopModeInfoDialog by remember { mutableStateOf(false) }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            settings.setCameraSharing(true)
+            Toast.makeText(context, "Camera permission granted. Camera Sharing is active.", Toast.LENGTH_SHORT).show()
+        } else {
+            settings.setCameraSharing(false)
+            showCameraPermissionDialog = true
+        }
+    }
+
+    val mediaProjectionManager = remember {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+    }
+    val screenCaptureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            settings.setScreenSharing(true)
+            Toast.makeText(context, "Screen capture permission granted. Screen Sharing is active.", Toast.LENGTH_SHORT).show()
+        } else {
+            settings.setScreenSharing(false)
+            Toast.makeText(context, "Screen capture permission was cancelled.", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -4808,7 +5226,19 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = cameraSharingEnabled,
-                                onCheckedChange = { settings.setCameraSharing(it) },
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                        if (hasCam) {
+                                            settings.setCameraSharing(true)
+                                            Toast.makeText(context, "Camera Sharing active", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                        }
+                                    } else {
+                                        settings.setCameraSharing(false)
+                                    }
+                                },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFFEC4899))
                             )
                         }
@@ -4845,7 +5275,17 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = screenSharingEnabled,
-                                onCheckedChange = { settings.setScreenSharing(it) },
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        if (mediaProjectionManager != null) {
+                                            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                                        } else {
+                                            settings.setScreenSharing(true)
+                                        }
+                                    } else {
+                                        settings.setScreenSharing(false)
+                                    }
+                                },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF3B82F6))
                             )
                         }
@@ -4893,7 +5333,14 @@ fun SettingsTabContent(
                             }
                             Switch(
                                 checked = desktopModeEnabled,
-                                onCheckedChange = { settings.setDesktopMode(it) },
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        settings.setDesktopMode(true)
+                                        showDesktopModeInfoDialog = true
+                                    } else {
+                                        settings.setDesktopMode(false)
+                                    }
+                                },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF10B981))
                             )
                         }
@@ -5026,6 +5473,105 @@ fun SettingsTabContent(
             },
             containerColor = Color.White,
             shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showCameraPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showCameraPermissionDialog = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFFCE7F3)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(imageVector = DexoIcons.CategoryVideo, contentDescription = null, tint = Color(0xFFEC4899), modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Camera Permission Required", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF0F172A))
+                }
+            },
+            text = {
+                Text(
+                    "DexoLink requires Camera permission to stream your phone's live video feed to your Mac or PC. Please enable Camera access in App Settings.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF475569),
+                    lineHeight = 17.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCameraPermissionDialog = false
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", context.packageName, null)
+                        }
+                        context.startActivity(intent)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEC4899)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Open App Settings", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCameraPermissionDialog = false }) {
+                    Text("Cancel", color = Color(0xFF64748B))
+                }
+            }
+        )
+    }
+
+    if (showDesktopModeInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showDesktopModeInfoDialog = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFD1FAE5)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(imageVector = DexoIcons.Globe, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Desktop Mode (Beta)", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF0F172A))
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Desktop Mode lets you view and control your connected Mac or Windows computer directly from your Android phone with an interactive touchpad and keyboard.",
+                        fontSize = 12.sp,
+                        color = Color(0xFF475569),
+                        lineHeight = 17.sp
+                    )
+                    Text(
+                        "• Host control on macOS requires Accessibility permission (DexoLink prompts automatically on your Mac).\n• Tap the Desktop Mode card on Home anytime to start an interactive remote control session.",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        lineHeight = 16.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showDesktopModeInfoDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Ready to Use", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
         )
     }
 }

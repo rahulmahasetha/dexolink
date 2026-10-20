@@ -653,22 +653,50 @@ class AppState: ObservableObject {
 
     func setCameraSharingEnabled(_ enabled: Bool) {
         guard isCameraSharingEnabled != enabled else { return }
-        isCameraSharingEnabled = enabled
-        streamManager.isCameraSharingEnabled = enabled
+        if enabled {
+            isCameraSharingEnabled = true
+            streamManager.isCameraSharingEnabled = true
+            streamManager.checkCameraPermission { [weak self] granted in
+                if !granted {
+                    self?.statusMessage = "Camera permission required for Camera Sharing. Please grant access in System Settings."
+                }
+            }
+        } else {
+            isCameraSharingEnabled = false
+            streamManager.isCameraSharingEnabled = false
+        }
         print("[macOS Camera Sharing] Toggled to: \(enabled ? "ON" : "OFF")")
     }
 
     func setScreenSharingEnabled(_ enabled: Bool) {
         guard isScreenSharingEnabled != enabled else { return }
-        isScreenSharingEnabled = enabled
-        streamManager.isScreenSharingEnabled = enabled
+        if enabled {
+            isScreenSharingEnabled = true
+            streamManager.isScreenSharingEnabled = true
+            let granted = streamManager.checkScreenCapturePermission()
+            if !granted {
+                statusMessage = "Screen Recording permission required for Screen Sharing."
+            }
+        } else {
+            isScreenSharingEnabled = false
+            streamManager.isScreenSharingEnabled = false
+        }
         print("[macOS Screen Sharing] Toggled to: \(enabled ? "ON" : "OFF")")
     }
 
     func setDesktopModeEnabled(_ enabled: Bool) {
         guard isDesktopModeEnabled != enabled else { return }
-        isDesktopModeEnabled = enabled
-        streamManager.isDesktopModeEnabled = enabled
+        if enabled {
+            isDesktopModeEnabled = true
+            streamManager.isDesktopModeEnabled = true
+            let granted = streamManager.checkAccessibilityPermission()
+            if !granted {
+                statusMessage = "Accessibility permission required for Desktop Mode input control."
+            }
+        } else {
+            isDesktopModeEnabled = false
+            streamManager.isDesktopModeEnabled = false
+        }
         print("[macOS Desktop Mode (beta)] Toggled to: \(enabled ? "ON" : "OFF")")
     }
 

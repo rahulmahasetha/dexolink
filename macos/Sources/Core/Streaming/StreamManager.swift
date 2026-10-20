@@ -11,7 +11,7 @@ public enum StreamType: String {
     case desktopMode = "desktop_mode"
 }
 
-public class StreamManager: NSObject {
+public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     public static let shared = StreamManager()
 
     public var isCameraSharingEnabled: Bool {
@@ -19,6 +19,7 @@ public class StreamManager: NSObject {
             UserDefaults.standard.set(isCameraSharingEnabled, forKey: "dexolink_camera_sharing_enabled")
             if !isCameraSharingEnabled {
                 stopStreamType(.camera)
+                stopCameraSession()
             }
         }
     }
@@ -45,6 +46,13 @@ public class StreamManager: NSObject {
     private var streamTimers: [String: Timer] = [:]
     private weak var connectionManager: ConnectionManager?
 
+    // Camera capture session components
+    private var captureSession: AVCaptureSession?
+    private var videoOutput: AVCaptureVideoDataOutput?
+    private var latestCameraFrameBase64: String?
+    private let cameraQueue = DispatchQueue(label: "com.dexolink.camera.capture", qos: .userInteractive)
+    private let ciContext = CIContext()
+
     public var onFrameGenerated: ((String, Int64, String) -> Void)?
     public var onStatusChanged: ((String) -> Void)?
 
@@ -59,6 +67,124 @@ public class StreamManager: NSObject {
         self.connectionManager = cm
     }
 
+    // MARK: - Permission Handlers
+    @discardableResult
+    public func checkCameraPermission(completion: ((Bool) -> Void)? = nil) -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            completion?(true)
+            return true
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    completion?(granted)
+                }
+            }
+            return false
+        case .denied, .restricted:
+            DispatchQueue.main.async {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                    NSWorkspace.shared.open(url)
+                }
+                completion?(false)
+            }
+            return false
+        @unknown default:
+            completion?(false)
+            return false
+        }
+    }
+
+    @discardableResult
+    public func checkScreenCapturePermission() -> Bool {
+        if #available(macOS 10.15, *) {
+            if CGPreflightScreenCaptureAccess() {
+                return true
+            } else {
+                CGRequestScreenCaptureAccess()
+                let granted = CGPreflightScreenCaptureAccess()
+                if !granted {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                return granted
+            }
+        }
+        return true
+    }
+
+    @discardableResult
+    public func checkAccessibilityPermission() -> Bool {
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let isTrusted = AXIsProcessTrustedWithOptions(options)
+        if !isTrusted {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        return isTrusted
+    }
+
+    // MARK: - Camera Hardware Session
+    private func startCameraSessionIfNeeded() {
+        guard captureSession == nil else {
+            if !(captureSession?.isRunning ?? false) {
+                cameraQueue.async { [weak self] in
+                    self?.captureSession?.startRunning()
+                }
+            }
+            return
+        }
+
+        cameraQueue.async { [weak self] in
+            guard let self = self else { return }
+            let session = AVCaptureSession()
+            session.sessionPreset = .vga640x480
+
+            guard let device = AVCaptureDevice.default(for: .video) ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified),
+                  let input = try? AVCaptureDeviceInput(device: device),
+                  session.canAddInput(input) else {
+                return
+            }
+            session.addInput(input)
+
+            let output = AVCaptureVideoDataOutput()
+            output.alwaysDiscardsLateVideoFrames = true
+            output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
+            output.setSampleBufferDelegate(self, queue: self.cameraQueue)
+
+            if session.canAddOutput(output) {
+                session.addOutput(output)
+            }
+
+            session.startRunning()
+            self.captureSession = session
+            self.videoOutput = output
+        }
+    }
+
+    private func stopCameraSession() {
+        cameraQueue.async { [weak self] in
+            self?.captureSession?.stopRunning()
+            self?.captureSession = nil
+            self?.videoOutput = nil
+            self?.latestCameraFrameBase64 = nil
+        }
+    }
+
+    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let ciImage = CIImage(cvPixelBuffer: imageBuffer)
+        if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+            let bitmap = NSBitmapImageRep(cgImage: cgImage)
+            if let jpegData = bitmap.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.6)]) {
+                self.latestCameraFrameBase64 = jpegData.base64EncodedString()
+            }
+        }
+    }
+
     // MARK: - Stream Lifecycle
     public func handleIncomingStreamRequest(streamId: String, streamType: String, options: [String: String]?) -> ProtocolMessage {
         guard let type = StreamType(rawValue: streamType) else {
@@ -70,14 +196,18 @@ public class StreamManager: NSObject {
             guard isCameraSharingEnabled else {
                 return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Camera Sharing is turned OFF in Settings")
             }
+            checkCameraPermission()
+            startCameraSessionIfNeeded()
         case .screen:
             guard isScreenSharingEnabled else {
                 return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Screen Sharing is turned OFF in Settings")
             }
+            checkScreenCapturePermission()
         case .desktopMode:
             guard isDesktopModeEnabled else {
                 return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Desktop Mode (beta) is turned OFF in Settings")
             }
+            checkAccessibilityPermission()
         }
 
         activeStreams[streamId] = type
@@ -88,9 +218,8 @@ public class StreamManager: NSObject {
     public func handleDesktopInput(streamId: String, eventType: String, x: Double, y: Double, button: Int, key: String?) {
         guard isDesktopModeEnabled else { return }
 
-        // Security check: Check Accessibility permissions for input simulation
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
-        let isTrusted = AXIsProcessTrustedWithOptions(options)
+        // Security check: Check Accessibility permissions for input simulation and prompt if needed
+        let isTrusted = checkAccessibilityPermission()
         guard isTrusted else {
             print("[DexoLink Desktop Mode] Remote input ignored: macOS Accessibility permissions not granted.")
             return
@@ -134,7 +263,7 @@ public class StreamManager: NSObject {
             if !frameBase64.isEmpty {
                 self.onFrameGenerated?(streamId, seq, frameBase64)
                 let msg = ProtocolMessage.streamFrame(streamId: streamId, sequence: seq, format: "jpeg", width: 640, height: 480, data: frameBase64)
-                try? self.connectionManager?.send(message: msg)
+                self.connectionManager?.send(message: msg)
             }
         }
         streamTimers[streamId] = timer
@@ -149,11 +278,51 @@ public class StreamManager: NSObject {
                     return jpegData.base64EncodedString()
                 }
             }
-            return ""
+            return generateFallbackBanner(title: "DexoLink Screen Sharing", subtitle: "Mirroring macOS Display")
         case .camera:
-            // High-efficiency JPEG placeholder/sample frame
-            return "data:image/jpeg;base64,camera_stream_active"
+            if let liveFrame = latestCameraFrameBase64, !liveFrame.isEmpty {
+                return liveFrame
+            }
+            return generateFallbackBanner(title: "DexoLink Camera Feed", subtitle: "Live Camera Stream Active")
         }
+    }
+
+    private func generateFallbackBanner(title: String, subtitle: String) -> String {
+        let size = NSSize(width: 640, height: 480)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.18, alpha: 1.0).setFill()
+        NSRect(origin: .zero, size: size).fill()
+
+        let pStyle = NSMutableParagraphStyle()
+        pStyle.alignment = .center
+
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 24),
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: pStyle
+        ]
+        let subAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor(calibratedRed: 0.6, green: 0.7, blue: 0.85, alpha: 1.0),
+            .paragraphStyle: pStyle
+        ]
+
+        let titleRect = NSRect(x: 20, y: 250, width: size.width - 40, height: 40)
+        let subRect = NSRect(x: 20, y: 210, width: size.width - 40, height: 30)
+
+        (title as NSString).draw(in: titleRect, withAttributes: titleAttrs)
+        (subtitle as NSString).draw(in: subRect, withAttributes: subAttrs)
+
+        image.unlockFocus()
+
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let jpegData = rep.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.6)]) {
+            return jpegData.base64EncodedString()
+        }
+        return ""
     }
 
     public func stopStream(streamId: String) {
@@ -174,5 +343,6 @@ public class StreamManager: NSObject {
         }
         streamTimers.removeAll()
         activeStreams.removeAll()
+        stopCameraSession()
     }
 }

@@ -108,7 +108,10 @@ struct DevicesView: View {
 
                 // Section 4: Media Streaming & Remote Control (v4.0.1)
                 Section(header: Text("Media Streaming & Remote Control")) {
-                    Toggle(isOn: $appState.isCameraSharingEnabled) {
+                    Toggle(isOn: Binding(
+                        get: { appState.isCameraSharingEnabled },
+                        set: { appState.setCameraSharingEnabled($0) }
+                    )) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Camera Sharing")
                                 .font(.subheadline)

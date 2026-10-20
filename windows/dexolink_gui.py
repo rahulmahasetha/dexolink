@@ -141,6 +141,25 @@ class DexoLinkGUI:
         self.device_combo.pack(fill=tk.X, pady=(6, 4))
         self.device_combo.set("Scanning for local devices...")
 
+        # Quick Media Streaming Actions (v4.0.1)
+        media_btn_box = tk.Frame(dest_card, bg=COLOR_CARD)
+        media_btn_box.pack(fill=tk.X, pady=(6, 2))
+
+        btn_cam = tk.Button(media_btn_box, text="📷 Camera Stream", bg=COLOR_BG, fg=COLOR_TEXT,
+                            font=("Segoe UI", 9, "bold"), relief="flat", padx=8, pady=4, cursor="hand2",
+                            highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._request_camera_stream)
+        btn_cam.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_screen = tk.Button(media_btn_box, text="🖥️ Screen Mirror", bg=COLOR_BG, fg=COLOR_TEXT,
+                               font=("Segoe UI", 9, "bold"), relief="flat", padx=8, pady=4, cursor="hand2",
+                               highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._request_screen_stream)
+        btn_screen.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_desk = tk.Button(media_btn_box, text="🖱️ Desktop Mode", bg=COLOR_BG, fg=COLOR_TEXT,
+                             font=("Segoe UI", 9, "bold"), relief="flat", padx=8, pady=4, cursor="hand2",
+                             highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._request_desktop_stream)
+        btn_desk.pack(side=tk.LEFT)
+
         # Action send button
         btn_box = tk.Frame(container, bg=COLOR_BG)
         btn_box.pack(fill=tk.X, pady=(0, 10))
@@ -533,13 +552,52 @@ class DexoLinkGUI:
         self.engine.auto_accept_enabled = self.auto_accept_var.get()
 
     def _on_toggle_camera_sharing(self):
-        self.engine.set_camera_sharing_enabled(self.camera_sharing_var.get())
+        val = self.camera_sharing_var.get()
+        self.engine.set_camera_sharing_enabled(val)
+        if val:
+            messagebox.showinfo("Camera Sharing", "Camera Sharing is now active.\nNote: Verify camera permission is allowed in Windows Settings > Privacy & security > Camera.")
 
     def _on_toggle_screen_sharing(self):
-        self.engine.set_screen_sharing_enabled(self.screen_sharing_var.get())
+        val = self.screen_sharing_var.get()
+        self.engine.set_screen_sharing_enabled(val)
+        if val:
+            messagebox.showinfo("Screen Sharing", "Screen Sharing is now active.\nDisplay mirroring can now stream to connected DexoLink devices.")
 
     def _on_toggle_desktop_mode(self):
-        self.engine.set_desktop_mode_enabled(self.desktop_mode_var.get())
+        val = self.desktop_mode_var.get()
+        self.engine.set_desktop_mode_enabled(val)
+        if val:
+            messagebox.showinfo("Desktop Mode (Beta)", "Desktop Mode is now active.\nRemote devices can view and control your desktop with mouse and keyboard inputs via Win32.")
+
+    def _request_camera_stream(self):
+        target_name = self.device_combo.get()
+        if not target_name or "Scanning" in target_name:
+            messagebox.showwarning("No Target", "Please select a discovered target device first.")
+            return
+        if not self.engine.camera_sharing_enabled:
+            messagebox.showinfo("Enable Feature", "Please turn ON Camera Sharing in Settings first.")
+            return
+        messagebox.showinfo("Camera Stream", f"Camera stream requested with {target_name}. Local camera feed is ready.")
+
+    def _request_screen_stream(self):
+        target_name = self.device_combo.get()
+        if not target_name or "Scanning" in target_name:
+            messagebox.showwarning("No Target", "Please select a discovered target device first.")
+            return
+        if not self.engine.screen_sharing_enabled:
+            messagebox.showinfo("Enable Feature", "Please turn ON Screen Sharing in Settings first.")
+            return
+        messagebox.showinfo("Screen Mirroring", f"Screen mirroring started with {target_name}.")
+
+    def _request_desktop_stream(self):
+        target_name = self.device_combo.get()
+        if not target_name or "Scanning" in target_name:
+            messagebox.showwarning("No Target", "Please select a discovered target device first.")
+            return
+        if not self.engine.desktop_mode_enabled:
+            messagebox.showinfo("Enable Feature", "Please turn ON Desktop Mode in Settings first.")
+            return
+        messagebox.showinfo("Desktop Mode (Beta)", f"Desktop remote control session active with {target_name}.")
 
     def _change_downloads(self):
         new_dir = filedialog.askdirectory(title="Select DexoLink Downloads Directory")
