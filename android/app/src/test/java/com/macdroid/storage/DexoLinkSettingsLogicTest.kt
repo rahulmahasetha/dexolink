@@ -26,6 +26,9 @@ class DexoLinkSettingsLogicTest {
         val autoDeviceDiscoveryEnabled = true
         val isContinuityEnabled = true
         val isEnhancedClipboardEnabled = true
+        val cameraSharingEnabled = true
+        val screenSharingEnabled = true
+        val desktopModeEnabled = true
         val hasPairedDevice = true
         val hasDiscoveredDevices = true
 
@@ -34,13 +37,19 @@ class DexoLinkSettingsLogicTest {
         val showDevicePairing = autoDeviceDiscoveryEnabled || hasPairedDevice || hasDiscoveredDevices
         val showContinuity = isContinuityEnabled
         val showEnhancedClipboard = isEnhancedClipboardEnabled
-        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard
+        val showCameraSharing = cameraSharingEnabled
+        val showScreenSharing = screenSharingEnabled
+        val showDesktopMode = desktopModeEnabled
+        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard || showCameraSharing || showScreenSharing || showDesktopMode
 
         assertTrue(showClipboardSync)
         assertTrue(showFileSharing)
         assertTrue(showDevicePairing)
         assertTrue(showContinuity)
         assertTrue(showEnhancedClipboard)
+        assertTrue(showCameraSharing)
+        assertTrue(showScreenSharing)
+        assertTrue(showDesktopMode)
         assertTrue(hasAnyActiveFeature)
     }
 
@@ -51,6 +60,9 @@ class DexoLinkSettingsLogicTest {
         val autoDeviceDiscoveryEnabled = false
         val isContinuityEnabled = false
         val isEnhancedClipboardEnabled = false
+        val cameraSharingEnabled = false
+        val screenSharingEnabled = false
+        val desktopModeEnabled = false
         val hasPairedDevice = false
         val hasDiscoveredDevices = false
 
@@ -59,24 +71,33 @@ class DexoLinkSettingsLogicTest {
         val showDevicePairing = autoDeviceDiscoveryEnabled || hasPairedDevice || hasDiscoveredDevices
         val showContinuity = isContinuityEnabled
         val showEnhancedClipboard = isEnhancedClipboardEnabled
-        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard
+        val showCameraSharing = cameraSharingEnabled
+        val showScreenSharing = screenSharingEnabled
+        val showDesktopMode = desktopModeEnabled
+        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard || showCameraSharing || showScreenSharing || showDesktopMode
 
         assertFalse("Clipboard sync should be hidden when disabled", showClipboardSync)
         assertFalse("File sharing should be hidden when disabled", showFileSharing)
         assertFalse("Device pairing should be hidden when discovery off and no devices", showDevicePairing)
         assertFalse("Continuity should be hidden when disabled", showContinuity)
         assertFalse("Enhanced clipboard should be hidden when disabled", showEnhancedClipboard)
+        assertFalse("Camera sharing should be hidden when disabled", showCameraSharing)
+        assertFalse("Screen sharing should be hidden when disabled", showScreenSharing)
+        assertFalse("Desktop mode should be hidden when disabled", showDesktopMode)
         assertFalse("Empty state should be shown when no features active", hasAnyActiveFeature)
     }
 
     @Test
     fun testHomeScreenFeatureVisibilityLogic_partialEnabled() {
-        // Only Continuity and File Sharing enabled
+        // Only Camera Sharing and File Sharing enabled
         val syncMode = ClipboardSyncMode.DISABLED
         val quickFileSharingEnabled = true
         val autoDeviceDiscoveryEnabled = false
-        val isContinuityEnabled = true
+        val isContinuityEnabled = false
         val isEnhancedClipboardEnabled = false
+        val cameraSharingEnabled = true
+        val screenSharingEnabled = false
+        val desktopModeEnabled = false
         val hasPairedDevice = false
         val hasDiscoveredDevices = false
 
@@ -85,14 +106,31 @@ class DexoLinkSettingsLogicTest {
         val showDevicePairing = autoDeviceDiscoveryEnabled || hasPairedDevice || hasDiscoveredDevices
         val showContinuity = isContinuityEnabled
         val showEnhancedClipboard = isEnhancedClipboardEnabled
-        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard
+        val showCameraSharing = cameraSharingEnabled
+        val showScreenSharing = screenSharingEnabled
+        val showDesktopMode = desktopModeEnabled
+        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard || showCameraSharing || showScreenSharing || showDesktopMode
 
         assertFalse(showClipboardSync)
         assertTrue(showFileSharing)
         assertFalse(showDevicePairing)
-        assertTrue(showContinuity)
+        assertFalse(showContinuity)
         assertFalse(showEnhancedClipboard)
+        assertTrue(showCameraSharing)
+        assertFalse(showScreenSharing)
+        assertFalse(showDesktopMode)
         assertTrue("hasAnyActiveFeature must be true when at least one feature is active", hasAnyActiveFeature)
+    }
+
+    @Test
+    fun testMediaStreamingToggles_defaultOff() {
+        val cameraSharingDefault = false
+        val screenSharingDefault = false
+        val desktopModeDefault = false
+
+        assertFalse("Camera Sharing must be OFF by default", cameraSharingDefault)
+        assertFalse("Screen Sharing must be OFF by default", screenSharingDefault)
+        assertFalse("Desktop Mode must be OFF by default", desktopModeDefault)
     }
 
     @Test

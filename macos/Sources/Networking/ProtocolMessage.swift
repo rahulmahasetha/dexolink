@@ -37,6 +37,11 @@ public enum ProtocolMessage: Codable, Equatable {
     case continuityAck(activityId: String, accepted: Bool)
     case continuityDismiss(activityId: String)
     case continuityState(enabled: Bool)
+    case streamRequest(streamId: String, streamType: String, options: [String: String]? = nil)
+    case streamResponse(streamId: String, streamType: String, accepted: Bool, reason: String? = nil)
+    case streamFrame(streamId: String, sequence: Int64, format: String, width: Int, height: Int, data: String)
+    case streamStop(streamId: String, reason: String? = nil)
+    case desktopInputEvent(streamId: String, eventType: String, x: Double, y: Double, button: Int, key: String? = nil)
 
     private enum CodingKeys: String, CodingKey {
         case type, version, deviceId, deviceName, paired, publicKey, accepted, reason
@@ -44,6 +49,7 @@ public enum ProtocolMessage: Codable, Equatable {
         case offset, data, sha256, verified, bytesReceived, code, message
         case sequenceNumber, content, mode
         case activityId, activityType, title, subtitle, url, contentPayload, position, progress, timestamp, sourceDevice, enabled
+        case streamId, streamType, format, sequence, width, height, eventType, x, y, button, key, options
     }
 
     private enum MessageType: String, Codable {
@@ -72,6 +78,11 @@ public enum ProtocolMessage: Codable, Equatable {
         case continuityAck = "CONTINUITY_ACK"
         case continuityDismiss = "CONTINUITY_DISMISS"
         case continuityState = "CONTINUITY_STATE"
+        case streamRequest = "STREAM_REQUEST"
+        case streamResponse = "STREAM_RESPONSE"
+        case streamFrame = "STREAM_FRAME"
+        case streamStop = "STREAM_STOP"
+        case desktopInputEvent = "DESKTOP_INPUT_EVENT"
     }
 
     public init(from decoder: Decoder) throws {
@@ -191,6 +202,42 @@ public enum ProtocolMessage: Codable, Equatable {
             self = .continuityState(
                 enabled: try container.decode(Bool.self, forKey: .enabled)
             )
+        case .streamRequest:
+            self = .streamRequest(
+                streamId: try container.decode(String.self, forKey: .streamId),
+                streamType: try container.decode(String.self, forKey: .streamType),
+                options: try container.decodeIfPresent([String: String].self, forKey: .options)
+            )
+        case .streamResponse:
+            self = .streamResponse(
+                streamId: try container.decode(String.self, forKey: .streamId),
+                streamType: try container.decode(String.self, forKey: .streamType),
+                accepted: try container.decode(Bool.self, forKey: .accepted),
+                reason: try container.decodeIfPresent(String.self, forKey: .reason)
+            )
+        case .streamFrame:
+            self = .streamFrame(
+                streamId: try container.decode(String.self, forKey: .streamId),
+                sequence: try container.decode(Int64.self, forKey: .sequence),
+                format: try container.decode(String.self, forKey: .format),
+                width: try container.decode(Int.self, forKey: .width),
+                height: try container.decode(Int.self, forKey: .height),
+                data: try container.decode(String.self, forKey: .data)
+            )
+        case .streamStop:
+            self = .streamStop(
+                streamId: try container.decode(String.self, forKey: .streamId),
+                reason: try container.decodeIfPresent(String.self, forKey: .reason)
+            )
+        case .desktopInputEvent:
+            self = .desktopInputEvent(
+                streamId: try container.decode(String.self, forKey: .streamId),
+                eventType: try container.decode(String.self, forKey: .eventType),
+                x: try container.decode(Double.self, forKey: .x),
+                y: try container.decode(Double.self, forKey: .y),
+                button: try container.decode(Int.self, forKey: .button),
+                key: try container.decodeIfPresent(String.self, forKey: .key)
+            )
         }
     }
 
@@ -303,6 +350,37 @@ public enum ProtocolMessage: Codable, Equatable {
         case let .continuityState(enabled):
             try container.encode(MessageType.continuityState, forKey: .type)
             try container.encode(enabled, forKey: .enabled)
+        case let .streamRequest(streamId, streamType, options):
+            try container.encode(MessageType.streamRequest, forKey: .type)
+            try container.encode(streamId, forKey: .streamId)
+            try container.encode(streamType, forKey: .streamType)
+            if let options = options { try container.encode(options, forKey: .options) }
+        case let .streamResponse(streamId, streamType, accepted, reason):
+            try container.encode(MessageType.streamResponse, forKey: .type)
+            try container.encode(streamId, forKey: .streamId)
+            try container.encode(streamType, forKey: .streamType)
+            try container.encode(accepted, forKey: .accepted)
+            if let reason = reason { try container.encode(reason, forKey: .reason) }
+        case let .streamFrame(streamId, sequence, format, width, height, data):
+            try container.encode(MessageType.streamFrame, forKey: .type)
+            try container.encode(streamId, forKey: .streamId)
+            try container.encode(sequence, forKey: .sequence)
+            try container.encode(format, forKey: .format)
+            try container.encode(width, forKey: .width)
+            try container.encode(height, forKey: .height)
+            try container.encode(data, forKey: .data)
+        case let .streamStop(streamId, reason):
+            try container.encode(MessageType.streamStop, forKey: .type)
+            try container.encode(streamId, forKey: .streamId)
+            if let reason = reason { try container.encode(reason, forKey: .reason) }
+        case let .desktopInputEvent(streamId, eventType, x, y, button, key):
+            try container.encode(MessageType.desktopInputEvent, forKey: .type)
+            try container.encode(streamId, forKey: .streamId)
+            try container.encode(eventType, forKey: .eventType)
+            try container.encode(x, forKey: .x)
+            try container.encode(y, forKey: .y)
+            try container.encode(button, forKey: .button)
+            if let key = key { try container.encode(key, forKey: .key) }
         }
     }
 }

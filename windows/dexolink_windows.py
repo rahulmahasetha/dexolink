@@ -1,5 +1,5 @@
 """
-DexoLink Windows Companion Engine (v4.0.0)
+DexoLink Windows Companion Engine (v4.0.1)
 Lightweight, zero-dependency, local-network cross-platform engine for Windows.
 Supports:
 - Device discovery (UDP beacon 52841)
@@ -272,6 +272,11 @@ class DexoLinkWindowsEngine:
         self.enhanced_clipboard_enabled = False
         self.auto_discovery_enabled = True
         self.auto_accept_enabled = True
+        # v4.0.1: Media Streaming & Remote Control (OFF by default)
+        self.camera_sharing_enabled = False
+        self.screen_sharing_enabled = False
+        self.desktop_mode_enabled = False
+        self.active_streams: Dict[str, Dict[str, Any]] = {}
         # Event callbacks for GUI
         self.on_device_discovered = None
         self.on_device_connected = None
@@ -280,6 +285,8 @@ class DexoLinkWindowsEngine:
         self.on_transfer_progress = None
         self.on_transfer_complete = None
         self.on_continuity_received = None
+        self.on_stream_started = None
+        self.on_stream_stopped = None
 
     def start(self):
         self.running = True
@@ -292,10 +299,12 @@ class DexoLinkWindowsEngine:
         # Start UDP Discovery Broadcaster & Listener
         threading.Thread(target=self._udp_beacon_broadcast, daemon=True).start()
         threading.Thread(target=self._udp_beacon_listen, daemon=True).start()
-        print(f"[DexoLink Windows] Engine v4.0.0 listening on port {self.port} (ID: {self.device_id})")
+        print(f"[DexoLink Windows] Engine v4.0.1 listening on port {self.port} (ID: {self.device_id})")
 
     def stop(self):
         self.running = False
+        for s_id in list(self.active_streams.keys()):
+            self.stop_stream(s_id, reason="Engine shutting down")
         if self.server_socket:
             try:
                 self.server_socket.close()
@@ -489,10 +498,170 @@ class DexoLinkWindowsEngine:
                     break
             return {"type": "FILE_ACK", "fileId": f_id, "verified": verified}, None
 
+        elif msg_type == "STREAM_REQUEST":
+            stream_id = msg.get("streamId", str(uuid.uuid4()))
+            stream_type = msg.get("streamType", "")
+            
+            # Verify feature toggle: OFF by default
+            if stream_type == "camera" and not self.camera_sharing_enabled:
+                return {
+                    "type": "STREAM_RESPONSE",
+                    "streamId": stream_id,
+                    "streamType": stream_type,
+                    "accepted": False,
+                    "reason": "Camera Sharing is turned OFF in Windows Settings."
+                }, None
+            elif stream_type == "screen" and not self.screen_sharing_enabled:
+                return {
+                    "type": "STREAM_RESPONSE",
+                    "streamId": stream_id,
+                    "streamType": stream_type,
+                    "accepted": False,
+                    "reason": "Screen Sharing is turned OFF in Windows Settings."
+                }, None
+            elif stream_type == "desktop" and not self.desktop_mode_enabled:
+                return {
+                    "type": "STREAM_RESPONSE",
+                    "streamId": stream_id,
+                    "streamType": stream_type,
+                    "accepted": False,
+                    "reason": "Desktop Mode is turned OFF in Windows Settings."
+                }, None
+            
+            # Feature is enabled
+            self.active_streams[stream_id] = {
+                "streamId": stream_id,
+                "streamType": stream_type,
+                "startedAt": time.time(),
+                "peerId": peer_id or "unknown"
+            }
+            if self.on_stream_started:
+                try:
+                    self.on_stream_started(stream_id, stream_type)
+                except Exception:
+                    pass
+            return {
+                "type": "STREAM_RESPONSE",
+                "streamId": stream_id,
+                "streamType": stream_type,
+                "accepted": True
+            }, None
+
+        elif msg_type == "STREAM_RESPONSE":
+            stream_id = msg.get("streamId", "")
+            accepted = msg.get("accepted", False)
+            if not accepted and stream_id in self.active_streams:
+                del self.active_streams[stream_id]
+            return None, None
+
+        elif msg_type == "STREAM_STOP":
+            stream_id = msg.get("streamId", "")
+            if stream_id in self.active_streams:
+                del self.active_streams[stream_id]
+            if self.on_stream_stopped:
+                try:
+                    self.on_stream_stopped(stream_id)
+                except Exception:
+                    pass
+            return None, None
+
+        elif msg_type == "DESKTOP_INPUT_EVENT":
+            if not self.desktop_mode_enabled:
+                # Security: Ignore all remote input if desktop mode toggle is OFF
+                return None, None
+            stream_id = msg.get("streamId", "")
+            event_type = msg.get("eventType", "")
+            x = float(msg.get("x", 0.0))
+            y = float(msg.get("y", 0.0))
+            button = int(msg.get("button", 0))
+            key = msg.get("key", "")
+            self.handle_desktop_input(stream_id, event_type, x, y, button, key)
+            return None, None
+
         elif msg_type == "PING":
             return {"type": "PONG"}, None
 
         return None, None
+
+    def set_camera_sharing_enabled(self, enabled: bool):
+        self.camera_sharing_enabled = enabled
+        if not enabled:
+            self._stop_streams_of_type("camera", "Camera Sharing was disabled in Settings")
+
+    def set_screen_sharing_enabled(self, enabled: bool):
+        self.screen_sharing_enabled = enabled
+        if not enabled:
+            self._stop_streams_of_type("screen", "Screen Sharing was disabled in Settings")
+
+    def set_desktop_mode_enabled(self, enabled: bool):
+        self.desktop_mode_enabled = enabled
+        if not enabled:
+            self._stop_streams_of_type("desktop", "Desktop Mode was disabled in Settings")
+
+    def _stop_streams_of_type(self, stream_type: str, reason: str):
+        for s_id, s_info in list(self.active_streams.items()):
+            if s_info.get("streamType") == stream_type:
+                del self.active_streams[s_id]
+                stop_msg = ProtocolCodec.encode_message({
+                    "type": "STREAM_STOP",
+                    "streamId": s_id,
+                    "reason": reason
+                })
+                for sock in list(self.active_connections.values()):
+                    try:
+                        sock.sendall(stop_msg)
+                    except Exception:
+                        pass
+                if self.on_stream_stopped:
+                    try:
+                        self.on_stream_stopped(s_id)
+                    except Exception:
+                        pass
+
+    def stop_stream(self, stream_id: str, reason: str = "User stopped stream"):
+        if stream_id in self.active_streams:
+            del self.active_streams[stream_id]
+            stop_msg = ProtocolCodec.encode_message({
+                "type": "STREAM_STOP",
+                "streamId": stream_id,
+                "reason": reason
+            })
+            for sock in list(self.active_connections.values()):
+                try:
+                    sock.sendall(stop_msg)
+                except Exception:
+                    pass
+            if self.on_stream_stopped:
+                try:
+                    self.on_stream_stopped(stream_id)
+                except Exception:
+                    pass
+
+    def handle_desktop_input(self, stream_id: str, event_type: str, x: float, y: float, button: int = 0, key: str = ""):
+        """Injects remote input events when Desktop Mode is enabled."""
+        if not self.desktop_mode_enabled:
+            return
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                screen_w = user32.GetSystemMetrics(0)
+                screen_h = user32.GetSystemMetrics(1)
+                pixel_x = int(x * screen_w)
+                pixel_y = int(y * screen_h)
+                
+                if event_type == "mouse_move":
+                    user32.SetCursorPos(pixel_x, pixel_y)
+                elif event_type == "mouse_down":
+                    user32.SetCursorPos(pixel_x, pixel_y)
+                    event_flag = 0x0002 if button == 0 else 0x0008
+                    user32.mouse_event(event_flag, 0, 0, 0, 0)
+                elif event_type == "mouse_up":
+                    user32.SetCursorPos(pixel_x, pixel_y)
+                    event_flag = 0x0004 if button == 0 else 0x0010
+                    user32.mouse_event(event_flag, 0, 0, 0, 0)
+            except Exception as e:
+                print(f"[DexoLink Windows Desktop Mode] Error simulating input: {e}")
 
     def push_clipboard(self, text: str):
         """Pushes clipboard text to all active connected devices."""

@@ -327,6 +327,7 @@ class AppState: ObservableObject {
     let clipboardManager = ClipboardManager()
     let pairingManager = PairingManager()
     let continuityManager = ContinuityManager.shared
+    let streamManager = StreamManager.shared
 
     @Published var isEnabled: Bool
     @Published var isDiscovering = false
@@ -348,6 +349,9 @@ class AppState: ObservableObject {
     @Published var isClipboardSyncEnabled: Bool = true
     @Published var isEnhancedClipboardEnabled: Bool = false
     @Published var isMultiplePairedDevicesEnabled: Bool = false
+    @Published var isCameraSharingEnabled: Bool = false
+    @Published var isScreenSharingEnabled: Bool = false
+    @Published var isDesktopModeEnabled: Bool = false
     @Published var selectedTargetDeviceId: String? = nil
     @Published var userExplicitlyDisconnected: Bool = false
 
@@ -370,6 +374,9 @@ class AppState: ObservableObject {
         self.isClipboardSyncEnabled = UserDefaults.standard.object(forKey: "dexolink_clipboard_sync_enabled") as? Bool ?? true
         self.isEnhancedClipboardEnabled = self.clipboardManager.isEnhancedClipboardEnabled
         self.isMultiplePairedDevicesEnabled = UserDefaults.standard.bool(forKey: "dexolink_multiple_paired_devices_enabled")
+        self.isCameraSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_camera_sharing_enabled")
+        self.isScreenSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_screen_sharing_enabled")
+        self.isDesktopModeEnabled = UserDefaults.standard.bool(forKey: "dexolink_desktop_mode_enabled")
         TrustStore.shared.isMultiplePairedDevicesEnabled = self.isMultiplePairedDevicesEnabled
 
         // Wire up delegates
@@ -378,6 +385,10 @@ class AppState: ObservableObject {
         clipboardManager.setConnectionManager(connectionManager)
         clipboardManager.delegate = self
         continuityManager.setConnectionManager(connectionManager)
+        streamManager.setConnectionManager(connectionManager)
+        streamManager.isCameraSharingEnabled = self.isCameraSharingEnabled
+        streamManager.isScreenSharingEnabled = self.isScreenSharingEnabled
+        streamManager.isDesktopModeEnabled = self.isDesktopModeEnabled
         transferManager.delegate = self
 
         if isEnabled {
@@ -638,6 +649,27 @@ class AppState: ObservableObject {
 
     func toggleMultiplePairedDevices() {
         setMultiplePairedDevicesEnabled(!isMultiplePairedDevicesEnabled)
+    }
+
+    func setCameraSharingEnabled(_ enabled: Bool) {
+        guard isCameraSharingEnabled != enabled else { return }
+        isCameraSharingEnabled = enabled
+        streamManager.isCameraSharingEnabled = enabled
+        print("[macOS Camera Sharing] Toggled to: \(enabled ? "ON" : "OFF")")
+    }
+
+    func setScreenSharingEnabled(_ enabled: Bool) {
+        guard isScreenSharingEnabled != enabled else { return }
+        isScreenSharingEnabled = enabled
+        streamManager.isScreenSharingEnabled = enabled
+        print("[macOS Screen Sharing] Toggled to: \(enabled ? "ON" : "OFF")")
+    }
+
+    func setDesktopModeEnabled(_ enabled: Bool) {
+        guard isDesktopModeEnabled != enabled else { return }
+        isDesktopModeEnabled = enabled
+        streamManager.isDesktopModeEnabled = enabled
+        print("[macOS Desktop Mode (beta)] Toggled to: \(enabled ? "ON" : "OFF")")
     }
 
     func unpair(deviceId: String? = nil) {
@@ -1117,6 +1149,16 @@ extension AppState: ConnectionManagerDelegate {
 
             case .continuityActivity, .continuityAck, .continuityDismiss, .continuityState:
                 self.continuityManager.handleMessage(message)
+
+            case let .streamRequest(streamId, streamType, options):
+                let resp = self.streamManager.handleIncomingStreamRequest(streamId: streamId, streamType: streamType, options: options)
+                try? self.connectionManager.send(message: resp)
+
+            case let .desktopInputEvent(streamId, eventType, x, y, button, key):
+                self.streamManager.handleDesktopInput(streamId: streamId, eventType: eventType, x: x, y: y, button: button, key: key)
+
+            case let .streamStop(streamId, _):
+                self.streamManager.stopStream(streamId: streamId)
 
             default:
                 self.transferManager.handleMessage(message)

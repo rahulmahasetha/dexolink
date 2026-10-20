@@ -18,5 +18,24 @@
     "name": "document.pdf",
     "size": 1024,
     "mimeType": "application/pdf"
+  },
+  "stream_request": {
+    "type": "STREAM_REQUEST",
+    "streamId": "str_12345",
+    "streamType": "camera"
+  },
+  "stream_response": {
+    "type": "STREAM_RESPONSE",
+    "streamId": "str_12345",
+    "streamType": "camera",
+    "accepted": true
+  },
+  "desktop_input_event": {
+    "type": "DESKTOP_INPUT_EVENT",
+    "streamId": "str_desk_999",
+    "eventType": "mouse_move",
+    "x": 0.5,
+    "y": 0.5,
+    "button": 0
   }
 }

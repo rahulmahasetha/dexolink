@@ -79,19 +79,24 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.0.0</string>
+    <string>4.0.1</string>
     <key>CFBundleVersion</key>
-    <string>4.0.0</string>
+    <string>4.0.1</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>DexoLink streams camera video feed to your paired devices when Camera Sharing is enabled.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>DexoLink shares your screen with your paired devices when Screen Sharing is enabled.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>DexoLink discovers and connects with your Android device on the local network for automatic clipboard and file synchronization.</string>
+    <string>DexoLink discovers and connects with your Android, iPhone, and Windows devices on the local network for automatic clipboard, file, and media synchronization.</string>
     <key>NSBonjourServices</key>
     <array>
+        <string>_dexolink._tcp</string>
         <string>_macdroid._tcp</string>
     </array>
     <key>NSServices</key>

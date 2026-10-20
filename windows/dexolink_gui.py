@@ -49,6 +49,10 @@ class DexoLinkGUI:
         self.continuity_var = tk.BooleanVar(value=self.engine.continuity_enabled)
         self.auto_discovery_var = tk.BooleanVar(value=self.engine.auto_discovery_enabled)
         self.auto_accept_var = tk.BooleanVar(value=self.engine.auto_accept_enabled)
+        # v4.0.1: Media Streaming & Remote Control
+        self.camera_sharing_var = tk.BooleanVar(value=self.engine.camera_sharing_enabled)
+        self.screen_sharing_var = tk.BooleanVar(value=self.engine.screen_sharing_enabled)
+        self.desktop_mode_var = tk.BooleanVar(value=self.engine.desktop_mode_enabled)
         self.clipboard_history = []
         self.transfers_history = []
 
@@ -86,7 +90,7 @@ class DexoLinkGUI:
         lbl_brand = tk.Label(title_box, text="⚡ DexoLink", font=("Segoe UI", 16, "bold"), fg=COLOR_CYAN, bg=COLOR_BG)
         lbl_brand.pack(side=tk.LEFT)
         
-        lbl_ver = tk.Label(title_box, text="v4.0.0", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_BG, padx=8)
+        lbl_ver = tk.Label(title_box, text="v4.0.1", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_BG, padx=8)
         lbl_ver.pack(side=tk.LEFT, pady=(4, 0))
 
         # Status badge & compact Settings button
@@ -464,7 +468,37 @@ class DexoLinkGUI:
                               font=("Segoe UI", 9), relief="flat", padx=10, pady=4, cursor="hand2", command=self._change_downloads)
         btn_change.pack(side=tk.LEFT)
 
-        # 4. FUTURE FEATURE CONTROLS
+        # 4. MEDIA STREAMING & REMOTE CONTROL (v4.0.1)
+        sec_stream = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        sec_stream.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(sec_stream, text="MEDIA STREAMING & REMOTE CONTROL", font=("Segoe UI", 9, "bold"), fg=COLOR_CYAN, bg=COLOR_CARD).pack(anchor=tk.W, pady=(0, 6))
+
+        # Camera Sharing Toggle
+        chk_cam = tk.Checkbutton(sec_stream, text="Camera Sharing", variable=self.camera_sharing_var,
+                                 command=self._on_toggle_camera_sharing, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                 activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_cam.pack(anchor=tk.W)
+        tk.Label(sec_stream, text="Stream this device's camera to another supported device (OFF by default).",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W, pady=(0, 8))
+
+        # Screen Sharing Toggle
+        chk_screen = tk.Checkbutton(sec_stream, text="Screen Sharing", variable=self.screen_sharing_var,
+                                    command=self._on_toggle_screen_sharing, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                    activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_screen.pack(anchor=tk.W)
+        tk.Label(sec_stream, text="Mirror this device's screen to another supported device (OFF by default).",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W, pady=(0, 8))
+
+        # Desktop Mode (beta) Toggle
+        chk_desk = tk.Checkbutton(sec_stream, text="Desktop Mode (BETA)", variable=self.desktop_mode_var,
+                                  command=self._on_toggle_desktop_mode, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                  activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_desk.pack(anchor=tk.W)
+        tk.Label(sec_stream, text="Remote desktop viewing and input control where supported (OFF by default).",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W)
+
+        # 5. FUTURE FEATURE CONTROLS
         sec_future = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
         sec_future.pack(fill=tk.X, pady=(0, 12))
 
@@ -472,11 +506,11 @@ class DexoLinkGUI:
         tk.Label(sec_future, text="✦ New feature toggles and experimental protocols automatically register here cleanly.",
                  font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD).pack(anchor=tk.W)
 
-        # 5. FOOTER / DONE
+        # 6. FOOTER / DONE
         footer = tk.Frame(modal, bg=COLOR_BG, padx=20, pady=14)
         footer.pack(fill=tk.X, side=tk.BOTTOM)
 
-        lbl_info = tk.Label(footer, text="DexoLink v4.0.0 • Native Engine Active", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG)
+        lbl_info = tk.Label(footer, text="DexoLink v4.0.1 • Native Engine Active", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG)
         lbl_info.pack(side=tk.LEFT)
 
         btn_done = tk.Button(footer, text="Done", bg=COLOR_ACCENT, fg=COLOR_TEXT, activebackground=COLOR_ACCENT_HOVER,
@@ -497,6 +531,15 @@ class DexoLinkGUI:
 
     def _on_toggle_auto_accept(self):
         self.engine.auto_accept_enabled = self.auto_accept_var.get()
+
+    def _on_toggle_camera_sharing(self):
+        self.engine.set_camera_sharing_enabled(self.camera_sharing_var.get())
+
+    def _on_toggle_screen_sharing(self):
+        self.engine.set_screen_sharing_enabled(self.screen_sharing_var.get())
+
+    def _on_toggle_desktop_mode(self):
+        self.engine.set_desktop_mode_enabled(self.desktop_mode_var.get())
 
     def _change_downloads(self):
         new_dir = filedialog.askdirectory(title="Select DexoLink Downloads Directory")

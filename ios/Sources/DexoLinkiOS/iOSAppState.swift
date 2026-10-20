@@ -109,6 +109,16 @@ public class iOSAppState: ObservableObject {
     @Published public var enhancedClipboard: Bool {
         didSet { UserDefaults.standard.set(enhancedClipboard, forKey: "dexolink_ios_enhanced_clip") }
     }
+    // v4.0.1: Media Streaming & Remote Control Settings (OFF by default)
+    @Published public var isCameraSharingEnabled: Bool {
+        didSet { UserDefaults.standard.set(isCameraSharingEnabled, forKey: "dexolink_ios_camera_sharing") }
+    }
+    @Published public var isScreenSharingEnabled: Bool {
+        didSet { UserDefaults.standard.set(isScreenSharingEnabled, forKey: "dexolink_ios_screen_sharing") }
+    }
+    @Published public var isDesktopModeEnabled: Bool {
+        didSet { UserDefaults.standard.set(isDesktopModeEnabled, forKey: "dexolink_ios_desktop_mode") }
+    }
 
     // Active Transfers & History
     @Published public var activeTransfer: TransferProgressItem?
@@ -124,6 +134,9 @@ public class iOSAppState: ObservableObject {
         self.isMultiplePairedDevicesEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_multi_paired")
         self.autoClipboardSync = UserDefaults.standard.object(forKey: "dexolink_ios_auto_clip") as? Bool ?? true
         self.enhancedClipboard = UserDefaults.standard.bool(forKey: "dexolink_ios_enhanced_clip")
+        self.isCameraSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_camera_sharing")
+        self.isScreenSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_screen_sharing")
+        self.isDesktopModeEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_desktop_mode")
         
         loadPairedDevices()
         startLocalListener()

@@ -711,7 +711,7 @@ struct MenuBarView: View {
             // MARK: - Developer Attribution Footer
             HStack {
                 Spacer()
-                Text("Developed by Rahul Mahaseth | DexoLink v4.0.0")
+                Text("Developed by Rahul Mahaseth | DexoLink v4.0.1")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary.opacity(0.8))
                 Spacer()
@@ -2045,7 +2045,61 @@ struct SettingsSheetView: View {
                         .cornerRadius(10)
                     }
 
-                    // Section 2: Wi-Fi Discovery & Network Preferences
+                    // Section 2: Remote Viewing & Media Streaming (v4.0.1)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "video.fill")
+                                .foregroundColor(.teal)
+                                .font(.caption)
+                            Text("Media Streaming & Remote Control")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+
+                        VStack(spacing: 8) {
+                            // 1. Camera Sharing
+                            CompactFeatureControl(
+                                title: "Camera Sharing",
+                                subtitle: appState.isCameraSharingEnabled ? "Streaming active or ready for camera requests" : "Stream camera feed securely over local Wi-Fi (OFF by default)",
+                                icon: "camera.fill",
+                                tintColor: .teal,
+                                isEnabled: appState.isCameraSharingEnabled,
+                                onToggle: {
+                                    appState.setCameraSharingEnabled(!appState.isCameraSharingEnabled)
+                                }
+                            )
+
+                            // 2. Screen Sharing
+                            CompactFeatureControl(
+                                title: "Screen Sharing",
+                                subtitle: appState.isScreenSharingEnabled ? "Display mirroring active or ready" : "Mirror device display in real-time over local network (OFF by default)",
+                                icon: "display.2",
+                                tintColor: .orange,
+                                isEnabled: appState.isScreenSharingEnabled,
+                                onToggle: {
+                                    appState.setScreenSharingEnabled(!appState.isScreenSharingEnabled)
+                                }
+                            )
+
+                            // 3. Desktop Mode (beta)
+                            CompactFeatureControl(
+                                title: "Desktop Mode",
+                                subtitle: appState.isDesktopModeEnabled ? "Remote viewing and input control enabled" : "Remote desktop viewing & input control where supported (OFF by default)",
+                                icon: "desktopcomputer",
+                                tintColor: .purple,
+                                badgeText: "BETA",
+                                isEnabled: appState.isDesktopModeEnabled,
+                                onToggle: {
+                                    appState.setDesktopModeEnabled(!appState.isDesktopModeEnabled)
+                                }
+                            )
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                        .cornerRadius(10)
+                    }
+
+                    // Section 3: Wi-Fi Discovery & Network Preferences
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Image(systemName: "network")
@@ -2135,7 +2189,7 @@ struct SettingsSheetView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(.secondary)
                             Spacer()
-                            Text("v4.0.0")
+                            Text("v4.0.1")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.cyan)
                         }

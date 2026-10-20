@@ -113,5 +113,59 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(store.isPaired(deviceId: "mac-test-2"))
         XCTAssertEqual(store.getTrustedDevices().count, 1)
     }
+
+    func testStreamingToggles_defaultToFalse() {
+        UserDefaults.standard.removeObject(forKey: "dexolink_camera_sharing_enabled")
+        UserDefaults.standard.removeObject(forKey: "dexolink_screen_sharing_enabled")
+        UserDefaults.standard.removeObject(forKey: "dexolink_desktop_mode_enabled")
+
+        let streamManager = StreamManager()
+        XCTAssertFalse(streamManager.isCameraSharingEnabled, "Camera Sharing must be OFF by default")
+        XCTAssertFalse(streamManager.isScreenSharingEnabled, "Screen Sharing must be OFF by default")
+        XCTAssertFalse(streamManager.isDesktopModeEnabled, "Desktop Mode must be OFF by default")
+    }
+
+    func testStreamManager_rejectsWhenDisabledAndAcceptsWhenEnabled() {
+        let streamManager = StreamManager()
+        streamManager.isCameraSharingEnabled = false
+        streamManager.isScreenSharingEnabled = false
+        streamManager.isDesktopModeEnabled = false
+
+        // 1. Should reject when disabled
+        let respCam = streamManager.handleIncomingStreamRequest(streamId: "cam-1", streamType: "camera", options: nil)
+        if case let .streamResponse(_, _, accepted, reason) = respCam {
+            XCTAssertFalse(accepted)
+            XCTAssertNotNil(reason)
+        } else {
+            XCTFail("Expected streamResponse")
+        }
+
+        let respScreen = streamManager.handleIncomingStreamRequest(streamId: "screen-1", streamType: "screen", options: nil)
+        if case let .streamResponse(_, _, accepted, _) = respScreen {
+            XCTAssertFalse(accepted)
+        } else {
+            XCTFail("Expected streamResponse")
+        }
+
+        let respDesk = streamManager.handleIncomingStreamRequest(streamId: "desk-1", streamType: "desktop_mode", options: nil)
+        if case let .streamResponse(_, _, accepted, _) = respDesk {
+            XCTAssertFalse(accepted)
+        } else {
+            XCTFail("Expected streamResponse")
+        }
+
+        // 2. Should accept when enabled
+        streamManager.isCameraSharingEnabled = true
+        let respCamEnabled = streamManager.handleIncomingStreamRequest(streamId: "cam-2", streamType: "camera", options: nil)
+        if case let .streamResponse(_, _, accepted, _) = respCamEnabled {
+            XCTAssertTrue(accepted)
+        } else {
+            XCTFail("Expected streamResponse")
+        }
+
+        // 3. Turning OFF stops active streams
+        streamManager.isCameraSharingEnabled = false
+        streamManager.stopAllStreams()
+    }
 }
 

@@ -106,12 +106,57 @@ struct DevicesView: View {
                     }
                 }
 
-                // Section 4: App Information
+                // Section 4: Media Streaming & Remote Control (v4.0.1)
+                Section(header: Text("Media Streaming & Remote Control")) {
+                    Toggle(isOn: $appState.isCameraSharingEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Camera Sharing")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Text(appState.isCameraSharingEnabled ? "ON: Streaming camera to paired devices" : "OFF: Stream iPhone camera to Mac/Windows (Default)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Toggle(isOn: $appState.isScreenSharingEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Screen Sharing")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Text(appState.isScreenSharingEnabled ? "ON: Broadcast screen mirroring active" : "OFF: Broadcast screen to Mac/Windows (Default)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Toggle(isOn: $appState.isDesktopModeEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text("Desktop Mode")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                Text("BETA")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.green.opacity(0.15))
+                                    .foregroundColor(.green)
+                                    .cornerRadius(4)
+                            }
+                            Text(appState.isDesktopModeEnabled ? "ON: Remote desktop viewing active" : "OFF: Remote desktop viewing and control (Default)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                // Section 5: App Information
                 Section(header: Text("About DexoLink")) {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("4.0.0 (Universal)")
+                        Text("4.0.1 (Universal)")
                             .foregroundColor(.secondary)
                     }
                     HStack {

@@ -61,4 +61,31 @@ final class ProtocolCodecTests: XCTestCase {
         XCTAssertNotNil(result2)
         XCTAssertEqual(try codec.decodeMessage(from: result2!.payload), msg2)
     }
+
+    func testEncodeDecodeStreamMessages() throws {
+        let req = ProtocolMessage.streamRequest(streamId: "s-101", streamType: "camera", options: ["fps": "30"])
+        let reqData = try codec.encode(message: req)
+        let decReq = try codec.decodeMessage(from: codec.decodePayload(from: reqData)!.payload)
+        XCTAssertEqual(decReq, req)
+
+        let resp = ProtocolMessage.streamResponse(streamId: "s-101", streamType: "camera", accepted: true, reason: nil)
+        let respData = try codec.encode(message: resp)
+        let decResp = try codec.decodeMessage(from: codec.decodePayload(from: respData)!.payload)
+        XCTAssertEqual(decResp, resp)
+
+        let frame = ProtocolMessage.streamFrame(streamId: "s-101", sequence: 42, format: "jpeg", width: 640, height: 480, data: "base64Data")
+        let frameData = try codec.encode(message: frame)
+        let decFrame = try codec.decodeMessage(from: codec.decodePayload(from: frameData)!.payload)
+        XCTAssertEqual(decFrame, frame)
+
+        let stop = ProtocolMessage.streamStop(streamId: "s-101", reason: "user_cancelled")
+        let stopData = try codec.encode(message: stop)
+        let decStop = try codec.decodeMessage(from: codec.decodePayload(from: stopData)!.payload)
+        XCTAssertEqual(decStop, stop)
+
+        let input = ProtocolMessage.desktopInputEvent(streamId: "s-desk", eventType: "mouse_move", x: 0.5, y: 0.75, button: 0, key: nil)
+        let inputData = try codec.encode(message: input)
+        let decInput = try codec.decodeMessage(from: codec.decodePayload(from: inputData)!.payload)
+        XCTAssertEqual(decInput, input)
+    }
 }

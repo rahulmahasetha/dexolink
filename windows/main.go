@@ -127,6 +127,10 @@ type DexoLinkEngine struct {
 	EnhancedClipboard    bool
 	AutoDiscoveryEnabled bool
 	AutoAcceptPaired     bool
+	// v4.0.1: Media Streaming & Remote Control (OFF by default)
+	CameraSharingEnabled bool
+	ScreenSharingEnabled bool
+	DesktopModeEnabled  bool
 }
 
 type TransferRecord struct {
@@ -161,6 +165,9 @@ func initEngine() *DexoLinkEngine {
 		EnhancedClipboard:    false,
 		AutoDiscoveryEnabled: true,
 		AutoAcceptPaired:     true,
+		CameraSharingEnabled: false,
+		ScreenSharingEnabled: false,
+		DesktopModeEnabled:  false,
 	}
 	return e
 }
@@ -336,6 +343,56 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 				"accepted":   true,
 			})
 			_, _ = conn.Write(resp)
+
+		case "STREAM_REQUEST":
+			streamID, _ := msg["streamId"].(string)
+			streamType, _ := msg["streamType"].(string)
+			accepted := false
+			reason := ""
+
+			e.mu.Lock()
+			cam := e.CameraSharingEnabled
+			screen := e.ScreenSharingEnabled
+			desk := e.DesktopModeEnabled
+			e.mu.Unlock()
+
+			if streamType == "camera" {
+				if cam {
+					accepted = true
+				} else {
+					reason = "Camera Sharing is turned OFF in Windows Settings."
+				}
+			} else if streamType == "screen" {
+				if screen {
+					accepted = true
+				} else {
+					reason = "Screen Sharing is turned OFF in Windows Settings."
+				}
+			} else if streamType == "desktop" {
+				if desk {
+					accepted = true
+				} else {
+					reason = "Desktop Mode is turned OFF in Windows Settings."
+				}
+			}
+
+			respData := map[string]any{
+				"type":       "STREAM_RESPONSE",
+				"streamId":   streamID,
+				"streamType": streamType,
+				"accepted":   accepted,
+			}
+			if !accepted {
+				respData["reason"] = reason
+			}
+			resp, _ := encodeMessage(respData)
+			_, _ = conn.Write(resp)
+
+		case "STREAM_STOP":
+			// Acknowledge stream termination
+
+		case "DESKTOP_INPUT_EVENT":
+			// Handled when Desktop Mode is enabled
 
 		case "FILE_ACK":
 			// Handled by sender
@@ -569,24 +626,30 @@ func startWebDashboard() {
 		enhClip := engine.EnhancedClipboard
 		autoDisc := engine.AutoDiscoveryEnabled
 		autoAcc := engine.AutoAcceptPaired
+		camSharing := engine.CameraSharingEnabled
+		screenSharing := engine.ScreenSharingEnabled
+		desktopMode := engine.DesktopModeEnabled
 		engine.mu.Unlock()
 
 		json.NewEncoder(w).Encode(map[string]any{
-			"version":             "4.0.0",
-			"deviceId":            engine.DeviceID,
-			"deviceName":          engine.DeviceName,
-			"port":                DefaultPort,
-			"multiple_paired":     multiPaired,
-			"paired_devices":      paired,
-			"discovered_devices":  discovered,
-			"transfer_history":    history,
-			"clipboard_history":   clipHistory,
-			"download_dir":        engine.DownloadDir,
-			"continuity_enabled":  contEnabled,
-			"auto_clipboard_sync": autoClip,
-			"enhanced_clipboard":  enhClip,
-			"auto_discovery":      autoDisc,
-			"auto_accept_paired":  autoAcc,
+			"version":                "4.0.1",
+			"deviceId":               engine.DeviceID,
+			"deviceName":             engine.DeviceName,
+			"port":                   DefaultPort,
+			"multiple_paired":        multiPaired,
+			"paired_devices":         paired,
+			"discovered_devices":     discovered,
+			"transfer_history":       history,
+			"clipboard_history":      clipHistory,
+			"download_dir":           engine.DownloadDir,
+			"continuity_enabled":     contEnabled,
+			"auto_clipboard_sync":    autoClip,
+			"enhanced_clipboard":     enhClip,
+			"auto_discovery":         autoDisc,
+			"auto_accept_paired":     autoAcc,
+			"camera_sharing_enabled": camSharing,
+			"screen_sharing_enabled": screenSharing,
+			"desktop_mode_enabled":  desktopMode,
 		})
 	})
 
@@ -605,6 +668,12 @@ func startWebDashboard() {
 			engine.AutoDiscoveryEnabled = enabled
 		case "auto_accept":
 			engine.AutoAcceptPaired = enabled
+		case "camera_sharing":
+			engine.CameraSharingEnabled = enabled
+		case "screen_sharing":
+			engine.ScreenSharingEnabled = enabled
+		case "desktop_mode":
+			engine.DesktopModeEnabled = enabled
 		}
 		engine.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
@@ -711,7 +780,7 @@ const webUIHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DexoLink v4.0.0 (Windows)</title>
+<title>DexoLink v4.0.1 (Windows)</title>
 <style>
   :root {
     --bg: #0f172a;
@@ -750,7 +819,7 @@ const webUIHTML = `<!DOCTYPE html>
   <div class="header">
     <div class="brand">
       <h1>⚡ DexoLink</h1>
-      <span class="badge">v4.0.0 (Windows App)</span>
+      <span class="badge">v4.0.1 (Windows App)</span>
     </div>
     <div style="display:flex; align-items:center; gap:12px;">
       <div class="status-pill">
@@ -862,6 +931,33 @@ const webUIHTML = `<!DOCTYPE html>
         <input type="checkbox" id="modalMultiToggle" onchange="toggleMulti(this.checked)">
       </div>
 
+      <!-- Media Streaming & Remote Control Section (v4.0.1) -->
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Media Streaming & Remote Control</div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Camera Sharing</div>
+          <div class="muted">Stream this device's camera to another supported device (OFF by default)</div>
+        </div>
+        <input type="checkbox" id="modalCameraToggle" onchange="toggleFeature('camera_sharing', this.checked)">
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Screen Sharing</div>
+          <div class="muted">Mirror this device's screen to another supported device (OFF by default)</div>
+        </div>
+        <input type="checkbox" id="modalScreenToggle" onchange="toggleFeature('screen_sharing', this.checked)">
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Desktop Mode (BETA)</div>
+          <div class="muted">Remote desktop viewing and input control where supported (OFF by default)</div>
+        </div>
+        <input type="checkbox" id="modalDesktopToggle" onchange="toggleFeature('desktop_mode', this.checked)">
+      </div>
+
       <!-- Discovery & Network Section -->
       <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Discovery & Network</div>
 
@@ -896,7 +992,7 @@ const webUIHTML = `<!DOCTYPE html>
 
       <!-- Modal Footer -->
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:22px; padding-top:14px; border-top:1px solid var(--border);">
-        <span class="muted">v4.0.0 • Port 52840</span>
+        <span class="muted">v4.0.1 • Port 52840</span>
         <button class="btn" onclick="closeSettingsModal()" style="padding:8px 24px;">Done</button>
       </div>
     </div>
@@ -926,6 +1022,9 @@ const webUIHTML = `<!DOCTYPE html>
           document.getElementById('modalClipToggle').checked = data.auto_clipboard_sync;
           document.getElementById('modalEnhancedToggle').checked = data.enhanced_clipboard;
           document.getElementById('modalMultiToggle').checked = data.multiple_paired;
+          document.getElementById('modalCameraToggle').checked = data.camera_sharing_enabled;
+          document.getElementById('modalScreenToggle').checked = data.screen_sharing_enabled;
+          document.getElementById('modalDesktopToggle').checked = data.desktop_mode_enabled;
           document.getElementById('modalDiscoveryToggle').checked = data.auto_discovery;
           document.getElementById('modalAcceptToggle').checked = data.auto_accept_paired;
           document.getElementById('modalDownPath').innerText = data.download_dir;

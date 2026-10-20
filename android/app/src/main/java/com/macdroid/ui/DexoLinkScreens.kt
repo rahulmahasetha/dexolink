@@ -1572,6 +1572,9 @@ fun HomeScreenContent(
     val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(context) }
     val quickFileSharingEnabled by settings.quickFileSharing.collectAsState()
     val autoDeviceDiscoveryEnabled by settings.autoDeviceDiscovery.collectAsState()
+    val cameraSharingEnabled by settings.cameraSharing.collectAsState()
+    val screenSharingEnabled by settings.screenSharing.collectAsState()
+    val desktopModeEnabled by settings.desktopMode.collectAsState()
 
     if (showHandoffToMacDialog) {
         HandoffToMacDialog(
@@ -2237,7 +2240,10 @@ fun HomeScreenContent(
         val showDevicePairing = autoDeviceDiscoveryEnabled || pairedDevice != null || devices.isNotEmpty()
         val showContinuity = isContinuityEnabled
         val showEnhancedClipboard = isEnhancedClipboardEnabled
-        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard
+        val showCameraSharing = cameraSharingEnabled
+        val showScreenSharing = screenSharingEnabled
+        val showDesktopMode = desktopModeEnabled
+        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard || showCameraSharing || showScreenSharing || showDesktopMode
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2648,6 +2654,218 @@ fun HomeScreenContent(
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     "Rich text & web paste compatibility active",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xFFDCFCE7))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Active",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF16A34A)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Feature 6: Camera Sharing (Visible ONLY when enabled)
+                if (showCameraSharing) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateSettings() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFEC4899)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.CategoryVideo,
+                                    contentDescription = "Camera Sharing",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Camera Sharing",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Stream camera video feed across devices",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xFFFCE7F3))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Active",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFDB2777)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Feature 7: Screen Sharing (Visible ONLY when enabled)
+                if (showScreenSharing) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateSettings() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF3B82F6)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.DeviceMac,
+                                    contentDescription = "Screen Sharing",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Screen Sharing",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Mirror display to paired screens",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xFFEFF6FF))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Active",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF2563EB)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DexoIcon(
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Feature 8: Desktop Mode (Visible ONLY when enabled)
+                if (showDesktopMode) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateSettings() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF10B981)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Globe,
+                                    contentDescription = "Desktop Mode",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Desktop Mode",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFFD1FAE5))
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF059669))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Remote desktop viewing & input control",
                                     fontSize = 11.sp,
                                     color = Color(0xFF64748B)
                                 )
@@ -3763,6 +3981,9 @@ fun SettingsTabContent(
     val largeFilesSyncEnabled by settings.largeFilesSync.collectAsState()
     val autoAcceptEnabled by settings.autoAcceptPaired.collectAsState()
     val autoDiscoveryEnabled by settings.autoDeviceDiscovery.collectAsState()
+    val cameraSharingEnabled by settings.cameraSharing.collectAsState()
+    val screenSharingEnabled by settings.screenSharing.collectAsState()
+    val desktopModeEnabled by settings.desktopMode.collectAsState()
     var showEnhancedClipboardInfoDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -4531,6 +4752,156 @@ fun SettingsTabContent(
             }
         }
 
+        // Section 4: Media Streaming & Remote Control (v4.0.1)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DexoIcon(
+                        imageVector = DexoIcons.CategoryVideo,
+                        contentDescription = null,
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "Media Streaming & Remote Control",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        // 1. Camera Sharing
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFEC4899)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.CategoryVideo,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Camera Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                Text(
+                                    if (cameraSharingEnabled) "Streaming enabled to paired devices" else "Stream camera to another device (OFF by default)",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Switch(
+                                checked = cameraSharingEnabled,
+                                onCheckedChange = { settings.setCameraSharing(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFFEC4899))
+                            )
+                        }
+
+                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+
+                        // 2. Screen Sharing
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF3B82F6)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.DeviceMac,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Screen Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                Text(
+                                    if (screenSharingEnabled) "Screen mirroring active to paired devices" else "Mirror screen to another device (OFF by default)",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Switch(
+                                checked = screenSharingEnabled,
+                                onCheckedChange = { settings.setScreenSharing(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF3B82F6))
+                            )
+                        }
+
+                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+
+                        // 3. Desktop Mode (beta)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF10B981)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Globe,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Desktop Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFFD1FAE5))
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF059669))
+                                    }
+                                }
+                                Text(
+                                    if (desktopModeEnabled) "Remote desktop viewing & input control active" else "Remote desktop viewing & control (OFF by default)",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Switch(
+                                checked = desktopModeEnabled,
+                                onCheckedChange = { settings.setDesktopMode(it) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF10B981))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         item { Spacer(modifier = Modifier.height(20.dp)) }
     }
 
@@ -4720,7 +5091,7 @@ fun DexoLinkBottomNavBar(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v4.0.0",
+                    "Developed by Rahul Mahaseth | DexoLink v4.0.1",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF64748B),

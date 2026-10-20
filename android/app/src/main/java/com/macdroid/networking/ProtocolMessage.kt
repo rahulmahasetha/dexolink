@@ -27,7 +27,12 @@ enum class MessageType(val value: String) {
     CONTINUITY_ACTIVITY("CONTINUITY_ACTIVITY"),
     CONTINUITY_ACK("CONTINUITY_ACK"),
     CONTINUITY_DISMISS("CONTINUITY_DISMISS"),
-    CONTINUITY_STATE("CONTINUITY_STATE");
+    CONTINUITY_STATE("CONTINUITY_STATE"),
+    STREAM_REQUEST("STREAM_REQUEST"),
+    STREAM_RESPONSE("STREAM_RESPONSE"),
+    STREAM_FRAME("STREAM_FRAME"),
+    STREAM_STOP("STREAM_STOP"),
+    DESKTOP_INPUT_EVENT("DESKTOP_INPUT_EVENT");
 
     companion object {
         fun fromValue(value: String): MessageType? {
@@ -148,6 +153,42 @@ sealed class ProtocolMessage {
                 )
                 MessageType.CONTINUITY_STATE -> ContinuityStateMessage(
                     enabled = json.optBoolean("enabled", true)
+                )
+                MessageType.STREAM_REQUEST -> StreamRequestMessage(
+                    streamId = json.optString("streamId", ""),
+                    streamType = json.optString("streamType", ""),
+                    options = if (json.has("options")) {
+                        val optObj = json.getJSONObject("options")
+                        val map = mutableMapOf<String, String>()
+                        optObj.keys().forEach { k -> map[k] = optObj.getString(k) }
+                        map
+                    } else null
+                )
+                MessageType.STREAM_RESPONSE -> StreamResponseMessage(
+                    streamId = json.optString("streamId", ""),
+                    streamType = json.optString("streamType", ""),
+                    accepted = json.optBoolean("accepted", false),
+                    reason = if (json.has("reason") && !json.isNull("reason")) json.getString("reason") else null
+                )
+                MessageType.STREAM_FRAME -> StreamFrameMessage(
+                    streamId = json.optString("streamId", ""),
+                    sequence = json.optLong("sequence", 0L),
+                    format = json.optString("format", "jpeg"),
+                    width = json.optInt("width", 0),
+                    height = json.optInt("height", 0),
+                    data = json.optString("data", "")
+                )
+                MessageType.STREAM_STOP -> StreamStopMessage(
+                    streamId = json.optString("streamId", ""),
+                    reason = if (json.has("reason") && !json.isNull("reason")) json.getString("reason") else null
+                )
+                MessageType.DESKTOP_INPUT_EVENT -> DesktopInputEventMessage(
+                    streamId = json.optString("streamId", ""),
+                    eventType = json.optString("eventType", ""),
+                    x = json.optDouble("x", 0.0),
+                    y = json.optDouble("y", 0.0),
+                    button = json.optInt("button", 0),
+                    key = if (json.has("key") && !json.isNull("key")) json.getString("key") else null
                 )
             }
         }
@@ -406,4 +447,91 @@ data class ContinuityStateMessage(
         put("enabled", enabled)
     }
 }
+
+data class StreamRequestMessage(
+    val streamId: String,
+    val streamType: String,
+    val options: Map<String, String>? = null
+) : ProtocolMessage() {
+    override val type = MessageType.STREAM_REQUEST
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("streamId", streamId)
+        put("streamType", streamType)
+        options?.let { opt ->
+            val optObj = JSONObject()
+            opt.forEach { (k, v) -> optObj.put(k, v) }
+            put("options", optObj)
+        }
+    }
+}
+
+data class StreamResponseMessage(
+    val streamId: String,
+    val streamType: String,
+    val accepted: Boolean,
+    val reason: String? = null
+) : ProtocolMessage() {
+    override val type = MessageType.STREAM_RESPONSE
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("streamId", streamId)
+        put("streamType", streamType)
+        put("accepted", accepted)
+        reason?.let { put("reason", it) }
+    }
+}
+
+data class StreamFrameMessage(
+    val streamId: String,
+    val sequence: Long,
+    val format: String,
+    val width: Int,
+    val height: Int,
+    val data: String
+) : ProtocolMessage() {
+    override val type = MessageType.STREAM_FRAME
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("streamId", streamId)
+        put("sequence", sequence)
+        put("format", format)
+        put("width", width)
+        put("height", height)
+        put("data", data)
+    }
+}
+
+data class StreamStopMessage(
+    val streamId: String,
+    val reason: String? = null
+) : ProtocolMessage() {
+    override val type = MessageType.STREAM_STOP
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("streamId", streamId)
+        reason?.let { put("reason", it) }
+    }
+}
+
+data class DesktopInputEventMessage(
+    val streamId: String,
+    val eventType: String,
+    val x: Double,
+    val y: Double,
+    val button: Int = 0,
+    val key: String? = null
+) : ProtocolMessage() {
+    override val type = MessageType.DESKTOP_INPUT_EVENT
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("streamId", streamId)
+        put("eventType", eventType)
+        put("x", x)
+        put("y", y)
+        put("button", button)
+        key?.let { put("key", it) }
+    }
+}
+
 

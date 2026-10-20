@@ -175,6 +175,59 @@ class TestWindowsProtocol(unittest.TestCase):
         with open(saved_file, "rb") as f:
             self.assertEqual(f.read(), data)
 
+    def test_streaming_toggles_default_off(self):
+        engine = DexoLinkWindowsEngine(port=52999)
+        self.assertFalse(engine.camera_sharing_enabled, "Camera sharing must be OFF by default")
+        self.assertFalse(engine.screen_sharing_enabled, "Screen sharing must be OFF by default")
+        self.assertFalse(engine.desktop_mode_enabled, "Desktop mode must be OFF by default")
+
+    def test_stream_request_rejected_when_off(self):
+        engine = DexoLinkWindowsEngine(port=52999)
+        # 1. Camera stream request
+        resp, _ = engine._process_message({"type": "STREAM_REQUEST", "streamId": "cam-1", "streamType": "camera"}, None, None)
+        self.assertFalse(resp["accepted"])
+        self.assertIn("Camera Sharing is turned OFF", resp["reason"])
+
+        # 2. Screen stream request
+        resp, _ = engine._process_message({"type": "STREAM_REQUEST", "streamId": "scr-1", "streamType": "screen"}, None, None)
+        self.assertFalse(resp["accepted"])
+        self.assertIn("Screen Sharing is turned OFF", resp["reason"])
+
+        # 3. Desktop mode stream request
+        resp, _ = engine._process_message({"type": "STREAM_REQUEST", "streamId": "desk-1", "streamType": "desktop"}, None, None)
+        self.assertFalse(resp["accepted"])
+        self.assertIn("Desktop Mode is turned OFF", resp["reason"])
+
+    def test_stream_request_accepted_when_on_and_teardown_on_disable(self):
+        engine = DexoLinkWindowsEngine(port=52999)
+        engine.set_camera_sharing_enabled(True)
+        engine.set_screen_sharing_enabled(True)
+        engine.set_desktop_mode_enabled(True)
+
+        # Requests should be accepted now
+        resp_cam, _ = engine._process_message({"type": "STREAM_REQUEST", "streamId": "cam-1", "streamType": "camera"}, None, None)
+        self.assertTrue(resp_cam["accepted"])
+        self.assertIn("cam-1", engine.active_streams)
+
+        resp_scr, _ = engine._process_message({"type": "STREAM_REQUEST", "streamId": "scr-1", "streamType": "screen"}, None, None)
+        self.assertTrue(resp_scr["accepted"])
+        self.assertIn("scr-1", engine.active_streams)
+
+        resp_desk, _ = engine._process_message({"type": "STREAM_REQUEST", "streamId": "desk-1", "streamType": "desktop"}, None, None)
+        self.assertTrue(resp_desk["accepted"])
+        self.assertIn("desk-1", engine.active_streams)
+
+        # Now disable Camera Sharing: camera stream must be terminated immediately
+        engine.set_camera_sharing_enabled(False)
+        self.assertNotIn("cam-1", engine.active_streams)
+        self.assertIn("scr-1", engine.active_streams)
+
+        # Disable all remaining
+        engine.set_screen_sharing_enabled(False)
+        engine.set_desktop_mode_enabled(False)
+        self.assertEqual(len(engine.active_streams), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

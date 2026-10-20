@@ -20,6 +20,9 @@ class DexoLinkSettings private constructor(context: Context) {
         private const val KEY_NOTIFICATIONS = "notifications_enabled"
         private const val KEY_LARGE_FILES_SYNC = "large_files_sync"
         private const val KEY_MULTI_PAIRED_DEVICES = "multi_paired_devices"
+        private const val KEY_CAMERA_SHARING = "camera_sharing"
+        private const val KEY_SCREEN_SHARING = "screen_sharing"
+        private const val KEY_DESKTOP_MODE = "desktop_mode"
 
         @Volatile
         private var instance: DexoLinkSettings? = null
@@ -52,6 +55,16 @@ class DexoLinkSettings private constructor(context: Context) {
     private val _multiPairedDevices = MutableStateFlow(prefs.getBoolean(KEY_MULTI_PAIRED_DEVICES, false))
     val multiPairedDevices: StateFlow<Boolean> = _multiPairedDevices.asStateFlow()
 
+    // v4.0.1: Media Streaming & Remote Control (OFF by default)
+    private val _cameraSharing = MutableStateFlow(prefs.getBoolean(KEY_CAMERA_SHARING, false))
+    val cameraSharing: StateFlow<Boolean> = _cameraSharing.asStateFlow()
+
+    private val _screenSharing = MutableStateFlow(prefs.getBoolean(KEY_SCREEN_SHARING, false))
+    val screenSharing: StateFlow<Boolean> = _screenSharing.asStateFlow()
+
+    private val _desktopMode = MutableStateFlow(prefs.getBoolean(KEY_DESKTOP_MODE, false))
+    val desktopMode: StateFlow<Boolean> = _desktopMode.asStateFlow()
+
     fun setAutoDeviceDiscovery(enabled: Boolean) {
         _autoDeviceDiscovery.value = enabled
         prefs.edit().putBoolean(KEY_AUTO_DISCOVERY, enabled).apply()
@@ -80,5 +93,20 @@ class DexoLinkSettings private constructor(context: Context) {
     fun setMultiPairedDevices(enabled: Boolean) {
         _multiPairedDevices.value = enabled
         prefs.edit().putBoolean(KEY_MULTI_PAIRED_DEVICES, enabled).apply()
+    }
+
+    fun setCameraSharing(enabled: Boolean) {
+        _cameraSharing.value = enabled
+        prefs.edit().putBoolean(KEY_CAMERA_SHARING, enabled).apply()
+    }
+
+    fun setScreenSharing(enabled: Boolean) {
+        _screenSharing.value = enabled
+        prefs.edit().putBoolean(KEY_SCREEN_SHARING, enabled).apply()
+    }
+
+    fun setDesktopMode(enabled: Boolean) {
+        _desktopMode.value = enabled
+        prefs.edit().putBoolean(KEY_DESKTOP_MODE, enabled).apply()
     }
 }
