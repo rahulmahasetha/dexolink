@@ -30,3 +30,28 @@ A modern, fast, and easy-to-use native SwiftUI app for iPhone running iOS 16.0+.
 3. Select your iPhone or an iOS Simulator as the run target.
 4. Press **Cmd + R** (Run) to build and launch DexoLink on your iPhone.
 
+## Packaging and Installing DexoLink.ipa
+DexoLink for iOS can be packaged as an installable `.ipa` format file.
+
+### Build .ipa Package:
+Run the packaging script from terminal:
+```bash
+cd ios
+./scripts/package_ipa.sh
+```
+This builds `DexoLink.ipa` and automatically outputs it to:
+- `ios/dist/DexoLink.ipa`
+- `Desktop/Dexo/DexoLink.ipa`
+
+### Installation Methods for iPhone:
+1. **Sideloadly / AltStore:**
+   - Drag and drop `DexoLink.ipa` into Sideloadly or AltStore to install directly to your connected iPhone using your free Apple ID.
+2. **Apple Configurator:**
+   - Connect your iPhone via USB, open Apple Configurator, and drag `DexoLink.ipa` onto your device.
+3. **Xcode Devices Window:**
+   - Open Xcode > Window > Devices and Simulators.
+   - Select your iPhone under Connected Devices and drag `DexoLink.ipa` into the Installed Apps list.
+4. **TrollStore:**
+   - If using TrollStore on supported iOS versions, open `DexoLink.ipa` directly on device to install without resigning.
+
+

@@ -37,8 +37,11 @@ xcuserdata/
 *.xcworkspace
 *.xcuserdatad
 macos/dist/
+ios/dist/
 *.dmg
+*.ipa
 !/DexoLink*.dmg
+!/DexoLink*.ipa
 !MacOS dmg/**
 *.app
 DerivedData/
