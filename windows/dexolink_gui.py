@@ -1,5 +1,5 @@
 """
-DexoLink Windows Desktop App (v4.0.0)
+DexoLink Windows Desktop App (v4.0.1)
 Modern, lightweight, easy-to-use GUI for Windows using Python standard library (Tkinter/ttk).
 Zero external dependencies required.
 """
@@ -164,7 +164,7 @@ class ScreenViewerWindow(tk.Toplevel):
 class DexoLinkGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("DexoLink v4.0.0 — Seamless Cross-Device Sync")
+        self.root.title("DexoLink v4.0.1 — Seamless Cross-Device Sync")
         self.root.geometry("780x620")
         self.root.minsize(700, 560)
         self.root.configure(bg=COLOR_BG)
@@ -833,7 +833,7 @@ class DexoLinkGUI:
         status_bar = tk.Frame(self.root, bg=COLOR_CARD, height=28, padx=14)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
-        lbl_port = tk.Label(status_bar, text=f"Port: {self.engine.port} (TCP/UDP) | Engine: v4.0.0", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD)
+        lbl_port = tk.Label(status_bar, text=f"Port: {self.engine.port} (TCP/UDP) | Engine: v4.0.1", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD)
         lbl_port.pack(side=tk.LEFT, pady=4)
 
         self.lbl_connections = tk.Label(status_bar, text="Connected: 0 devices", font=("Segoe UI", 9, "bold"), fg=COLOR_CYAN, bg=COLOR_CARD)
