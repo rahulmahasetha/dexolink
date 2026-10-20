@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ClipboardView: View {
     @ObservedObject var appState: iOSAppState

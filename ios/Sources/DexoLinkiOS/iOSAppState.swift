@@ -3,6 +3,9 @@ import Foundation
 import Network
 import Combine
 import AVFoundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Models for iOS
 
