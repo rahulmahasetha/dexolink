@@ -2,6 +2,9 @@ import Foundation
 import CoreGraphics
 import AppKit
 import AVFoundation
+#if canImport(ScreenCaptureKit)
+import ScreenCaptureKit
+#endif
 import Networking
 import Utilities
 
@@ -45,6 +48,9 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private var activeStreams: [String: StreamType] = [:]
     private var streamTimers: [String: Timer] = [:]
     private weak var connectionManager: ConnectionManager?
+
+    // Screen capture cache
+    private var latestScreenFrame: CapturedFrameData?
 
     // Camera capture session components
     private var captureSession: AVCaptureSession?
@@ -94,6 +100,14 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             completion?(false)
             return false
         }
+    }
+
+    @discardableResult
+    public func hasScreenCaptureAccess() -> Bool {
+        if #available(macOS 10.15, *) {
+            return CGPreflightScreenCaptureAccess()
+        }
+        return true
     }
 
     @discardableResult
@@ -339,11 +353,68 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             }
         }
         streamTimers[streamId] = timer
+
+        // On macOS 14+, run high-performance ScreenCaptureKit loop for full desktop & window capture
+        if type == .screen || type == .desktopMode {
+            if #available(macOS 14.0, *) {
+                Task { [weak self] in
+                    while let self = self, self.activeStreams[streamId] != nil {
+                        if self.hasScreenCaptureAccess() {
+                            if let scFrame = await self.captureScreenWithScreenCaptureKit() {
+                                self.latestScreenFrame = scFrame
+                            }
+                        } else {
+                            self.latestScreenFrame = nil
+                        }
+                        try? await Task.sleep(nanoseconds: 80_000_000) // ~12 FPS
+                    }
+                }
+            }
+        }
+    }
+
+    @available(macOS 14.0, *)
+    private func captureScreenWithScreenCaptureKit() async -> CapturedFrameData? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
+                return nil
+            }
+            let targetSize = ScreenDisplayHelper.calculateProportionalTargetSize(sourceWidth: display.width, sourceHeight: display.height, maxEdge: 1280)
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let config = SCStreamConfiguration()
+            config.width = targetSize.width
+            config.height = targetSize.height
+            config.showsCursor = true
+            config.scalesToFit = true
+
+            let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+            if let jpegData = bitmapRep.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.65)]) {
+                return CapturedFrameData(base64: jpegData.base64EncodedString(), width: targetSize.width, height: targetSize.height)
+            }
+        } catch {
+            // Handled via fallback
+        }
+        return nil
     }
 
     public func captureCurrentFrame(for type: StreamType) -> CapturedFrameData {
         switch type {
         case .screen, .desktopMode:
+            if !hasScreenCaptureAccess() {
+                _ = checkScreenCapturePermission()
+                return generatePermissionBanner(
+                    title: "Screen Recording Permission Required",
+                    subtitle: "Please grant DexoLink Screen Recording permission in macOS System Settings.",
+                    instruction: "Open System Settings -> Privacy & Security -> Screen Recording and enable DexoLink."
+                )
+            }
+
+            if let cached = latestScreenFrame, !cached.base64.isEmpty {
+                return cached
+            }
+
             let displayId = CGMainDisplayID()
             if let imageRef = CGDisplayCreateImage(displayId) {
                 let origW = imageRef.width
@@ -385,6 +456,60 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             }
             return generateFallbackBanner(title: "DexoLink Camera Feed", subtitle: "Live Camera Stream Active")
         }
+    }
+
+    private func generatePermissionBanner(title: String, subtitle: String, instruction: String) -> CapturedFrameData {
+        let size = NSSize(width: 960, height: 540)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        // Sleek dark backdrop
+        NSColor(calibratedRed: 0.06, green: 0.09, blue: 0.16, alpha: 1.0).setFill()
+        NSRect(origin: .zero, size: size).fill()
+
+        // Border frame
+        let borderPath = NSBezierPath(roundedRect: NSRect(x: 20, y: 20, width: size.width - 40, height: size.height - 40), xRadius: 16, yRadius: 16)
+        NSColor(calibratedRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.6).setStroke()
+        borderPath.lineWidth = 2
+        borderPath.stroke()
+
+        let pStyle = NSMutableParagraphStyle()
+        pStyle.alignment = .center
+
+        let headerAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 13),
+            .foregroundColor: NSColor(calibratedRed: 0.3, green: 0.6, blue: 1.0, alpha: 1.0),
+            .paragraphStyle: pStyle
+        ]
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 22),
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: pStyle
+        ]
+        let subAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor(calibratedRed: 0.7, green: 0.75, blue: 0.85, alpha: 1.0),
+            .paragraphStyle: pStyle
+        ]
+        let instAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.7, alpha: 1.0),
+            .paragraphStyle: pStyle
+        ]
+
+        ("DEXOLINK DISPLAY MIRRORING" as NSString).draw(in: NSRect(x: 30, y: 350, width: size.width - 60, height: 25), withAttributes: headerAttrs)
+        (title as NSString).draw(in: NSRect(x: 30, y: 300, width: size.width - 60, height: 35), withAttributes: titleAttrs)
+        (subtitle as NSString).draw(in: NSRect(x: 40, y: 250, width: size.width - 80, height: 40), withAttributes: subAttrs)
+        (instruction as NSString).draw(in: NSRect(x: 40, y: 190, width: size.width - 80, height: 40), withAttributes: instAttrs)
+
+        image.unlockFocus()
+
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let jpegData = rep.representation(using: .jpeg, properties: [NSBitmapImageRep.PropertyKey.compressionFactor: NSNumber(value: 0.65)]) {
+            return CapturedFrameData(base64: jpegData.base64EncodedString(), width: Int(size.width), height: Int(size.height))
+        }
+        return CapturedFrameData(base64: "", width: Int(size.width), height: Int(size.height))
     }
 
     private func generateFallbackBanner(title: String, subtitle: String) -> CapturedFrameData {
@@ -429,6 +554,9 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         streamTimers[streamId]?.invalidate()
         streamTimers.removeValue(forKey: streamId)
         activeStreams.removeValue(forKey: streamId)
+        if activeStreams.values.filter({ $0 == .screen || $0 == .desktopMode }).isEmpty {
+            latestScreenFrame = nil
+        }
         if activeStreams.values.filter({ $0 == .camera }).isEmpty {
             stopCameraSession()
         }

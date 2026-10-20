@@ -50,11 +50,17 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         const val ACTION_REJECT_PAIRING = "com.macdroid.action.REJECT_PAIRING"
         const val ACTION_CANCEL_TRANSFER = "com.macdroid.action.CANCEL_TRANSFER"
         const val ACTION_PASTE_CLEAN = "com.macdroid.action.PASTE_CLEAN"
+        const val ACTION_ENABLE_MEDIA_PROJECTION = "com.macdroid.action.ENABLE_MEDIA_PROJECTION"
+        const val ACTION_DISABLE_MEDIA_PROJECTION = "com.macdroid.action.DISABLE_MEDIA_PROJECTION"
 
         const val EXTRA_HOST = "extra_host"
         const val EXTRA_PORT = "extra_port"
         const val EXTRA_TRANSFER_ID = "extra_transfer_id"
         const val EXTRA_CLIP_TEXT = "extra_clip_text"
+
+        @Volatile
+        var isMediaProjectionActive = false
+            private set
 
         @Volatile
         var instance: MacDroidService? = null
@@ -111,6 +117,44 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
                 Log.e(TAG, "Failed to stop service: ${e.message}")
                 isPendingStop = false
                 DexoLinkTileService.onServiceStateChanged()
+            }
+        }
+
+        fun enableMediaProjectionForeground(context: Context) {
+            isMediaProjectionActive = true
+            val inst = instance
+            if (inst != null) {
+                inst.updateForegroundNotification()
+            } else {
+                try {
+                    val intent = Intent(context, MacDroidService::class.java).apply {
+                        action = ACTION_ENABLE_MEDIA_PROJECTION
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(intent)
+                    } else {
+                        context.startService(intent)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to start service for media projection: ${e.message}")
+                }
+            }
+        }
+
+        fun disableMediaProjectionForeground(context: Context) {
+            isMediaProjectionActive = false
+            val inst = instance
+            if (inst != null) {
+                inst.updateForegroundNotification()
+            } else {
+                try {
+                    val intent = Intent(context, MacDroidService::class.java).apply {
+                        action = ACTION_DISABLE_MEDIA_PROJECTION
+                    }
+                    context.startService(intent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to dispatch disableMediaProjection intent: ${e.message}")
+                }
             }
         }
 
@@ -192,10 +236,13 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         try {
             val notification = buildActiveNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                var type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 } else {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && isMediaProjectionActive) {
+                    type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 }
                 ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
             } else {
@@ -206,6 +253,17 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         }
 
         when (action) {
+            ACTION_ENABLE_MEDIA_PROJECTION -> {
+                isMediaProjectionActive = true
+                updateForegroundNotification()
+                return START_STICKY
+            }
+
+            ACTION_DISABLE_MEDIA_PROJECTION -> {
+                isMediaProjectionActive = false
+                updateForegroundNotification()
+                return START_STICKY
+            }
             ACTION_STOP, ACTION_DISCONNECT -> {
                 connectionManager.disconnect(disableAutoReconnect = true)
                 discoveryService.stopAll()
@@ -496,6 +554,27 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         }
     }
 
+    fun updateForegroundNotification() {
+        try {
+            val notification = buildActiveNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                var type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && isMediaProjectionActive) {
+                    type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                }
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not update foreground service: ${e.message}", e)
+        }
+    }
+
     private fun buildActiveNotification(): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -507,9 +586,15 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val statusText = if (isMediaProjectionActive) {
+            "Display Mirroring is active"
+        } else {
+            "DexoLink is active"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("DexoLink")
-            .setContentText("DexoLink is active")
+            .setContentText(statusText)
             .setSmallIcon(R.drawable.ic_qs_dexolink)
             .setContentIntent(openAppPendingIntent)
             .setOngoing(true)

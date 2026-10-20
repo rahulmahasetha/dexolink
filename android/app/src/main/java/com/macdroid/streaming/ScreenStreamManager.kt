@@ -22,6 +22,7 @@ import com.macdroid.networking.StreamFrameMessage
 import com.macdroid.networking.StreamRequestMessage
 import com.macdroid.networking.StreamResponseMessage
 import com.macdroid.networking.StreamStopMessage
+import com.macdroid.service.MacDroidService
 import com.macdroid.storage.DexoLinkSettings
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +42,7 @@ class ScreenStreamManager private constructor(private val context: Context) {
         private const val TAG = "ScreenStreamManager"
         private const val DEFAULT_MAX_DIMENSION = 1280
         private const val TARGET_FPS = 15
+        private const val MIN_FRAME_INTERVAL_MS = 50L // Cap at 20 FPS to optimize resource usage
 
         @Volatile
         private var instance: ScreenStreamManager? = null
@@ -103,6 +105,7 @@ class ScreenStreamManager private constructor(private val context: Context) {
 
     private var frameCounter = 0
     private var lastFpsCalculationTime = 0L
+    private var lastFrameTimeMs = 0L
 
     private var remoteFrameCounter = 0
     private var lastRemoteFpsTime = 0L
@@ -235,10 +238,12 @@ class ScreenStreamManager private constructor(private val context: Context) {
         val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
         if (mediaProjectionManager != null && resultCode == Activity.RESULT_OK) {
             try {
+                // Elevate Foreground Service type to include FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION for Android 14+
+                MacDroidService.enableMediaProjectionForeground(context)
                 mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, resultData)
                 startHardwareScreenCapture()
             } catch (e: Exception) {
-                Log.w(TAG, "MediaProjection initialization failed, falling back to live synthetic screen stream: ${e.message}")
+                Log.w(TAG, "MediaProjection initialization failed, falling back to live synthetic screen stream: ${e.message}", e)
                 startSyntheticScreenStream()
             }
         } else {
@@ -281,13 +286,29 @@ class ScreenStreamManager private constructor(private val context: Context) {
         backgroundThread = HandlerThread("ScreenCaptureThread").also { it.start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
 
+        // Strict Android 14+ requirement: MediaProjection.Callback MUST be registered before createVirtualDisplay
+        proj.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.i(TAG, "MediaProjection callback onStop received")
+                stopScreenCapture()
+            }
+        }, backgroundHandler)
+
         imageReader = ImageReader.newInstance(targetSize.width, targetSize.height, PixelFormat.RGBA_8888, 2).apply {
             setOnImageAvailableListener({ reader ->
                 if (!isStreamingActive.get()) return@setOnImageAvailableListener
                 try {
+                    val now = System.currentTimeMillis()
+                    if (now - lastFrameTimeMs < MIN_FRAME_INTERVAL_MS) {
+                        // Discard frame to conserve CPU and network bandwidth
+                        reader.acquireLatestImage()?.close()
+                        return@setOnImageAvailableListener
+                    }
+                    lastFrameTimeMs = now
                     val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                    processScreenImage(image)
-                    image.close()
+                    image.use { img ->
+                        processScreenImage(img)
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error acquiring screen image: ${e.message}")
                 }
@@ -315,32 +336,39 @@ class ScreenStreamManager private constructor(private val context: Context) {
     private fun processScreenImage(image: Image) {
         val planes = image.planes
         if (planes.isEmpty()) return
-        val buffer = planes[0].buffer
-        val pixelStride = planes[0].pixelStride
-        val rowStride = planes[0].rowStride
-        val rowPadding = rowStride - pixelStride * image.width
+        val plane = planes[0]
+        val buffer = plane.buffer ?: return
+        buffer.rewind()
 
-        val bitmap = Bitmap.createBitmap(
-            image.width + rowPadding / pixelStride,
-            image.height,
+        val pixelStride = plane.pixelStride
+        val rowStride = plane.rowStride
+        val imageWidth = image.width
+        val imageHeight = image.height
+
+        val rowPadding = rowStride - pixelStride * imageWidth
+        val bitmapWidth = imageWidth + (if (pixelStride > 0) rowPadding / pixelStride else 0)
+
+        val fullBitmap = Bitmap.createBitmap(
+            bitmapWidth,
+            imageHeight,
             Bitmap.Config.ARGB_8888
         )
-        bitmap.copyPixelsFromBuffer(buffer)
+        fullBitmap.copyPixelsFromBuffer(buffer)
 
-        val cleanBitmap = if (rowPadding > 0) {
-            Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height).also {
-                if (it != bitmap) bitmap.recycle()
-            }
+        val cleanBitmap = if (rowPadding > 0 && bitmapWidth > imageWidth) {
+            val cropped = Bitmap.createBitmap(fullBitmap, 0, 0, imageWidth, imageHeight)
+            if (cropped != fullBitmap) fullBitmap.recycle()
+            cropped
         } else {
-            bitmap
+            fullBitmap
         }
 
         val stream = ByteArrayOutputStream()
-        cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 65, stream)
+        cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
         val jpegBytes = stream.toByteArray()
         cleanBitmap.recycle()
 
-        sendEncodedJpegFrame(jpegBytes, image.width, image.height)
+        sendEncodedJpegFrame(jpegBytes, imageWidth, imageHeight)
     }
 
     private fun sendEncodedJpegFrame(jpegBytes: ByteArray, width: Int, height: Int) {
@@ -493,5 +521,8 @@ class ScreenStreamManager private constructor(private val context: Context) {
         } catch (e: Exception) {}
         backgroundThread = null
         backgroundHandler = null
+
+        // Downgrade Foreground Service type back to normal
+        MacDroidService.disableMediaProjectionForeground(context)
     }
 }
