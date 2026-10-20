@@ -37,9 +37,11 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
          * Instantly refreshes any actively listening Quick Settings tile in the notification shade.
          */
         fun onServiceStateChanged() {
-            val service = activeInstance ?: return
-            mainHandler.post {
-                service.updateTileState()
+            val service = activeInstance
+            if (service != null) {
+                mainHandler.post {
+                    service.updateTileState()
+                }
             }
         }
 
@@ -47,11 +49,13 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
          * Requests the system to schedule a tile update when not actively listening.
          */
         fun requestUpdate(context: Context) {
-            try {
-                val component = ComponentName(context, DexoLinkTileService::class.java)
-                requestListeningState(context, component)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed requestListeningState: ${e.message}")
+            mainHandler.post {
+                try {
+                    val component = ComponentName(context, DexoLinkTileService::class.java)
+                    requestListeningState(context, component)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed requestListeningState: ${e.message}")
+                }
             }
         }
     }
@@ -93,10 +97,16 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
         }
 
         val tile = qsTile ?: return
-        val currentlyRunning = MacDroidService.isRunning()
+        val isServiceRunning = MacDroidService.isRunning()
+        val isExplicitlyDisconnected = connectionManager.userExplicitlyDisconnected
+        val isConnected = connectionManager.isConnected()
+        val isTileActive = isServiceRunning && !isExplicitlyDisconnected && (isConnected || connectionManager.autoReconnect)
 
-        if (currentlyRunning) {
+        if (isTileActive) {
             // Turning OFF: Synchronously update tile visual state to INACTIVE immediately
+            connectionManager.userExplicitlyDisconnected = true
+            connectionManager.disconnect(disableAutoReconnect = true)
+
             tile.state = Tile.STATE_INACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 tile.subtitle = "Off (${paired.deviceName})"
@@ -107,6 +117,8 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
             MacDroidService.stop(this)
         } else {
             // Turning ON: Synchronously update tile visual state to ACTIVE immediately
+            connectionManager.userExplicitlyDisconnected = false
+
             tile.state = Tile.STATE_ACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 tile.subtitle = "Searching ${paired.deviceName}..."
@@ -115,6 +127,11 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
             tile.updateTile()
 
             MacDroidService.start(this)
+            val host = connectionManager.lastConnectedHost ?: ""
+            val port = if (connectionManager.lastConnectedPort > 0) connectionManager.lastConnectedPort else 52840
+            if (host.isNotBlank()) {
+                connectionManager.connect(host, port)
+            }
         }
     }
 
@@ -143,24 +160,31 @@ class DexoLinkTileService : TileService(), ConnectionEventListener {
         val trustStore = TrustStore.getInstance(this)
         val paired = trustStore.getPairedDevice()
         val state = connectionManager.state
+        val isExplicitlyDisconnected = connectionManager.userExplicitlyDisconnected
+        val isConnected = state is ConnectionState.Connected || state is ConnectionState.Authenticated
+        val isConnecting = state is ConnectionState.Connecting
 
         tile.label = "DexoLink"
         tile.icon = Icon.createWithResource(this, R.drawable.ic_qs_dexolink)
 
-        if (!isServiceRunning) {
-            tile.state = Tile.STATE_INACTIVE
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                tile.subtitle = if (paired != null) "Off (${paired.deviceName})" else "Tap to Set Up"
-            }
-        } else {
+        // The tile is visually ACTIVE (ON) when the service is actively running, NOT explicitly disconnected,
+        // and either connected, connecting, or actively waiting for paired device connection.
+        val isTileActive = isServiceRunning && !isExplicitlyDisconnected && (isConnected || isConnecting || (paired != null && connectionManager.autoReconnect))
+
+        if (isTileActive) {
             tile.state = Tile.STATE_ACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 tile.subtitle = when (state) {
                     is ConnectionState.Authenticated -> "Connected: ${state.peerName}"
-                    is ConnectionState.Connecting -> "Connecting..."
                     is ConnectionState.Connected -> "Connected: ${state.peerName}"
+                    is ConnectionState.Connecting -> "Connecting..."
                     else -> if (paired != null) "Searching ${paired.deviceName}..." else "Active"
                 }
+            }
+        } else {
+            tile.state = Tile.STATE_INACTIVE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                tile.subtitle = if (paired != null) "Off (${paired.deviceName})" else "Tap to Set Up"
             }
         }
 

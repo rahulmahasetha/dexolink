@@ -16,6 +16,8 @@ import com.macdroid.security.PairingManager
 import com.macdroid.storage.TrustStore
 import com.macdroid.storage.TrustedDevice
 import com.macdroid.storage.DexoLinkSettings
+import com.macdroid.service.NotificationHelper
+import com.macdroid.service.DexoLinkTileService
 import kotlinx.coroutines.*
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -111,6 +113,12 @@ class ConnectionManager(private val context: Context) {
             mainHandler.post {
                 for (listener in listeners) {
                     listener.onStateChanged(value)
+                }
+                try {
+                    DexoLinkTileService.requestUpdate(context.applicationContext)
+                    DexoLinkTileService.onServiceStateChanged()
+                } catch (e: Exception) {
+                    // Ignore
                 }
             }
         }
@@ -537,6 +545,7 @@ class ConnectionManager(private val context: Context) {
                     log("Pairing verified! 6-digit confirmation code: $pin")
                     pairingManager.confirmPairing()
                     state = ConnectionState.Authenticated(peerName, peerId)
+                    NotificationHelper.showPairedNotification(context, peerName)
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
 
                     // Automatically stop discovery and scanning on both devices once pairing succeeds!
@@ -563,6 +572,7 @@ class ConnectionManager(private val context: Context) {
             }
 
             is UnpairMessage -> {
+                val unpairedName = currentPeerName ?: trustStore.getPairedDevice()?.deviceName
                 log("Received UNPAIR from peer. Clearing paired trust store...")
                 trustStore.unpairDevice()
                 pairingManager.unpair()
@@ -572,6 +582,7 @@ class ConnectionManager(private val context: Context) {
                 } catch (e: Exception) {}
                 state = ConnectionState.Disconnected
                 disconnect(disableAutoReconnect = true)
+                NotificationHelper.showUnpairedNotification(context, unpairedName)
             }
 
             is PingMessage -> {
@@ -672,6 +683,7 @@ class ConnectionManager(private val context: Context) {
             pairingManager.confirmPairing()
             sendMessage(PairResponseMessage(accepted = true, publicKey = cryptoService.publicKeyBase64))
             state = ConnectionState.Authenticated(currentState.peerName, currentState.peerId)
+            NotificationHelper.showPairedNotification(context, currentState.peerName)
             sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
             log("Pairing confirmed by user for ${currentState.peerName} (${currentState.peerId})")
             try {
@@ -698,7 +710,8 @@ class ConnectionManager(private val context: Context) {
 
     fun unpairCurrentDevice() {
         val paired = trustStore.getPairedDevice()
-        log("Unpairing current device: ${paired?.deviceName}")
+        val deviceName = paired?.deviceName
+        log("Unpairing current device: $deviceName")
         sendMessage(UnpairMessage)
         trustStore.unpairDevice()
         pairingManager.unpair()
@@ -708,10 +721,13 @@ class ConnectionManager(private val context: Context) {
         } catch (e: Exception) {}
         disconnect(disableAutoReconnect = true)
         state = ConnectionState.Disconnected
+        NotificationHelper.showUnpairedNotification(context, deviceName)
     }
 
     fun unpairDevice(deviceId: String? = null) {
         if (deviceId != null) {
+            val dev = trustStore.getTrustedDevices().firstOrNull { it.deviceId == deviceId }
+            val devName = dev?.deviceName
             log("Unpairing specific device: $deviceId")
             trustStore.unpairDevice(deviceId)
             if (currentPeerId == deviceId) {
@@ -723,6 +739,7 @@ class ConnectionManager(private val context: Context) {
                 disconnect(disableAutoReconnect = true)
                 state = ConnectionState.Disconnected
             }
+            NotificationHelper.showUnpairedNotification(context, devName)
         } else {
             unpairCurrentDevice()
         }
@@ -823,6 +840,10 @@ class ConnectionManager(private val context: Context) {
             }
         }
         disconnectInternal(disableAutoReconnect)
+        try {
+            DexoLinkTileService.requestUpdate(context.applicationContext)
+            DexoLinkTileService.onServiceStateChanged()
+        } catch (e: Exception) {}
     }
 
     private fun disconnectInternal(disableAutoReconnect: Boolean, targetSocket: Socket? = null) {

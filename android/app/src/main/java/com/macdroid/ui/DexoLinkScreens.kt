@@ -2355,6 +2355,79 @@ fun HomeScreenContent(
                     }
                 }
 
+                if (hasAnyActiveFeature) {
+                    val activeFeaturesCount = listOf(
+                        showClipboardSync,
+                        showFileSharing,
+                        showDevicePairing,
+                        showContinuity,
+                        showEnhancedClipboard,
+                        showCameraSharing,
+                        showScreenSharing,
+                        showDesktopMode
+                    ).count { it }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFEFF6FF)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Settings,
+                                    contentDescription = null,
+                                    tint = Color(0xFF0066FF),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    "Feature Controls",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    color = Color(0xFFDCFCE7),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        "$activeFeaturesCount ACTIVE",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF16A34A),
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = onNavigateSettings,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text("Configure", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            }
+                        }
+                    }
+                }
+
                 // Feature 1: Clipboard Sync (Visible ONLY when enabled)
                 if (showClipboardSync) {
                     Card(
@@ -4712,22 +4785,23 @@ fun SettingsTabContent(
             }
         }
 
-        // Section 1: Features (Matching Screenshot 2)
+        // Section 1: Features (Matching Reference Design Image 2)
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
-                        imageVector = DexoIcons.Settings,
+                        imageVector = DexoIcons.CategoryDoc,
                         contentDescription = null,
-                        tint = Color(0xFF0F172A),
-                        modifier = Modifier.size(18.dp)
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        "Features",
+                        "FEATURES",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = Color(0xFF0F172A)
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        letterSpacing = 0.5.sp
                     )
                 }
 
@@ -5038,22 +5112,23 @@ fun SettingsTabContent(
             }
         }
 
-        // Section 2: Sync Options (Matching Screenshot 2)
+        // Section 2: Sync Options (Matching Reference Design Image 2)
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
                         imageVector = DexoIcons.Sync,
                         contentDescription = null,
-                        tint = Color(0xFF0F172A),
-                        modifier = Modifier.size(18.dp)
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        "Sync Options",
+                        "SYNC OPTIONS",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = Color(0xFF0F172A)
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        letterSpacing = 0.5.sp
                     )
                 }
 
@@ -5180,22 +5255,252 @@ fun SettingsTabContent(
             }
         }
 
-        // Section 3: Security & Pairing Management (Matching Screenshot 2)
+        // Section 3: Media Streaming & Remote Control (Matching Reference Design Image 2)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DexoIcon(
+                        imageVector = DexoIcons.CategoryVideo,
+                        contentDescription = null,
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "MEDIA STREAMING & REMOTE CONTROL",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        // 1. Camera Sharing
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFFEC4899)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.CategoryVideo,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Camera Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                    if (!cameraSharingEnabled) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0xFFF1F5F9),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                "OFF",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color(0xFF64748B),
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    "Stream camera to another device",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Switch(
+                                checked = cameraSharingEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                        if (hasCam) {
+                                            settings.setCameraSharing(true)
+                                            Toast.makeText(context, "Camera Sharing active", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                        }
+                                    } else {
+                                        settings.setCameraSharing(false)
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
+                            )
+                        }
+
+                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+
+                        // 2. Screen Sharing
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF3B82F6)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.DeviceMac,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Screen Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                    if (!screenSharingEnabled) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0xFFF1F5F9),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                "OFF",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color(0xFF64748B),
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    "Mirror screen to another device",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Switch(
+                                checked = screenSharingEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        if (mediaProjectionManager != null) {
+                                            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                                        } else {
+                                            settings.setScreenSharing(true)
+                                        }
+                                    } else {
+                                        settings.setScreenSharing(false)
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
+                            )
+                        }
+
+                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+
+                        // 3. Desktop Mode (beta)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF10B981)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Globe,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Desktop Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color(0xFFDBEAFE))
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1D4ED8))
+                                    }
+                                    if (!desktopModeEnabled) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0xFFF1F5F9),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                "OFF",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color(0xFF64748B),
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    "Remote desktop viewing & control",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                            Switch(
+                                checked = desktopModeEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        settings.setDesktopMode(true)
+                                        showDesktopModeInfoDialog = true
+                                    } else {
+                                        settings.setDesktopMode(false)
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF0066FF))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 4: Security (Matching Reference Design Image 2)
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
                         imageVector = DexoIcons.Shield,
                         contentDescription = null,
-                        tint = Color(0xFF0F172A),
-                        modifier = Modifier.size(18.dp)
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        "Security",
+                        "SECURITY",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = Color(0xFF0F172A)
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        letterSpacing = 0.5.sp
                     )
                 }
 
@@ -5230,7 +5535,7 @@ fun SettingsTabContent(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Multiple Paired Devices", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
                                 Text(
-                                    if (multiPairedEnabled) "Connect multiple devices simultaneously" else "Single device mode (Strict 1-device policy)",
+                                    "Connect multiple devices simultaneously",
                                     fontSize = 11.sp,
                                     color = Color(0xFF64748B)
                                 )
@@ -5284,43 +5589,91 @@ fun SettingsTabContent(
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Trusted Paired Devices (${trustedList.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Color(0xFF64748B))
                                 for (device in trustedList) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                device.deviceName,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp,
-                                                color = Color(0xFF0F172A)
-                                            )
-                                            Text(
-                                                "TrustStore verified",
-                                                fontSize = 11.sp,
-                                                color = Color(0xFF16A34A)
-                                            )
-                                        }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            if (device.deviceId == pairedDevice?.deviceId) {
-                                                OutlinedButton(
-                                                    onClick = onOpenRenamePaired,
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text(
+                                                    device.deviceName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = Color(0xFF0F172A)
+                                                )
+                                                Spacer(modifier = Modifier.weight(1f))
+                                                Surface(
+                                                    color = Color(0xFFDCFCE7),
+                                                    shape = RoundedCornerShape(4.dp)
                                                 ) {
-                                                    Text("Rename", fontSize = 11.sp, color = Color(0xFF0F172A))
+                                                    Text(
+                                                        "✓ Verified",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF16A34A),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
                                                 }
                                             }
-                                            Button(
-                                                onClick = {
-                                                    trustStore.unpairDevice(device.deviceId)
-                                                    onUnpair()
-                                                },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                                                shape = RoundedCornerShape(8.dp),
-                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                            ) {
-                                                Text("Unpair", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                            Text(
+                                                "TrustStore • trusted device",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF64748B)
+                                            )
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            if (device.deviceId == pairedDevice?.deviceId) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                                    OutlinedButton(
+                                                        onClick = onOpenRenamePaired,
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        modifier = Modifier.weight(1f),
+                                                        contentPadding = PaddingValues(vertical = 4.dp)
+                                                    ) {
+                                                        Text("Rename", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                                                    }
+                                                    Surface(
+                                                        color = Color(0xFFFEF2F2),
+                                                        border = BorderStroke(1.dp, Color(0xFFFECACA)),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        modifier = Modifier
+                                                            .weight(1f)
+                                                            .clickable {
+                                                                trustStore.unpairDevice(device.deviceId)
+                                                                onUnpair()
+                                                            }
+                                                    ) {
+                                                        Box(
+                                                            contentAlignment = Alignment.Center,
+                                                            modifier = Modifier.padding(vertical = 8.dp)
+                                                        ) {
+                                                            Text("Unpair", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444))
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                Surface(
+                                                    color = Color(0xFFFEF2F2),
+                                                    border = BorderStroke(1.dp, Color(0xFFFECACA)),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            trustStore.unpairDevice(device.deviceId)
+                                                            onUnpair()
+                                                        }
+                                                ) {
+                                                    Box(
+                                                        contentAlignment = Alignment.Center,
+                                                        modifier = Modifier.padding(vertical = 8.dp)
+                                                    ) {
+                                                        Text("Unpair", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444))
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -5366,7 +5719,7 @@ fun SettingsTabContent(
                                     }
                                 },
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                             ) {
                                 Text("Configure", fontSize = 11.sp, color = Color(0xFF0066FF))
                             }
@@ -5381,32 +5734,23 @@ fun SettingsTabContent(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "This Device: $localDeviceName",
+                                    "This Device",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = Color(0xFF0F172A)
                                 )
                                 Text(
-                                    "Broadcasted on local Wi-Fi",
+                                    "$localDeviceName • broadcast on local Wi-Fi",
                                     fontSize = 11.sp,
                                     color = Color(0xFF64748B)
                                 )
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                OutlinedButton(
-                                    onClick = onOpenRenameLocal,
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text("Rename", fontSize = 11.sp, color = Color(0xFF0F172A))
-                                }
-                                OutlinedButton(
-                                    onClick = onShowSecurity,
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text("Security Info", fontSize = 11.sp, color = Color(0xFF0066FF))
-                                }
+                            OutlinedButton(
+                                onClick = onOpenRenameLocal,
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Text("Rename", fontSize = 11.sp, color = Color(0xFF0066FF))
                             }
                         }
 
@@ -5425,7 +5769,7 @@ fun SettingsTabContent(
                                     color = Color(0xFF0F172A)
                                 )
                                 Text(
-                                    "Send round-trip ping to paired device",
+                                    "Round-trip ping to paired device",
                                     fontSize = 11.sp,
                                     color = Color(0xFF64748B)
                                 )
@@ -5433,18 +5777,9 @@ fun SettingsTabContent(
                             OutlinedButton(
                                 onClick = onSendPing,
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Ping Mac", fontSize = 11.sp, color = Color(0xFF0066FF))
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    DexoIcon(
-                                        imageVector = DexoIcons.Flash,
-                                        contentDescription = null,
-                                        tint = Color(0xFF0066FF),
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                }
+                                Text("Ping Mac", fontSize = 11.sp, color = Color(0xFF0066FF))
                             }
                         }
                     }
@@ -5452,182 +5787,20 @@ fun SettingsTabContent(
             }
         }
 
-        // Section 4: Media Streaming & Remote Control (v4.0.1)
+        // Footer (Matching Reference Design Image 2)
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    DexoIcon(
-                        imageVector = DexoIcons.CategoryVideo,
-                        contentDescription = null,
-                        tint = Color(0xFF0F172A),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        "Media Streaming & Remote Control",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = Color(0xFF0F172A)
-                    )
-                }
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        // 1. Camera Sharing
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFEC4899)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.CategoryVideo,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Camera Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
-                                Text(
-                                    if (cameraSharingEnabled) "Streaming enabled to paired devices" else "Stream camera to another device (OFF by default)",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Switch(
-                                checked = cameraSharingEnabled,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) {
-                                        val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                                        if (hasCam) {
-                                            settings.setCameraSharing(true)
-                                            Toast.makeText(context, "Camera Sharing active", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                        }
-                                    } else {
-                                        settings.setCameraSharing(false)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFFEC4899))
-                            )
-                        }
-
-                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
-
-                        // 2. Screen Sharing
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF3B82F6)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.DeviceMac,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Screen Sharing", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
-                                Text(
-                                    if (screenSharingEnabled) "Screen mirroring active to paired devices" else "Mirror screen to another device (OFF by default)",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Switch(
-                                checked = screenSharingEnabled,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) {
-                                        if (mediaProjectionManager != null) {
-                                            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
-                                        } else {
-                                            settings.setScreenSharing(true)
-                                        }
-                                    } else {
-                                        settings.setScreenSharing(false)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF3B82F6))
-                            )
-                        }
-
-                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
-
-                        // 3. Desktop Mode (beta)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF10B981)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Globe,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Desktop Mode", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(Color(0xFFD1FAE5))
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    ) {
-                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF059669))
-                                    }
-                                }
-                                Text(
-                                    if (desktopModeEnabled) "Remote desktop viewing & input control active" else "Remote desktop viewing & control (OFF by default)",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Switch(
-                                checked = desktopModeEnabled,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) {
-                                        settings.setDesktopMode(true)
-                                        showDesktopModeInfoDialog = true
-                                    } else {
-                                        settings.setDesktopMode(false)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF10B981))
-                            )
-                        }
-                    }
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "Developed by Rahul Mahaseth | DexoLink v4.0.1",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8),
+                    textAlign = TextAlign.Center
+                )
             }
         }
 

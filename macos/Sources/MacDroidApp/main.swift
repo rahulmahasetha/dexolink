@@ -21,9 +21,11 @@ app.delegate = appDelegate
 app.run()
 
 
-class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var globalEventMonitor: Any?
+    private var localEventMonitor: Any?
     let appState = AppState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -69,6 +71,7 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         popover = NSPopover()
         popover.contentSize = NSSize(width: 360, height: 520)
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentViewController = NSHostingController(
             rootView: MenuBarView(appState: appState)
         )
@@ -213,6 +216,7 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
         if !popover.isShown, let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            startDismissalMonitors()
         }
     }
 
@@ -225,10 +229,67 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
 
         if popover.isShown {
             popover.performClose(nil)
+            stopDismissalMonitors()
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             // Bring popover window to front
             popover.contentViewController?.view.window?.makeKey()
+            startDismissalMonitors()
+        }
+    }
+
+    // MARK: - NSPopoverDelegate & Outside Click Dismissal
+    func popoverWillShow(_ notification: Notification) {
+        startDismissalMonitors()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        stopDismissalMonitors()
+    }
+
+    private func startDismissalMonitors() {
+        stopDismissalMonitors()
+
+        // 1. Global monitor: Intercepts clicks on external apps, the desktop, or other menu bar items (Wi-Fi, Bluetooth)
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self = self, self.popover.isShown else { return }
+            DispatchQueue.main.async {
+                self.popover.performClose(nil)
+            }
+        }
+
+        // 2. Local monitor: Intercepts clicks within our own process (e.g. outside popover window but on other elements)
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self, self.popover.isShown else { return event }
+
+            // Allow interaction inside the popover window
+            if let popoverWindow = self.popover.contentViewController?.view.window, event.window == popoverWindow {
+                return event
+            }
+
+            // Allow toggle clicks directly on the status bar icon button
+            if let buttonWindow = self.statusItem.button?.window, event.window == buttonWindow {
+                let pointInButton = self.statusItem.button?.convert(event.locationInWindow, from: nil) ?? .zero
+                if self.statusItem.button?.bounds.contains(pointInButton) == true {
+                    return event
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.popover.performClose(nil)
+            }
+            return event
+        }
+    }
+
+    private func stopDismissalMonitors() {
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEventMonitor = nil
+        }
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
         }
     }
 
@@ -355,8 +416,19 @@ class AppState: ObservableObject {
     @Published var isDesktopModeEnabled: Bool = false
     @Published var selectedTargetDeviceId: String? = nil
     @Published var userExplicitlyDisconnected: Bool = false
-
     var onMasterStateChanged: ((Bool) -> Void)?
+
+    var activeFeaturesCount: Int {
+        var count = 0
+        if continuityManager.isEnabled { count += 1 }
+        if isClipboardSyncEnabled { count += 1 }
+        if isEnhancedClipboardEnabled { count += 1 }
+        if isMultiplePairedDevicesEnabled { count += 1 }
+        if isCameraSharingEnabled { count += 1 }
+        if isScreenSharingEnabled { count += 1 }
+        if isDesktopModeEnabled { count += 1 }
+        return count
+    }
 
     private var pingStartTime: Date?
     private var activeScanTimer: Timer?

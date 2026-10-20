@@ -553,58 +553,57 @@ struct MenuBarView: View {
                     .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
 
-                    // MARK: - Feature Controls Overview & Settings Link
-                    HStack(spacing: 8) {
+                    // MARK: - Feature Controls Card (Matching Reference Design)
+                    HStack(spacing: 10) {
                         ZStack {
-                            Circle()
-                                .fill(Color.cyan.opacity(0.16))
-                                .frame(width: 28, height: 28)
-                            Image(systemName: "gearshape.2.fill")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.cyan)
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(red: 0.12, green: 0.23, blue: 0.54).opacity(0.4))
+                                .frame(width: 32, height: 32)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                                )
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(red: 0.38, green: 0.65, blue: 0.98))
                         }
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Text("Feature Controls")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text("4 Active")
-                                    .font(.system(size: 8, weight: .heavy))
-                                    .foregroundColor(.cyan)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(Color.cyan.opacity(0.12)))
-                            }
+                        HStack(spacing: 6) {
+                            Text("Feature Controls")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.primary)
 
-                            Text("Continuity • Clipboard • Enhanced • Multi-Device")
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
+                            Text("\(appState.activeFeaturesCount) ACTIVE")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundColor(Color(red: 0.29, green: 0.87, blue: 0.50))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color(red: 0.08, green: 0.33, blue: 0.18).opacity(0.9)))
                         }
 
-                        Spacer(minLength: 4)
+                        Spacer()
 
                         Button(action: {
                             showSettingsSheet = true
                         }) {
-                            HStack(spacing: 3) {
-                                Text("Configure")
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 8, weight: .bold))
-                            }
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.cyan)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.cyan.opacity(0.12))
-                            .cornerRadius(6)
+                            Text("Configure")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color(red: 0.15, green: 0.39, blue: 0.92))
+                                .cornerRadius(6)
                         }
                         .buttonStyle(.plain)
                         .help("Open dedicated Settings view containing all feature controls")
                     }
-                    .padding(8)
+                    .padding(10)
                     .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    )
 
                     // MARK: - Nearby Discovered Devices
                     VStack(alignment: .leading, spacing: 6) {

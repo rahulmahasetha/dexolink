@@ -875,9 +875,17 @@ const webUIHTML = `<!DOCTYPE html>
         </div>
         <input type="checkbox" id="multiToggle" onchange="toggleMulti(this.checked)">
       </div>
-      <button class="btn" onclick="openSettingsModal()" style="width:100%; margin-top:10px; background:var(--bg); border:1px solid var(--border); font-size:12px; color:var(--cyan);">
-        ⚙️ Open Dedicated Settings & All Feature Controls
-      </button>
+      <!-- Feature Controls Card (Matching Reference Design) -->
+      <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin-top:12px; margin-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:32px; height:32px; border-radius:8px; background:rgba(30,58,138,0.4); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa; font-size:14px;">⚙️</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:700; font-size:13px; color:var(--text);">Feature Controls</span>
+            <span id="featCountBadge" style="background:#14532d; color:#4ade80; font-size:9px; font-weight:800; padding:2px 7px; border-radius:999px;">4 ACTIVE</span>
+          </div>
+        </div>
+        <button class="btn" onclick="openSettingsModal()" style="background:#2563eb; color:#ffffff; font-weight:600; padding:5px 14px; border-radius:6px; font-size:11px; border:none; cursor:pointer;">Configure</button>
+      </div>
       <h3 style="font-size:13px; margin-top:12px; margin-bottom:6px;">Paired Devices</h3>
       <ul class="list" id="pairedList">
         <li class="muted">Scanning local network...</li>
@@ -1029,6 +1037,18 @@ const webUIHTML = `<!DOCTYPE html>
           document.getElementById('modalAcceptToggle').checked = data.auto_accept_paired;
           document.getElementById('modalDownPath').innerText = data.download_dir;
         }
+
+        // Dynamically compute and display active feature count
+        let activeCount = 0;
+        if (data.continuity_enabled) activeCount++;
+        if (data.auto_clipboard_sync) activeCount++;
+        if (data.enhanced_clipboard) activeCount++;
+        if (data.multiple_paired) activeCount++;
+        if (data.camera_sharing_enabled) activeCount++;
+        if (data.screen_sharing_enabled) activeCount++;
+        if (data.desktop_mode_enabled) activeCount++;
+        const badge = document.getElementById('featCountBadge');
+        if (badge) badge.innerText = activeCount + ' ACTIVE';
 
         // Paired devices
         const pList = document.getElementById('pairedList');

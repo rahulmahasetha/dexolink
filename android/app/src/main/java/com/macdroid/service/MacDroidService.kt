@@ -325,15 +325,24 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         DexoLinkTileService.requestUpdate(this)
 
         when (state) {
-            is ConnectionState.Authenticated, is ConnectionState.Connected -> {
+            is ConnectionState.Authenticated -> {
                 acquireWifiLock()
                 discoveryService.pauseForActiveConnection()
                 syncTransferNotification()
+                NotificationHelper.showConnectedNotification(this, state.peerName)
+            }
+            is ConnectionState.Connected -> {
+                acquireWifiLock()
+                discoveryService.pauseForActiveConnection()
+                syncTransferNotification()
+                NotificationHelper.showConnectedNotification(this, state.peerName)
             }
             is ConnectionState.Disconnected, is ConnectionState.Failed -> {
                 releaseLocks()
                 discoveryService.resumeAfterDisconnect()
                 syncTransferNotification()
+                val peerName = connectionManager.currentPeerName ?: connectionManager.trustStore.getPairedDevice()?.deviceName
+                NotificationHelper.showDisconnectedNotification(this, peerName)
             }
             is ConnectionState.Pairing -> {
                 notificationManager?.notify(NOTIFICATION_ID, buildPairingNotification(state))
@@ -365,6 +374,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
 
     override fun onTransferCompleted(item: TransferItem) {
         syncTransferNotification()
+        NotificationHelper.playTransferSuccessSound(this)
     }
 
     override fun onTransferFailed(item: TransferItem, error: String) {

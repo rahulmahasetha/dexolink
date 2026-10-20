@@ -332,16 +332,47 @@ class DexoLinkGUI:
         self.act_listbox.insert(0, f"🌐 Handoff Sent: {url}")
         messagebox.showinfo("Continuity Sent", f"Sent URL to connected devices:\n{url}")
 
+    def get_active_features_count(self) -> int:
+        count = 0
+        if self.continuity_var.get(): count += 1
+        if self.auto_sync_clip_var.get(): count += 1
+        if self.enhanced_clip_var.get(): count += 1
+        if self.multi_paired_var.get(): count += 1
+        if self.camera_sharing_var.get(): count += 1
+        if self.screen_sharing_var.get(): count += 1
+        if self.desktop_mode_var.get(): count += 1
+        return count
+
     # --- TAB 4: SETTINGS & DEVICES ---
     def _init_settings_tab(self):
         container = tk.Frame(self.tab_settings, bg=COLOR_BG, padx=16, pady=16)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Quick Dedicated Settings Launcher
-        btn_open_all = tk.Button(container, text="⚙️ Open Dedicated Settings & All Feature Controls", bg=COLOR_CARD, fg=COLOR_CYAN,
-                                 activebackground=COLOR_BORDER, font=("Segoe UI", 10, "bold"), relief="flat", padx=12, pady=10,
-                                 cursor="hand2", highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._open_settings_modal)
-        btn_open_all.pack(fill=tk.X, pady=(0, 14))
+        # Feature Controls Card (Matching Reference Design: Icon, Title, Active count badge, Configure button)
+        card_fc = tk.Frame(container, bg=COLOR_CARD, padx=14, pady=10, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        card_fc.pack(fill=tk.X, pady=(0, 14))
+
+        fc_left = tk.Frame(card_fc, bg=COLOR_CARD)
+        fc_left.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Blue squircle icon container
+        fc_icon_box = tk.Frame(fc_left, bg="#1E3A8A", padx=6, pady=4)
+        fc_icon_box.pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(fc_icon_box, text="⚙️", font=("Segoe UI", 12), bg="#1E3A8A", fg="#60A5FA").pack()
+
+        # Title and dynamic Active count badge (no feature names)
+        tk.Label(fc_left, text="Feature Controls", font=("Segoe UI", 11, "bold"), fg=COLOR_TEXT, bg=COLOR_CARD).pack(side=tk.LEFT, padx=(0, 8))
+
+        self.lbl_fc_badge = tk.Label(fc_left, text=f"{self.get_active_features_count()} ACTIVE", font=("Segoe UI", 8, "bold"),
+                                     fg="#4ADE80", bg="#14532D", padx=6, pady=2)
+        self.lbl_fc_badge.pack(side=tk.LEFT)
+
+        # Configure button on the right (Solid Blue matching Image 1)
+        btn_fc_config = tk.Button(card_fc, text="Configure", bg=COLOR_ACCENT, fg=COLOR_TEXT,
+                                  activebackground=COLOR_ACCENT_HOVER, activeforeground=COLOR_TEXT,
+                                  font=("Segoe UI", 9, "bold"), relief="flat", padx=14, pady=5,
+                                  cursor="hand2", command=self._open_settings_modal)
+        btn_fc_config.pack(side=tk.RIGHT)
 
         # Multiple Paired Devices Card
         card_multi = tk.Frame(container, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
@@ -684,6 +715,8 @@ class DexoLinkGUI:
         conn_count = len(self.engine.active_connections)
         self.lbl_connections.config(text=f"Connected: {conn_count} device{'s' if conn_count != 1 else ''}")
         self._refresh_paired_list()
+        if hasattr(self, 'lbl_fc_badge'):
+            self.lbl_fc_badge.config(text=f"{self.get_active_features_count()} ACTIVE")
         self.root.after(2000, self._periodic_ui_refresh)
 
     def _on_close(self):
