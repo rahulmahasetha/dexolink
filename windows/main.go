@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -124,6 +125,7 @@ type DexoLinkEngine struct {
 	mu                   sync.Mutex
 	History              []TransferRecord
 	ClipboardHistory     []string
+	Enabled              bool
 	ContinuityEnabled    bool
 	AutoClipboardSync    bool
 	EnhancedClipboard    bool
@@ -162,6 +164,7 @@ func initEngine() *DexoLinkEngine {
 		DownloadDir:          downDir,
 		History:              make([]TransferRecord, 0),
 		ClipboardHistory:     make([]string, 0),
+		Enabled:              true,
 		ContinuityEnabled:    true,
 		AutoClipboardSync:    true,
 		EnhancedClipboard:    false,
@@ -764,6 +767,7 @@ func startWebDashboard(ready chan<- error) {
 		engine.mu.Lock()
 		history := engine.History
 		clipHistory := engine.ClipboardHistory
+		isEnabled := engine.Enabled
 		contEnabled := engine.ContinuityEnabled
 		autoClip := engine.AutoClipboardSync
 		enhClip := engine.EnhancedClipboard
@@ -774,11 +778,19 @@ func startWebDashboard(ready chan<- error) {
 		desktopMode := engine.DesktopModeEnabled
 		engine.mu.Unlock()
 
+		connCount := 0
+		engine.ActiveConnections.Range(func(k, v any) bool {
+			connCount++
+			return true
+		})
+
 		json.NewEncoder(w).Encode(map[string]any{
 			"version":                "4.0.1",
 			"deviceId":               engine.DeviceID,
 			"deviceName":             engine.DeviceName,
 			"port":                   DefaultPort,
+			"is_enabled":             isEnabled,
+			"connected_count":        connCount,
 			"multiple_paired":        multiPaired,
 			"paired_devices":         paired,
 			"discovered_devices":     discovered,
@@ -794,6 +806,167 @@ func startWebDashboard(ready chan<- error) {
 			"screen_sharing_enabled": screenSharing,
 			"desktop_mode_enabled":  desktopMode,
 		})
+	})
+
+	http.HandleFunc("/api/toggle-master", func(w http.ResponseWriter, r *http.Request) {
+		enable := r.URL.Query().Get("enabled") == "true"
+		engine.mu.Lock()
+		engine.Enabled = enable
+		engine.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/connect-direct", func(w http.ResponseWriter, r *http.Request) {
+		ip := r.URL.Query().Get("ip")
+		portStr := r.URL.Query().Get("port")
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = DefaultPort
+		}
+		if ip != "" {
+			go func() {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 5*time.Second)
+				if err == nil {
+					peerID := fmt.Sprintf("direct_%s", ip)
+					engine.ActiveConnections.Store(peerID, conn)
+					engine.DiscoveredDevices.Store(peerID, DeviceInfo{
+						DeviceID:   peerID,
+						DeviceName: fmt.Sprintf("Remote Device (%s)", ip),
+						IP:         ip,
+						Port:       port,
+					})
+					hello, _ := encodeMessage(map[string]any{
+						"type":       "HELLO",
+						"version":    ProtocolVersion,
+						"deviceId":   engine.DeviceID,
+						"deviceName": engine.DeviceName,
+					})
+					_, _ = conn.Write(hello)
+				}
+			}()
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/pair-device", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		name := r.URL.Query().Get("name")
+		ip := r.URL.Query().Get("ip")
+		portStr := r.URL.Query().Get("port")
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = DefaultPort
+		}
+		if id != "" {
+			dev := DeviceInfo{
+				DeviceID:   id,
+				DeviceName: name,
+				IP:         ip,
+				Port:       port,
+				PairedAt:   float64(time.Now().Unix()),
+			}
+			engine.TrustStore.AddDevice(dev)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/disconnect", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id != "" {
+			if val, ok := engine.ActiveConnections.Load(id); ok {
+				conn := val.(net.Conn)
+				_ = conn.Close()
+				engine.ActiveConnections.Delete(id)
+			}
+		} else {
+			engine.ActiveConnections.Range(func(key, val any) bool {
+				conn := val.(net.Conn)
+				_ = conn.Close()
+				engine.ActiveConnections.Delete(key)
+				return true
+			})
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/stream-request", func(w http.ResponseWriter, r *http.Request) {
+		sType := r.URL.Query().Get("streamType")
+		action := r.URL.Query().Get("action")
+		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		msg, _ := encodeMessage(map[string]any{
+			"type":       "STREAM_REQUEST",
+			"streamId":   streamID,
+			"streamType": sType,
+			"options": map[string]any{
+				"direction":  "outgoing",
+				"sender":     "windows",
+				"action":     action,
+				"senderName": engine.DeviceName,
+			},
+		})
+		engine.ActiveConnections.Range(func(key, val any) bool {
+			conn := val.(net.Conn)
+			_, _ = conn.Write(msg)
+			return true
+		})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/send-desktop-input", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			EventType string  `json:"eventType"`
+			X         float64 `json:"x"`
+			Y         float64 `json:"y"`
+			Button    int     `json:"button"`
+			Key       string  `json:"key"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		msg, _ := encodeMessage(map[string]any{
+			"type":      "DESKTOP_INPUT_EVENT",
+			"streamId":  streamID,
+			"eventType": body.EventType,
+			"x":         body.X,
+			"y":         body.Y,
+			"button":    body.Button,
+			"key":       body.Key,
+		})
+		engine.ActiveConnections.Range(func(key, val any) bool {
+			conn := val.(net.Conn)
+			_, _ = conn.Write(msg)
+			return true
+		})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/open-downloads", func(w http.ResponseWriter, r *http.Request) {
+		openBrowser(engine.DownloadDir)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/delete-transfer", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		engine.mu.Lock()
+		newHist := make([]TransferRecord, 0, len(engine.History))
+		for _, item := range engine.History {
+			if item.ID != id {
+				newHist = append(newHist, item)
+			}
+		}
+		engine.History = newHist
+		engine.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/delete-clip", func(w http.ResponseWriter, r *http.Request) {
+		idxStr := r.URL.Query().Get("index")
+		idx, err := strconv.Atoi(idxStr)
+		engine.mu.Lock()
+		if err == nil && idx >= 0 && idx < len(engine.ClipboardHistory) {
+			engine.ClipboardHistory = append(engine.ClipboardHistory[:idx], engine.ClipboardHistory[idx+1:]...)
+		}
+		engine.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	})
 
 	http.HandleFunc("/api/toggle-feature", func(w http.ResponseWriter, r *http.Request) {
@@ -989,8 +1162,9 @@ const webUIHTML = `<!DOCTYPE html>
 <title>DexoLink v4.0.1 (Windows)</title>
 <style>
   :root {
-    --bg: #0f172a;
+    --bg: #0b1120;
     --card: #1e293b;
+    --card-hover: #24344d;
     --border: #334155;
     --accent: #0066ff;
     --accent-hover: #1d4ed8;
@@ -998,127 +1172,347 @@ const webUIHTML = `<!DOCTYPE html>
     --text: #f8fafc;
     --muted: #94a3b8;
     --success: #22c55e;
+    --warning: #f59e0b;
+    --purple: #a855f7;
     --danger: #ef4444;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  body { background: var(--bg); color: var(--text); padding: 24px; }
-  .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  body { background: var(--bg); color: var(--text); padding: 20px; line-height: 1.4; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
   .brand { display: flex; align-items: center; gap: 10px; }
-  .brand h1 { font-size: 22px; font-weight: 800; color: var(--cyan); }
+  .brand h1 { font-size: 22px; font-weight: 800; color: var(--cyan); letter-spacing: -0.5px; }
   .badge { background: rgba(56,189,248,0.15); color: var(--cyan); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
-  .status-pill { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--success); }
-  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--success); box-shadow: 0 0 8px var(--success); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
-  .card h2 { font-size: 16px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-  .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.15s; }
-  .btn:hover { background: var(--accent-hover); }
-  .btn-danger { background: rgba(239,68,68,0.15); color: var(--danger); padding: 6px 10px; font-size: 11px; }
-  .input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; margin-bottom: 10px; font-size: 13px; }
-  .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
-  .list { list-style: none; margin-top: 10px; max-height: 180px; overflow-y: auto; }
-  .list-item { background: var(--bg); border: 1px solid var(--border); padding: 10px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .badge-green { background: rgba(34,197,94,0.18); color: var(--success); }
+  .badge-purple { background: rgba(168,85,247,0.18); color: var(--purple); }
+  .badge-orange { background: rgba(245,158,11,0.18); color: var(--warning); }
+  .header-actions { display: flex; align-items: center; gap: 10px; }
+  .icon-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 7px 11px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; transition: 0.15s; }
+  .icon-btn:hover { background: var(--card-hover); border-color: var(--cyan); color: #fff; }
+  .status-pill { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--success); background: rgba(34,197,94,0.12); padding: 6px 12px; border-radius: 20px; border: 1px solid rgba(34,197,94,0.25); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 8px var(--success); }
+
+  /* Master ON/OFF Card */
+  .master-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+  .master-info { display: flex; align-items: center; gap: 14px; }
+  .master-icon-wrap { width: 44px; height: 44px; border-radius: 50%; background: rgba(56,189,248,0.15); display: flex; align-items: center; justify-content: center; color: var(--cyan); }
+  .master-title-row { display: flex; align-items: center; gap: 8px; }
+  .master-title { font-size: 15px; font-weight: 800; color: var(--text); }
+  .master-state-pill { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 12px; background: rgba(0,102,255,0.2); color: var(--cyan); }
+  .master-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* Switch Toggle */
+  .switch { position: relative; display: inline-block; width: 46px; height: 26px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .25s; border-radius: 26px; }
+  .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .25s; border-radius: 50%; }
+  input:checked + .slider { background-color: var(--accent); }
+  input:checked + .slider:before { transform: translateX(20px); }
+
+  /* Grid Layout */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 18px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .card h2 { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; color: var(--text); }
+  .card h3 { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 14px; margin-bottom: 6px; }
   .muted { color: var(--muted); font-size: 12px; }
+
+  /* Buttons */
+  .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 9px 15px; font-size: 12px; font-weight: 700; cursor: pointer; transition: 0.15s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn:hover { background: var(--accent-hover); }
+  .btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 6px; }
+  .btn-bordered { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-bordered:hover { background: var(--card-hover); border-color: var(--cyan); }
+  .btn-success { background: rgba(34,197,94,0.18); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+  .btn-success:hover { background: rgba(34,197,94,0.3); }
+  .btn-danger { background: rgba(239,68,68,0.18); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+  .btn-danger:hover { background: rgba(239,68,68,0.3); }
+  .btn-orange { background: rgba(245,158,11,0.18); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
+  .btn-purple { background: rgba(168,85,247,0.18); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+
+  /* Inputs */
+  .input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; margin-bottom: 10px; font-size: 12px; }
+  .input:focus { outline: none; border-color: var(--cyan); }
+
+  /* Drop Zone */
+  .drop-zone { border: 2px dashed rgba(56,189,248,0.35); background: rgba(56,189,248,0.04); border-radius: 10px; padding: 18px; text-align: center; cursor: pointer; transition: 0.2s; margin-bottom: 12px; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--cyan); background: rgba(56,189,248,0.1); }
+  .drop-zone-icon { color: var(--cyan); margin-bottom: 6px; }
+
+  /* Lists */
+  .list { list-style: none; margin-top: 8px; max-height: 200px; overflow-y: auto; }
+  .list-item { background: var(--bg); border: 1px solid var(--border); padding: 9px 12px; border-radius: 8px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .list-item-left { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  .list-item-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .list-item-sub { font-size: 10px; color: var(--muted); }
+
+  /* Toggles */
+  .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+
+  /* Turned Off State Card */
+  .turned-off-banner { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 40px 24px; text-align: center; margin-top: 10px; }
+
+  /* Modals */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(11,17,32,0.88); backdrop-filter: blur(8px); z-index: 9999; align-items: center; justify-content: center; }
+  .modal-box { background: var(--card); border: 1px solid var(--border); border-radius: 14px; width: 92%; max-width: 560px; max-height: 85vh; overflow-y: auto; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+
+  /* Footer */
+  .footer { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; margin-top: 24px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+  .dev-attr { text-align: center; font-size: 10px; color: var(--muted); margin-top: 8px; }
 </style>
 </head>
 <body>
+
+  <!-- Top Header Navigation -->
   <div class="header">
     <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
       <h1>DexoLink</h1>
       <span class="badge">v4.0.1 (Windows App)</span>
     </div>
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div class="header-actions">
       <div class="status-pill">
         <div class="status-dot"></div>
         <span id="devName">Windows PC (Ready)</span>
       </div>
-      <a href="http://localhost:52842" target="_blank" style="text-decoration:none; font-size:11px; font-weight:600; color:var(--cyan); background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.3); padding:6px 10px; border-radius:6px;">
-        Web UI: localhost:52842
-      </a>
-      <button class="btn" onclick="openSettingsModal()" style="display:flex; align-items:center; gap:6px; background:var(--card); border:1px solid var(--border); color:var(--text); padding:7px 14px; font-size:12px; font-weight:700; border-radius:8px; cursor:pointer;">
-        Settings
+      <button class="icon-btn" onclick="openDirectIPModal()" title="Direct IP Connection">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+        <span>Direct IP</span>
+      </button>
+      <button class="icon-btn" onclick="openHistoryModal()" title="Transfer & Clipboard History">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span>History</span>
+      </button>
+      <button class="icon-btn" onclick="openSettingsModal()" title="Settings & All Feature Controls">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>Settings</span>
       </button>
     </div>
   </div>
 
-  <div class="grid">
-    <!-- Send Files -->
-    <div class="card">
-      <h2>File Sharing</h2>
-      <p class="muted" style="margin-bottom:12px;">Fast local WiFi streaming with 64KB chunking & SHA-256 verification.</p>
-      <input type="file" id="fileInput" class="input">
-      <button class="btn" style="width:100%;" onclick="alert('File selected! In the desktop version, select a file to stream directly to your paired device.')">Stream File to Device</button>
-      <h3 style="font-size:13px; margin-top:16px; margin-bottom:6px;">Recent Transfers</h3>
-      <ul class="list" id="transfersList">
-        <li class="muted">No transfers yet today.</li>
-      </ul>
-    </div>
-
-    <!-- Universal Clipboard -->
-    <div class="card">
-      <h2>Universal Clipboard</h2>
-      <p class="muted" style="margin-bottom:12px;">Automatic text sync across Windows, Mac, Android, and iPhone.</p>
-      <input type="text" id="clipText" class="input" placeholder="Type or paste text to sync...">
-      <button class="btn" style="width:100%;" onclick="pushClip()">Push Text to Devices</button>
-      <h3 style="font-size:13px; margin-top:16px; margin-bottom:6px;">Clipboard History</h3>
-      <ul class="list" id="clipList">
-        <li class="muted">No clipboard history yet.</li>
-      </ul>
-    </div>
-
-    <!-- Continuity / Handoff -->
-    <div class="card">
-      <h2>Continuity & Handoff</h2>
-      <p class="muted" style="margin-bottom:12px;">Instantly open links on your Mac, iPhone, or Android tablet.</p>
-      <input type="url" id="contUrl" class="input" value="https://">
-      <button class="btn" style="width:100%;" onclick="sendCont()">Launch on Device</button>
-    </div>
-
-    <!-- Devices & Settings -->
-    <div class="card">
-      <h2>Devices & Pairing</h2>
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:13px;">Multiple Paired Devices</div>
-          <div class="muted">OFF by default (Single-device security)</div>
-        </div>
-        <input type="checkbox" id="multiToggle" onchange="toggleMulti(this.checked)">
+  <!-- Master Quick Settings ON/OFF Card (Matching MacBook MenuBar) -->
+  <div class="master-card">
+    <div class="master-info">
+      <div class="master-icon-wrap" id="masterIconWrap">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 1 14.14 0"></path><path d="M7.76 7.76a6 6 0 0 1 8.48 0"></path><circle cx="12" cy="12" r="2"></circle><path d="M12 14v8"></path></svg>
       </div>
-      <!-- Feature Controls Card (Matching Reference Design) -->
-      <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin-top:12px; margin-bottom:12px;">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <div style="width:32px; height:32px; border-radius:8px; background:rgba(30,58,138,0.4); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-weight:700; font-size:13px; color:var(--text);">Feature Controls</span>
-            <span id="featCountBadge" style="background:#14532d; color:#4ade80; font-size:9px; font-weight:800; padding:2px 7px; border-radius:999px;">4 ACTIVE</span>
+      <div>
+        <div class="master-title-row">
+          <span class="master-title">DexoLink</span>
+          <span class="master-state-pill" id="masterStatePill">ON</span>
+        </div>
+        <div class="master-sub" id="masterSubtitle">Active • Ready to connect on local Wi-Fi</div>
+      </div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="masterSwitch" checked onchange="toggleMaster(this.checked)">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Turned Off State Banner (When Master Switch is OFF) -->
+  <div id="turnedOffBanner" class="turned-off-banner" style="display:none;">
+    <div style="width:60px; height:60px; border-radius:50%; background:rgba(148,163,184,0.12); display:flex; align-items:center; justify-content:center; margin:0 auto 16px auto; color:var(--muted);">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+    </div>
+    <h2 style="font-size:18px; font-weight:800; margin-bottom:6px;">DexoLink is Turned Off</h2>
+    <p class="muted" style="max-width:440px; margin:0 auto 18px auto;">All background listeners, discovery broadcasts, and socket connections are stopped to ensure 0% CPU and battery usage.</p>
+    <button class="btn" onclick="toggleMaster(true)" style="padding:10px 22px; font-size:13px;">Turn On DexoLink</button>
+  </div>
+
+  <!-- Active Dashboard Container -->
+  <div id="activeDashboard">
+    <div class="grid">
+
+      <!-- Card 1: Quick File Sharing (Matching MacBook MenuBar Quick File Sharing) -->
+      <div class="card">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          <span>Quick File Sharing</span>
+          <button class="btn btn-bordered btn-sm" style="margin-left:auto;" onclick="openDownloadsFolder()" title="Open Downloads Folder">Downloads</button>
+        </h2>
+        
+        <!-- Drag & Drop Box -->
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('hiddenFileInput').click()">
+          <div class="drop-zone-icon">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="16 12 12 8 8 12"></polyline><line x1="12" y1="16" x2="12" y2="8"></line></svg>
+          </div>
+          <div style="font-weight:700; font-size:13px; color:var(--text);">Drop files here or click to send</div>
+          <div class="muted" style="font-size:11px; margin-top:3px;">Photos, PDFs, Documents, Downloads, any file</div>
+          <input type="file" id="hiddenFileInput" style="display:none;" onchange="handleFileSelect(this)">
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <button class="btn" style="flex:1;" onclick="document.getElementById('hiddenFileInput').click()">Select Files to Send</button>
+        </div>
+
+        <h3>Recent Transfers</h3>
+        <ul class="list" id="transfersList">
+          <li class="muted">No transfers yet today.</li>
+        </ul>
+      </div>
+
+      <!-- Card 2: Universal Clipboard -->
+      <div class="card">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+          <span>Universal Clipboard</span>
+          <span class="badge badge-green" style="margin-left:auto;">AUTO SYNC</span>
+        </h2>
+        <p class="muted" style="margin-bottom:10px;">Instant real-time text sync across Windows, Mac, Android, and iPhone.</p>
+        <textarea id="clipText" class="input" style="height:70px; resize:none;" placeholder="Type or paste text to sync across paired devices..."></textarea>
+        <button class="btn" style="width:100%;" onclick="pushClip()">Push Text to Devices</button>
+        
+        <h3>Clipboard History</h3>
+        <ul class="list" id="clipList">
+          <li class="muted">No clipboard items yet.</li>
+        </ul>
+      </div>
+
+      <!-- Card 3: Continuity & Handoff -->
+      <div class="card">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+          <span>Continuity & Handoff</span>
+        </h2>
+        <p class="muted" style="margin-bottom:12px;">Seamlessly open links and web activities across your iPhone, Mac, or Android.</p>
+        <input type="url" id="contUrl" class="input" value="https://">
+        <button class="btn" style="width:100%; background:var(--purple);" onclick="sendCont()">Launch on Connected Devices</button>
+      </div>
+
+      <!-- Card 4: Media Streaming & Remote Control (v4.0.1) -->
+      <div class="card">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+          <span>Media Streaming & Remote Control</span>
+          <span class="badge badge-green" style="margin-left:auto;">v4.0.1</span>
+        </h2>
+        
+        <!-- Camera Sub-section -->
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+              <span>Camera Sharing</span>
+            </div>
+            <span class="badge" id="cameraStatusBadge">INACTIVE</span>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="requestCameraStream('camera', 'request_stream')">Request Camera Feed</button>
+            <button class="btn btn-sm btn-bordered" onclick="requestCameraStream('camera', 'switch_camera')">Flip Camera</button>
           </div>
         </div>
-        <button class="btn" onclick="openSettingsModal()" style="background:#2563eb; color:#ffffff; font-weight:600; padding:5px 14px; border-radius:6px; font-size:11px; border:none; cursor:pointer;">Configure</button>
+
+        <!-- Screen Mirroring Sub-section -->
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+              <span>Screen Sharing</span>
+            </div>
+            <span class="badge" id="screenStatusBadge">INACTIVE</span>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="requestCameraStream('screen', 'request_stream')">Request Remote Screen</button>
+          </div>
+        </div>
+
+        <!-- Desktop Mode & Remote Write -->
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+              <span>Remote Write & Control</span>
+            </div>
+            <span class="badge badge-purple">BETA</span>
+          </div>
+          <input type="text" id="remoteWriteInput" class="input" style="margin-bottom:6px;" placeholder="Type text to send to remote screen...">
+          <div style="display:flex; gap:6px; margin-bottom:8px;">
+            <button class="btn btn-sm" style="flex:1;" onclick="sendRemoteWriteText()">Send Text</button>
+            <button class="btn btn-sm btn-bordered" onclick="sendRemoteKey('enter')">Enter</button>
+            <button class="btn btn-sm btn-bordered" onclick="sendRemoteKey('backspace')">Backspace</button>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteKey('space')">Space</button>
+            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteKey('tab')">Tab</button>
+            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteClick('left')">Left Click</button>
+            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteClick('right')">Right Click</button>
+          </div>
+        </div>
       </div>
-      <h3 style="font-size:13px; margin-top:12px; margin-bottom:6px;">Paired Devices</h3>
-      <ul class="list" id="pairedList">
-        <li class="muted">Scanning local network...</li>
-      </ul>
+
+      <!-- Card 5: Paired Devices & Security -->
+      <div class="card">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0066ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          <span>Paired Devices & Security</span>
+        </h2>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:600; font-size:12px;">Multiple Paired Devices</div>
+            <div class="muted">OFF by default (Single-device strict security)</div>
+          </div>
+          <input type="checkbox" id="multiToggle" onchange="toggleMulti(this.checked)">
+        </div>
+
+        <h3>Paired Trusted Devices</h3>
+        <ul class="list" id="pairedList">
+          <li class="muted">No paired devices yet.</li>
+        </ul>
+      </div>
+
+      <!-- Card 6: Nearby Devices (Wi-Fi) (Matching MacBook MenuBar Nearby Devices) -->
+      <div class="card">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path></svg>
+          <span>Nearby Devices (Wi-Fi)</span>
+          <div style="margin-left:auto; display:flex; gap:6px;">
+            <button class="btn btn-bordered btn-sm" onclick="rescanDiscovery()" title="Rescan Local Wi-Fi">Rescan</button>
+          </div>
+        </h2>
+        <p class="muted" style="margin-bottom:8px;">Available devices discovered automatically on your local Wi-Fi or Ethernet.</p>
+        <ul class="list" id="discoveredList">
+          <li class="muted">Searching for nearby devices on local Wi-Fi...</li>
+        </ul>
+      </div>
+
+      <!-- Card 7: Feature Controls Summary Card (Matching MacBook Reference Design) -->
+      <div class="card" style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <div style="width:38px; height:38px; border-radius:10px; background:rgba(30,58,138,0.45); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          </div>
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-weight:700; font-size:14px; color:var(--text);">Feature Controls</span>
+              <span id="featCountBadge" style="background:#14532d; color:#4ade80; font-size:10px; font-weight:800; padding:2px 8px; border-radius:999px;">4 ACTIVE</span>
+            </div>
+            <div class="muted" style="margin-top:2px;">Dedicated controls for all synchronization & streaming modules</div>
+          </div>
+        </div>
+        <button class="btn" onclick="openSettingsModal()" style="background:#2563eb; padding:8px 18px; border-radius:8px;">Configure All</button>
+      </div>
+
     </div>
   </div>
 
-  <!-- Dedicated Settings Modal -->
-  <div id="settingsModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(15,23,42,0.85); backdrop-filter:blur(6px); z-index:9999; align-items:center; justify-content:center;">
-    <div style="background:var(--card); border:1px solid var(--border); border-radius:14px; width:92%; max-width:540px; max-height:85vh; overflow-y:auto; padding:24px; box-shadow:0 16px 40px rgba(0,0,0,0.6);">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:18px;">
+  <!-- Dedicated Settings Modal (Matching MacBook Settings View) -->
+  <div id="settingsModal" class="modal-overlay">
+    <div class="modal-box">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:16px;">
         <div>
-          <h2 style="font-size:18px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:8px;">DexoLink Settings</h2>
+          <h2 style="font-size:18px; font-weight:800; color:var(--text);">DexoLink Settings</h2>
           <p class="muted" style="margin-top:2px;">All feature controls, security rules, and device preferences</p>
         </div>
-        <button class="btn" onclick="closeSettingsModal()" style="padding:6px 12px; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--muted); cursor:pointer;">&times;</button>
+        <button class="btn btn-bordered btn-sm" onclick="closeSettingsModal()">&times;</button>
       </div>
 
       <!-- Core Features Section -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-bottom:8px; letter-spacing:0.5px;">Core Feature Controls</div>
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">Core Feature Controls</div>
       
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Continuity / Handoff</div>
+          <div style="font-weight:600; font-size:12px;">Continuity / Handoff</div>
           <div class="muted">Seamlessly open web pages and links across paired devices</div>
         </div>
         <input type="checkbox" id="modalContinuityToggle" onchange="toggleFeature('continuity', this.checked)">
@@ -1126,7 +1520,7 @@ const webUIHTML = `<!DOCTYPE html>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Auto Clipboard Sync</div>
+          <div style="font-weight:600; font-size:12px;">Auto Clipboard Sync</div>
           <div class="muted">Mirror copied text instantly over secure local Wi-Fi</div>
         </div>
         <input type="checkbox" id="modalClipToggle" onchange="toggleFeature('clipboard', this.checked)">
@@ -1134,7 +1528,7 @@ const webUIHTML = `<!DOCTYPE html>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Enhanced Clipboard (BETA)</div>
+          <div style="font-weight:600; font-size:12px;">Enhanced Clipboard (BETA)</div>
           <div class="muted">Support rich formatted text, HTML, and image synchronization</div>
         </div>
         <input type="checkbox" id="modalEnhancedToggle" onchange="toggleFeature('enhanced_clip', this.checked)">
@@ -1142,45 +1536,45 @@ const webUIHTML = `<!DOCTYPE html>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Multiple Paired Devices</div>
+          <div style="font-weight:600; font-size:12px;">Multiple Paired Devices</div>
           <div class="muted">OFF by default (Single-device mode). Allows multi-peer connectivity when ON.</div>
         </div>
         <input type="checkbox" id="modalMultiToggle" onchange="toggleMulti(this.checked)">
       </div>
 
       <!-- Media Streaming & Remote Control Section (v4.0.1) -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Media Streaming & Remote Control</div>
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:18px; margin-bottom:6px; letter-spacing:0.5px;">Media Streaming & Remote Control</div>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Camera Sharing</div>
-          <div class="muted">Stream this device's camera to another supported device (OFF by default)</div>
+          <div style="font-weight:600; font-size:12px;">Camera Sharing</div>
+          <div class="muted">Stream camera between this device and mobile devices (OFF by default)</div>
         </div>
         <input type="checkbox" id="modalCameraToggle" onchange="toggleFeature('camera_sharing', this.checked)">
       </div>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Screen Sharing</div>
-          <div class="muted">Mirror this device's screen to another supported device (OFF by default)</div>
+          <div style="font-weight:600; font-size:12px;">Screen Sharing</div>
+          <div class="muted">Mirror this device screen or view remote displays (OFF by default)</div>
         </div>
         <input type="checkbox" id="modalScreenToggle" onchange="toggleFeature('screen_sharing', this.checked)">
       </div>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Desktop Mode (BETA)</div>
-          <div class="muted">Remote desktop viewing and input control where supported (OFF by default)</div>
+          <div style="font-weight:600; font-size:12px;">Desktop Mode (BETA)</div>
+          <div class="muted">Remote desktop viewing and keyboard/mouse input control (OFF by default)</div>
         </div>
         <input type="checkbox" id="modalDesktopToggle" onchange="toggleFeature('desktop_mode', this.checked)">
       </div>
 
       <!-- Discovery & Network Section -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Discovery & Network</div>
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:18px; margin-bottom:6px; letter-spacing:0.5px;">Discovery & Network</div>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Auto Wi-Fi Discovery</div>
+          <div style="font-weight:600; font-size:12px;">Auto Wi-Fi Discovery</div>
           <div class="muted">UDP broadcast & listen on port 52841 for zero-config pairing</div>
         </div>
         <input type="checkbox" id="modalDiscoveryToggle" onchange="toggleFeature('auto_discovery', this.checked)">
@@ -1188,52 +1582,314 @@ const webUIHTML = `<!DOCTYPE html>
 
       <div class="toggle-row">
         <div>
-          <div style="font-weight:600; font-size:13px;">Auto-Accept Paired Transfers</div>
-          <div class="muted">Automatically accept transfers from trusted paired devices</div>
+          <div style="font-weight:600; font-size:12px;">Auto-Accept Paired Transfers</div>
+          <div class="muted">Automatically accept file transfers from trusted paired devices</div>
         </div>
         <input type="checkbox" id="modalAcceptToggle" onchange="toggleFeature('auto_accept', this.checked)">
       </div>
 
       <!-- Storage Section -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Storage & Received Files</div>
-      <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:8px;">
-        <div class="muted" style="font-size:11px; margin-bottom:4px;">Received Downloads Location:</div>
-        <div id="modalDownPath" style="font-size:12px; font-family:monospace; color:var(--cyan); word-break:break-all;">~/Downloads/DexoLink</div>
-      </div>
-
-      <!-- Extensible Future Toggles Container -->
-      <div style="font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Extensible Future Features</div>
-      <div style="background:rgba(56,189,248,0.05); border:1px dashed var(--border); border-radius:8px; padding:12px;">
-        <div class="muted" style="font-size:12px;">Future feature toggles and experimental protocols automatically register into this dedicated panel.</div>
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:18px; margin-bottom:6px; letter-spacing:0.5px;">Storage & Received Files</div>
+      <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:6px; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div class="muted" style="font-size:11px;">Downloads Folder:</div>
+          <div id="modalDownPath" style="font-size:12px; font-family:monospace; color:var(--cyan); word-break:break-all;">~/Downloads/DexoLink</div>
+        </div>
+        <button class="btn btn-bordered btn-sm" onclick="openDownloadsFolder()">Open Folder</button>
       </div>
 
       <!-- Modal Footer -->
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:22px; padding-top:14px; border-top:1px solid var(--border);">
-        <span class="muted">v4.0.1 • Port 52840</span>
+        <span class="muted">DexoLink v4.0.1 • Port 52840</span>
         <button class="btn" onclick="closeSettingsModal()" style="padding:8px 24px;">Done</button>
       </div>
     </div>
   </div>
 
+  <!-- History Modal (Transfers & Clipboard Tabs) -->
+  <div id="historyModal" class="modal-overlay">
+    <div class="modal-box">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:16px;">
+        <h2 style="font-size:18px; font-weight:800;">Activity History</h2>
+        <button class="btn btn-bordered btn-sm" onclick="closeHistoryModal()">&times;</button>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        <button class="btn btn-sm" id="tabTransfersBtn" onclick="switchHistoryTab('transfers')">Transfers History</button>
+        <button class="btn btn-bordered btn-sm" id="tabClipboardBtn" onclick="switchHistoryTab('clipboard')">Clipboard History</button>
+      </div>
+
+      <div id="historyTransfersTab">
+        <ul class="list" id="modalTransfersList" style="max-height:360px;">
+          <li class="muted">No transfers in history.</li>
+        </ul>
+      </div>
+
+      <div id="historyClipboardTab" style="display:none;">
+        <ul class="list" id="modalClipboardList" style="max-height:360px;">
+          <li class="muted">No clipboard items in history.</li>
+        </ul>
+      </div>
+
+      <div style="text-align:right; margin-top:18px; padding-top:12px; border-top:1px solid var(--border);">
+        <button class="btn" onclick="closeHistoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Direct IP Connection Modal (Matching MacBook ManualIPSheet) -->
+  <div id="directIPModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:440px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+        <h2 style="font-size:16px; font-weight:800;">Direct IP Connection</h2>
+        <button class="btn btn-bordered btn-sm" onclick="closeDirectIPModal()">&times;</button>
+      </div>
+      <p class="muted" style="margin-bottom:12px;">Connect to an iPhone, iPad, Android phone, or Mac by entering its local or remote IP coordinates.</p>
+      
+      <label class="muted" style="font-size:11px; font-weight:700;">HOST / IP ADDRESS</label>
+      <input type="text" id="manualHostInput" class="input" placeholder="e.g. 192.168.1.100 or domain">
+      
+      <label class="muted" style="font-size:11px; font-weight:700;">PORT (DEFAULT 52840)</label>
+      <input type="text" id="manualPortInput" class="input" value="52840">
+
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+        <button class="btn btn-bordered" onclick="closeDirectIPModal()">Cancel</button>
+        <button class="btn" onclick="connectDirectSubmit()">Connect Peer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer Information -->
+  <div class="footer">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div class="status-dot"></div>
+      <span id="footerStatusText">Ready to connect • Wi-Fi Auto-Discovery</span>
+    </div>
+    <button class="btn btn-bordered btn-sm" onclick="rescanDiscovery()">Refresh Discovery</button>
+  </div>
+  <div class="dev-attr">Developed by Rahul Mahaseth | DexoLink v4.0.1 (Universal)</div>
+
   <script>
-    function openSettingsModal() {
-      document.getElementById('settingsModal').style.display = 'flex';
+    let currentData = null;
+
+    // Modals
+    function openSettingsModal() { document.getElementById('settingsModal').style.display = 'flex'; }
+    function closeSettingsModal() { document.getElementById('settingsModal').style.display = 'none'; }
+    function openHistoryModal() { document.getElementById('historyModal').style.display = 'flex'; switchHistoryTab('transfers'); }
+    function closeHistoryModal() { document.getElementById('historyModal').style.display = 'none'; }
+    function openDirectIPModal() { document.getElementById('directIPModal').style.display = 'flex'; }
+    function closeDirectIPModal() { document.getElementById('directIPModal').style.display = 'none'; }
+
+    function switchHistoryTab(tab) {
+      if (tab === 'transfers') {
+        document.getElementById('historyTransfersTab').style.display = 'block';
+        document.getElementById('historyClipboardTab').style.display = 'none';
+        document.getElementById('tabTransfersBtn').className = 'btn btn-sm';
+        document.getElementById('tabClipboardBtn').className = 'btn btn-bordered btn-sm';
+      } else {
+        document.getElementById('historyTransfersTab').style.display = 'none';
+        document.getElementById('historyClipboardTab').style.display = 'block';
+        document.getElementById('tabTransfersBtn').className = 'btn btn-bordered btn-sm';
+        document.getElementById('tabClipboardBtn').className = 'btn btn-sm';
+      }
     }
-    function closeSettingsModal() {
-      document.getElementById('settingsModal').style.display = 'none';
+
+    // Master Switch Toggle
+    async function toggleMaster(val) {
+      await fetch('/api/toggle-master?enabled=' + val);
+      loadStatus();
     }
+
+    // Feature Toggles
     async function toggleFeature(feat, val) {
       await fetch('/api/toggle-feature?feature=' + feat + '&enabled=' + val);
       loadStatus();
     }
 
+    async function toggleMulti(val) {
+      await fetch('/api/toggle-multi-paired?enabled=' + val);
+      loadStatus();
+    }
+
+    // Direct IP Submit
+    async function connectDirectSubmit() {
+      const host = document.getElementById('manualHostInput').value.trim();
+      const port = document.getElementById('manualPortInput').value.trim() || '52840';
+      if (!host) return;
+      await fetch('/api/connect-direct?ip=' + encodeURIComponent(host) + '&port=' + encodeURIComponent(port));
+      closeDirectIPModal();
+      loadStatus();
+    }
+
+    // Disconnect & Unpair
+    async function disconnectDevice(id) {
+      await fetch('/api/disconnect?id=' + encodeURIComponent(id || ''));
+      loadStatus();
+    }
+
+    async function unpairDevice(id) {
+      await fetch('/api/unpair?id=' + encodeURIComponent(id));
+      loadStatus();
+    }
+
+    async function pairDevice(id, name, ip, port) {
+      await fetch('/api/pair-device?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&ip=' + encodeURIComponent(ip) + '&port=' + port);
+      loadStatus();
+    }
+
+    // Clipboard Push
+    async function pushClip() {
+      const val = document.getElementById('clipText').value.trim();
+      if (!val) return;
+      await fetch('/api/push-clipboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: val })
+      });
+      document.getElementById('clipText').value = '';
+      loadStatus();
+    }
+
+    async function deleteClip(idx) {
+      await fetch('/api/delete-clip?index=' + idx);
+      loadStatus();
+    }
+
+    // Continuity Send
+    async function sendCont() {
+      const val = document.getElementById('contUrl').value.trim();
+      if (!val || val === 'https://') return;
+      await fetch('/api/send-continuity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: val })
+      });
+      alert('Sent web page to connected devices: ' + val);
+    }
+
+    // Stream Requests
+    async function requestCameraStream(sType, action) {
+      await fetch('/api/stream-request?streamType=' + sType + '&action=' + action);
+      alert('Sent ' + sType + ' stream request (' + action + ') to connected peer');
+    }
+
+    // Remote Write & Desktop Control
+    async function sendRemoteWriteText() {
+      const val = document.getElementById('remoteWriteInput').value;
+      if (!val) return;
+      await fetch('/api/send-desktop-input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'write', key: val })
+      });
+      document.getElementById('remoteWriteInput').value = '';
+    }
+
+    async function sendRemoteKey(k) {
+      await fetch('/api/send-desktop-input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'key_press', key: k })
+      });
+    }
+
+    async function sendRemoteClick(btn) {
+      await fetch('/api/send-desktop-input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'click', x: 0.5, y: 0.5, button: btn === 'right' ? 1 : 0 })
+      });
+    }
+
+    // Downloads
+    async function openDownloadsFolder() {
+      await fetch('/api/open-downloads');
+    }
+
+    // File Drop & Select
+    function handleFileSelect(input) {
+      if (input.files && input.files[0]) {
+        uploadFile(input.files[0]);
+      }
+    }
+
+    async function uploadFile(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        await fetch('/api/upload-file', { method: 'POST', body: formData });
+        loadStatus();
+      } catch (e) {
+        alert('File transfer error: ' + e);
+      }
+    }
+
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        uploadFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    async function rescanDiscovery() {
+      loadStatus();
+    }
+
+    // Periodic Status Loader
     async function loadStatus() {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
+        currentData = data;
+
+        // Device name in header
         document.getElementById('devName').innerText = data.deviceName + ' (Port ' + data.port + ')';
+
+        // Master switch and state banner
+        const isMasterOn = (data.is_enabled !== false);
+        document.getElementById('masterSwitch').checked = isMasterOn;
+        document.getElementById('masterStatePill').innerText = isMasterOn ? 'ON' : 'OFF';
+        document.getElementById('masterStatePill').className = isMasterOn ? 'master-state-pill' : 'master-state-pill badge-orange';
+        document.getElementById('activeDashboard').style.display = isMasterOn ? 'block' : 'none';
+        document.getElementById('turnedOffBanner').style.display = isMasterOn ? 'none' : 'block';
+
+        const connCount = data.connected_count || (data.paired_devices ? data.paired_devices.length : 0);
+        if (!isMasterOn) {
+          document.getElementById('masterSubtitle').innerText = 'Turned Off • 0% CPU & Battery';
+          document.getElementById('footerStatusText').innerText = 'DexoLink is Turned Off';
+        } else if (connCount > 0) {
+          document.getElementById('masterSubtitle').innerText = 'Connected to ' + (data.paired_devices && data.paired_devices[0] ? data.paired_devices[0].device_name : 'Device');
+          document.getElementById('footerStatusText').innerText = 'Connected • Real-time synchronization active';
+        } else {
+          document.getElementById('masterSubtitle').innerText = 'Active • Ready to connect on local Wi-Fi';
+          document.getElementById('footerStatusText').innerText = 'Ready to connect • Wi-Fi Auto-Discovery';
+        }
+
+        // Active Features Count
+        let activeCount = 0;
+        if (data.continuity_enabled) activeCount++;
+        if (data.auto_clipboard_sync) activeCount++;
+        if (data.enhanced_clipboard) activeCount++;
+        if (data.multiple_paired) activeCount++;
+        if (data.camera_sharing_enabled) activeCount++;
+        if (data.screen_sharing_enabled) activeCount++;
+        if (data.desktop_mode_enabled) activeCount++;
+        document.getElementById('featCountBadge').innerText = activeCount + ' ACTIVE';
+
+        // Streaming badges
+        document.getElementById('cameraStatusBadge').innerText = data.camera_sharing_enabled ? 'ENABLED' : 'INACTIVE';
+        document.getElementById('cameraStatusBadge').className = data.camera_sharing_enabled ? 'badge badge-green' : 'badge';
+        document.getElementById('screenStatusBadge').innerText = data.screen_sharing_enabled ? 'ENABLED' : 'INACTIVE';
+        document.getElementById('screenStatusBadge').className = data.screen_sharing_enabled ? 'badge badge-orange' : 'badge';
+
+        // Multi-Paired toggle
         document.getElementById('multiToggle').checked = data.multiple_paired;
 
+        // Settings modal sync
         if (document.getElementById('modalContinuityToggle')) {
           document.getElementById('modalContinuityToggle').checked = data.continuity_enabled;
           document.getElementById('modalClipToggle').checked = data.auto_clipboard_sync;
@@ -1247,70 +1903,106 @@ const webUIHTML = `<!DOCTYPE html>
           document.getElementById('modalDownPath').innerText = data.download_dir;
         }
 
-        // Dynamically compute and display active feature count
-        let activeCount = 0;
-        if (data.continuity_enabled) activeCount++;
-        if (data.auto_clipboard_sync) activeCount++;
-        if (data.enhanced_clipboard) activeCount++;
-        if (data.multiple_paired) activeCount++;
-        if (data.camera_sharing_enabled) activeCount++;
-        if (data.screen_sharing_enabled) activeCount++;
-        if (data.desktop_mode_enabled) activeCount++;
-        const badge = document.getElementById('featCountBadge');
-        if (badge) badge.innerText = activeCount + ' ACTIVE';
-
-        // Paired devices
+        // Paired devices list
         const pList = document.getElementById('pairedList');
         if (data.paired_devices && data.paired_devices.length > 0) {
           pList.innerHTML = data.paired_devices.map(d => 
-            '<li class="list-item"><span><b>' + d.device_name + '</b></span>' +
-            '<button class="btn btn-danger" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button></li>'
+            '<li class="list-item">' +
+              '<div class="list-item-left">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>' +
+                '<div>' +
+                  '<div class="list-item-title">' + d.device_name + '</div>' +
+                  '<div class="list-item-sub">' + (data.multiple_paired ? 'Multi-Device Mode' : 'Strict 1-Device Policy') + '</div>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex; gap:6px;">' +
+                '<button class="btn btn-bordered btn-sm" onclick="disconnectDevice(\'' + d.device_id + '\')">Disconnect</button>' +
+                '<button class="btn btn-danger btn-sm" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button>' +
+              '</div>' +
+            '</li>'
           ).join('');
         } else {
-          pList.innerHTML = '<li class="muted">No paired devices yet.</li>';
+          pList.innerHTML = '<li class="muted">No paired devices yet. Discover nearby devices below.</li>';
         }
 
-        // Clipboard history
-        const cList = document.getElementById('clipList');
-        if (data.clipboard_history && data.clipboard_history.length > 0) {
-          cList.innerHTML = data.clipboard_history.slice(0, 10).map(t => 
-            '<li class="list-item"><span>' + t.substring(0, 40) + '</span><button class="btn" style="padding:4px 8px;font-size:11px;" onclick="navigator.clipboard.writeText(\'' + t.replace(/'/g, "\\'") + '\')">Copy</button></li>'
+        // Nearby Discovered devices list
+        const dList = document.getElementById('discoveredList');
+        if (data.discovered_devices && data.discovered_devices.length > 0) {
+          dList.innerHTML = data.discovered_devices.map(d => {
+            const isPaired = data.paired_devices && data.paired_devices.some(p => p.device_id === d.device_id);
+            return '<li class="list-item">' +
+              '<div class="list-item-left">' +
+                '<div style="width:7px; height:7px; border-radius:50%; background:#22c55e;"></div>' +
+                '<div>' +
+                  '<div class="list-item-title">' + d.device_name + '</div>' +
+                  '<div class="list-item-sub">' + d.ip + ':' + d.port + '</div>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex; gap:6px;">' +
+                (isPaired ? 
+                  '<button class="btn btn-bordered btn-sm" onclick="requestCameraStream(\'camera\', \'request_stream\')">Camera</button>' +
+                  '<button class="btn btn-bordered btn-sm" onclick="requestCameraStream(\'screen\', \'request_stream\')">Screen</button>' +
+                  '<button class="btn btn-danger btn-sm" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button>' : 
+                  '<button class="btn btn-success btn-sm" onclick="pairDevice(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Pair Device</button>'
+                ) +
+              '</div>' +
+            '</li>';
+          }).join('');
+        } else {
+          dList.innerHTML = '<li class="muted">Searching for nearby devices on local Wi-Fi...</li>';
+        }
+
+        // Recent Transfers list
+        const tList = document.getElementById('transfersList');
+        const modalTList = document.getElementById('modalTransfersList');
+        if (data.transfer_history && data.transfer_history.length > 0) {
+          const tHtml = data.transfer_history.slice(0, 10).map(t => 
+            '<li class="list-item">' +
+              '<div class="list-item-left">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                '<div>' +
+                  '<div class="list-item-title">' + t.file_name + '</div>' +
+                  '<div class="list-item-sub">' + (t.size ? (t.size / 1024).toFixed(1) + ' KB' : 'Completed') + '</div>' +
+                '</div>' +
+              '</div>' +
+              '<button class="btn btn-bordered btn-sm" onclick="deleteTransfer(\'' + t.id + '\')">Delete</button>' +
+            '</li>'
           ).join('');
+          tList.innerHTML = tHtml;
+          if (modalTList) modalTList.innerHTML = tHtml;
+        } else {
+          tList.innerHTML = '<li class="muted">No transfers yet today.</li>';
+          if (modalTList) modalTList.innerHTML = '<li class="muted">No transfers in history.</li>';
         }
-      } catch (e) {}
+
+        // Clipboard history list
+        const cList = document.getElementById('clipList');
+        const modalCList = document.getElementById('modalClipboardList');
+        if (data.clipboard_history && data.clipboard_history.length > 0) {
+          const cHtml = data.clipboard_history.slice(0, 10).map((t, idx) => 
+            '<li class="list-item">' +
+              '<div class="list-item-title">' + t.substring(0, 36) + (t.length > 36 ? '...' : '') + '</div>' +
+              '<div style="display:flex; gap:4px;">' +
+                '<button class="btn btn-bordered btn-sm" onclick="navigator.clipboard.writeText(\'' + t.replace(/'/g, "\\'") + '\')">Copy</button>' +
+                '<button class="btn btn-danger btn-sm" onclick="deleteClip(' + idx + ')">&times;</button>' +
+              '</div>' +
+            '</li>'
+          ).join('');
+          cList.innerHTML = cHtml;
+          if (modalCList) modalCList.innerHTML = cHtml;
+        } else {
+          cList.innerHTML = '<li class="muted">No clipboard items yet.</li>';
+          if (modalCList) modalCList.innerHTML = '<li class="muted">No clipboard items in history.</li>';
+        }
+
+      } catch (e) {
+        console.error('loadStatus error:', e);
+      }
     }
 
-    async function toggleMulti(val) {
-      await fetch('/api/toggle-multi-paired?enabled=' + val);
+    async function deleteTransfer(id) {
+      await fetch('/api/delete-transfer?id=' + encodeURIComponent(id));
       loadStatus();
-    }
-
-    async function unpairDevice(id) {
-      await fetch('/api/unpair?id=' + id);
-      loadStatus();
-    }
-
-    async function pushClip() {
-      const val = document.getElementById('clipText').value.trim();
-      if (!val) return;
-      await fetch('/api/push-clipboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: val })
-      });
-      document.getElementById('clipText').value = '';
-      loadStatus();
-    }
-
-    async function sendCont() {
-      const val = document.getElementById('contUrl').value.trim();
-      if (!val || val === 'https://') return;
-      await fetch('/api/send-continuity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: val })
-      });
-      alert('Sent web page to connected devices: ' + val);
     }
 
     setInterval(loadStatus, 2000);
