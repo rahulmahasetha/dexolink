@@ -3085,8 +3085,9 @@ fun HomeScreenContent(
             onStartStream = {
                 showCameraSharingDialog = false
                 val streamId = UUID.randomUUID().toString()
+                com.macdroid.streaming.CameraStreamManager.getInstance(context).startCameraStreaming(streamId)
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamRequestMessage(streamId, "camera", mapOf("quality" to "medium"))
+                    StreamRequestMessage(streamId, "camera", mapOf("direction" to "outgoing", "sender" to "android", "quality" to "medium"))
                 )
                 Toast.makeText(context, "Streaming camera feed to connected device...", Toast.LENGTH_SHORT).show()
             },
@@ -3100,6 +3101,7 @@ fun HomeScreenContent(
             },
             onStopStream = {
                 showCameraSharingDialog = false
+                com.macdroid.streaming.CameraStreamManager.getInstance(context).stopCameraStreaming()
                 val streamId = UUID.randomUUID().toString()
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamStopMessage(streamId, "User stopped feed")

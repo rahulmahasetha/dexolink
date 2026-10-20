@@ -127,6 +127,9 @@ class ConnectionManager(private val context: Context) {
         listeners.remove(listener)
     }
 
+    val listeningPort: Int
+        get() = serverSocket?.takeIf { !it.isClosed }?.localPort ?: 0
+
     fun startServer(port: Int = 0): Int {
         if (serverSocket != null && !serverSocket!!.isClosed) {
             return serverSocket!!.localPort
@@ -616,6 +619,22 @@ class ConnectionManager(private val context: Context) {
                     com.macdroid.continuity.ContinuityManager.getInstance(context).handleMessage(message)
                 } catch (e: Exception) {
                     log("Error handling continuity message: ${e.message}")
+                }
+            }
+
+            is StreamRequestMessage -> {
+                try {
+                    com.macdroid.streaming.CameraStreamManager.getInstance(context).handleIncomingStreamRequest(message)
+                } catch (e: Exception) {
+                    log("Error handling stream request: ${e.message}")
+                }
+            }
+
+            is StreamStopMessage -> {
+                try {
+                    com.macdroid.streaming.CameraStreamManager.getInstance(context).handleIncomingStreamStop(message)
+                } catch (e: Exception) {
+                    log("Error handling stream stop: ${e.message}")
                 }
             }
 

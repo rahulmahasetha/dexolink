@@ -116,7 +116,7 @@
             android:name=".service.MacDroidService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice" />
+            android:foregroundServiceType="dataSync|connectedDevice|camera|mediaProjection" />
 
         <!-- Quick Settings Tile (Like Wi-Fi / Bluetooth toggle) -->
         <service

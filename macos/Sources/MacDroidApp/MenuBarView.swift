@@ -959,12 +959,29 @@ struct DeviceRow: View {
             Spacer()
 
             if isCurrentConnected {
-                Button("Disconnect") {
-                    appState.disconnect()
+                HStack(spacing: 4) {
+                    if appState.isCameraSharingEnabled {
+                        Button(action: {
+                            appState.requestRemoteCameraStream()
+                        }) {
+                            HStack(spacing: 2) {
+                                Image(systemName: "camera.fill")
+                                Text("Camera")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .tint(.teal)
+                        .help("View live camera feed from this device")
+                    }
+
+                    Button("Disconnect") {
+                        appState.disconnect()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .tint(.red)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .tint(.red)
             } else if isPaired {
                 Button("Connect") {
                     appState.connect(to: device)
@@ -2068,6 +2085,26 @@ struct SettingsSheetView: View {
                                     appState.setCameraSharingEnabled(!appState.isCameraSharingEnabled)
                                 }
                             )
+
+                            if appState.isCameraSharingEnabled && appState.connectionState.isConnected {
+                                Button(action: {
+                                    appState.requestRemoteCameraStream()
+                                }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "video.fill")
+                                        Text("Open Camera Viewer (Android → Mac)")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                                    .background(Color.teal.opacity(0.18))
+                                    .foregroundColor(.teal)
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 4)
+                            }
 
                             // 2. Screen Sharing
                             CompactFeatureControl(

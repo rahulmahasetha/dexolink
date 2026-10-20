@@ -135,6 +135,12 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
         localDeviceName.value = connectionManager.deviceName
         val settings = DexoLinkSettings.getInstance(this)
+        val sPort = connectionManager.listeningPort.takeIf { it > 0 }
+            ?: connectionManager.startServer(52840).takeIf { it > 0 }
+            ?: connectionManager.startServer(0)
+        if (sPort > 0 && !discoveryService.isAdvertising) {
+            discoveryService.startAdvertising(sPort)
+        }
         if (settings.autoDeviceDiscovery.value) {
             if (!discoveryService.isBrowsing) {
                 discoveryService.startBrowsing()
@@ -564,6 +570,12 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         isEnhancedClipboardEnabled.value = connectionManager.clipboardManager.isEnhancedClipboardEnabled
         lastSyncedSnippet.value = connectionManager.clipboardManager.lastSyncedSnippet
         pairedDevice.value = TrustStore.getInstance(this).getPairedDevice()
+        val activePort = connectionManager.listeningPort.takeIf { it > 0 }
+            ?: connectionManager.startServer(52840).takeIf { it > 0 }
+            ?: connectionManager.startServer(0)
+        if (activePort > 0 && !discoveryService.isAdvertising) {
+            discoveryService.startAdvertising(activePort)
+        }
         refreshReceivedFiles()
         checkAndSyncClipboard("onResume")
     }

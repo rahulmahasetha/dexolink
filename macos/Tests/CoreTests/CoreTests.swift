@@ -167,5 +167,81 @@ final class CoreTests: XCTestCase {
         streamManager.isCameraSharingEnabled = false
         streamManager.stopAllStreams()
     }
+
+    func testRemoteInboundCameraStream_acceptsAndDecodesFrames() {
+        let streamManager = StreamManager()
+        streamManager.isCameraSharingEnabled = true
+
+        let startExp = self.expectation(description: "Remote stream started")
+        var startedStreamId: String? = nil
+        streamManager.onRemoteStreamStarted = { streamId, type in
+            startedStreamId = streamId
+            startExp.fulfill()
+        }
+
+        // Test remote request (Android streaming TO Mac)
+        let resp = streamManager.handleIncomingStreamRequest(
+            streamId: "remote-cam-1",
+            streamType: "camera",
+            options: ["direction": "outgoing", "sender": "android"]
+        )
+
+        if case let .streamResponse(streamId, streamType, accepted, _) = resp {
+            XCTAssertEqual(streamId, "remote-cam-1")
+            XCTAssertEqual(streamType, "camera")
+            XCTAssertTrue(accepted)
+        } else {
+            XCTFail("Expected streamResponse")
+        }
+
+        waitForExpectations(timeout: 2.0)
+        XCTAssertEqual(startedStreamId, "remote-cam-1")
+
+        // Generate a valid 2x2 test JPEG
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 2,
+            pixelsHigh: 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .calibratedRGB,
+            bytesPerRow: 8,
+            bitsPerPixel: 32
+        )!
+        let jpegData = rep.representation(using: .jpeg, properties: [:])!
+        let base64String = jpegData.base64EncodedString()
+
+        let frameExp = self.expectation(description: "Remote frame received")
+        streamManager.onRemoteFrameReceived = { streamId, image, width, height in
+            XCTAssertEqual(streamId, "remote-cam-1")
+            XCTAssertEqual(width, 640)
+            XCTAssertEqual(height, 480)
+            XCTAssertNotNil(image)
+            frameExp.fulfill()
+        }
+
+        streamManager.handleIncomingStreamFrame(
+            streamId: "remote-cam-1",
+            sequence: 1,
+            format: "jpeg",
+            width: 640,
+            height: 480,
+            data: base64String
+        )
+
+        waitForExpectations(timeout: 2.0)
+
+        // Stop stream
+        let stopExp = self.expectation(description: "Remote stream stopped")
+        streamManager.onRemoteStreamStopped = { streamId in
+            if streamId == "remote-cam-1" {
+                stopExp.fulfill()
+            }
+        }
+        streamManager.stopStream(streamId: "remote-cam-1")
+        waitForExpectations(timeout: 2.0)
+    }
 }
 

@@ -185,22 +185,54 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
     }
 
+    // MARK: - Remote Inbound Streams (e.g. Android -> Mac)
+    public var onRemoteFrameReceived: ((_ streamId: String, _ image: NSImage, _ width: Int, _ height: Int) -> Void)?
+    public var onRemoteStreamStarted: ((_ streamId: String, _ streamType: String) -> Void)?
+    public var onRemoteStreamStopped: ((_ streamId: String) -> Void)?
+
+    public func handleIncomingStreamFrame(streamId: String, sequence: Int64, format: String, width: Int, height: Int, data: String) {
+        guard let frameData = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
+              let image = NSImage(data: frameData) else {
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.onRemoteFrameReceived?(streamId, image, width, height)
+        }
+    }
+
     // MARK: - Stream Lifecycle
     public func handleIncomingStreamRequest(streamId: String, streamType: String, options: [String: String]?) -> ProtocolMessage {
         guard let type = StreamType(rawValue: streamType) else {
             return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Unsupported stream type")
         }
 
+        let isRemoteSendingFeed = options?["direction"] == "outgoing" || options?["sender"] == "android"
+
         switch type {
         case .camera:
             guard isCameraSharingEnabled else {
                 return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Camera Sharing is turned OFF in Settings")
+            }
+            if isRemoteSendingFeed {
+                activeStreams[streamId] = type
+                DispatchQueue.main.async { [weak self] in
+                    self?.onRemoteStreamStarted?(streamId, streamType)
+                }
+                return .streamResponse(streamId: streamId, streamType: streamType, accepted: true, reason: nil)
             }
             checkCameraPermission()
             startCameraSessionIfNeeded()
         case .screen:
             guard isScreenSharingEnabled else {
                 return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Screen Sharing is turned OFF in Settings")
+            }
+            if isRemoteSendingFeed {
+                activeStreams[streamId] = type
+                DispatchQueue.main.async { [weak self] in
+                    self?.onRemoteStreamStarted?(streamId, streamType)
+                }
+                return .streamResponse(streamId: streamId, streamType: streamType, accepted: true, reason: nil)
             }
             checkScreenCapturePermission()
         case .desktopMode:
@@ -329,6 +361,12 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         streamTimers[streamId]?.invalidate()
         streamTimers.removeValue(forKey: streamId)
         activeStreams.removeValue(forKey: streamId)
+        if activeStreams.values.filter({ $0 == .camera }).isEmpty {
+            stopCameraSession()
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.onRemoteStreamStopped?(streamId)
+        }
     }
 
     public func stopStreamType(_ type: StreamType) {

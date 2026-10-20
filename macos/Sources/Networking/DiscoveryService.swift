@@ -302,11 +302,14 @@ public class DiscoveryService {
             }
         }
         
-        // Mark devices not present in results as offline (do NOT remove them!)
+        // Mark devices not present in results as offline only if they have not been seen recently (> 90s)
+        let now = Date()
         for i in 0..<self.discoveredDevices.count {
             let dev = self.discoveredDevices[i]
             if !seenIds.contains(dev.id) && !seenNames.contains(dev.name) {
-                self.discoveredDevices[i].isOnline = false
+                if now.timeIntervalSince(dev.lastSeen) > 90 {
+                    self.discoveredDevices[i].isOnline = false
+                }
             }
         }
         

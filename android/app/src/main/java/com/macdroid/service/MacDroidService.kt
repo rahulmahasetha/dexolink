@@ -150,7 +150,10 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
 
         // Start socket server for incoming Mac connections & advertise
         try {
-            val port = connectionManager.startServer(0)
+            var port = connectionManager.startServer(52840)
+            if (port <= 0) {
+                port = connectionManager.startServer(0)
+            }
             if (port > 0) {
                 discoveryService.startAdvertising(port)
             }
