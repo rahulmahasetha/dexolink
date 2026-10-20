@@ -15,17 +15,17 @@ on:
         type: boolean
         default: true
       tag_name:
-        description: 'Release Tag Name (e.g. v3.0.0)'
+        description: 'Release Tag Name (e.g. v4.0.1)'
         required: false
         type: string
-        default: 'v3.0.0'
+        default: 'v4.0.1'
 
 permissions:
   contents: write
 
 jobs:
-  build-macos:
-    name: Build & Package macOS App (DMG)
+  build-apple:
+    name: Build & Package Apple Apps (macOS DMG & iOS IPA)
     runs-on: macos-14
     steps:
       - name: Checkout Code
@@ -44,18 +44,25 @@ jobs:
           chmod +x macos/scripts/package_dmg.sh
           ./macos/scripts/package_dmg.sh
 
-      - name: Stage macOS Release Artifacts
+      - name: Package DexoLink iPhone App (.ipa)
         run: |
-          mkdir -p macos_artifacts
-          cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink.dmg
-          cp macos/dist/DexoLink.dmg macos_artifacts/DexoLink-v3.0.0.dmg
-          ls -lh macos_artifacts/
+          chmod +x ios/scripts/package_ipa.sh
+          ./ios/scripts/package_ipa.sh
 
-      - name: Upload macOS DMG Artifact
+      - name: Stage Apple Release Artifacts
+        run: |
+          mkdir -p apple_artifacts
+          cp macos/dist/DexoLink.dmg apple_artifacts/DexoLink.dmg
+          cp macos/dist/DexoLink.dmg apple_artifacts/DexoLink-v4.0.1.dmg
+          cp ios/dist/DexoLink.ipa apple_artifacts/DexoLink.ipa
+          cp ios/dist/DexoLink.ipa apple_artifacts/DexoLink-v4.0.1.ipa
+          ls -lh apple_artifacts/
+
+      - name: Upload Apple Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: DexoLink-macOS-DMG
-          path: macos_artifacts/*
+          name: DexoLink-Apple-Artifacts
+          path: apple_artifacts/*
           if-no-files-found: error
           retention-days: 30
 
@@ -89,9 +96,8 @@ jobs:
       - name: Stage Android Release Artifacts
         run: |
           mkdir -p android_artifacts
-          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-v3.0.0.apk || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v3.0.0.apk
-          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-Android.apk || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-Android.apk
-          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/app-release.apk 2>/dev/null || true
+          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-v4.0.1.apk 2>/dev/null || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v4.0.1.apk
+          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-Android.apk 2>/dev/null || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-Android.apk
           cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/app-debug.apk 2>/dev/null || true
           ls -lh android_artifacts/
 
@@ -103,9 +109,38 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-windows:
+    name: Build Windows Native App (EXE)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build Windows Executable
+        run: |
+          cd windows
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o DexoLink.exe main.go
+          mkdir -p ../windows_artifacts
+          cp DexoLink.exe ../windows_artifacts/DexoLink.exe
+          cp DexoLink.exe ../windows_artifacts/DexoLink-v4.0.1.exe
+          ls -lh ../windows_artifacts/
+
+      - name: Upload Windows EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DexoLink-Windows-EXE
+          path: windows_artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
   publish-release:
     name: Publish Public GitHub Release
-    needs: [build-macos, build-android]
+    needs: [build-apple, build-android, build-windows]
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == true || github.event.inputs.publish_release == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -114,25 +149,30 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Download macOS DMG Artifact
+      - name: Download Apple Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: DexoLink-macOS-DMG
-          path: artifacts/macos
+          name: DexoLink-Apple-Artifacts
+          path: artifacts/apple
 
-      - name: Download Android APK Artifact
+      - name: Download Android Artifacts
         uses: actions/download-artifact@v4
         with:
           name: DexoLink-Android-APK
           path: artifacts/android
 
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: DexoLink-Windows-EXE
+          path: artifacts/windows
+
       - name: Prepare Release Assets
         run: |
           mkdir -p release_assets
-          cp artifacts/macos/DexoLink-v3.0.0.dmg release_assets/DexoLink-v3.0.0.dmg 2>/dev/null || cp artifacts/macos/DexoLink.dmg release_assets/DexoLink-v3.0.0.dmg 2>/dev/null || true
-          cp artifacts/macos/DexoLink.dmg release_assets/DexoLink.dmg 2>/dev/null || true
-          cp artifacts/android/DexoLink-v3.0.0.apk release_assets/DexoLink-v3.0.0.apk 2>/dev/null || cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-v3.0.0.apk 2>/dev/null || true
-          cp artifacts/android/DexoLink-Android.apk release_assets/DexoLink-Android.apk 2>/dev/null || true
+          cp artifacts/apple/* release_assets/ 2>/dev/null || true
+          cp artifacts/android/* release_assets/ 2>/dev/null || true
+          cp artifacts/windows/* release_assets/ 2>/dev/null || true
           ls -lh release_assets/
 
       - name: Determine Release Tag
@@ -145,8 +185,8 @@ jobs:
             echo "TAG=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
             echo "TITLE=DexoLink ${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
           else
-            echo "TAG=v3.0.0" >> $GITHUB_OUTPUT
-            echo "TITLE=DexoLink v3.0.0" >> $GITHUB_OUTPUT
+            echo "TAG=v4.0.1" >> $GITHUB_OUTPUT
+            echo "TITLE=DexoLink v4.0.1" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release
@@ -158,4 +198,5 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
 
