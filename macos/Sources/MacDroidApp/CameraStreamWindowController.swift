@@ -8,12 +8,30 @@ public class CameraStreamViewModel: ObservableObject {
     @Published public var fps: Int = 0
     @Published public var isLive: Bool = true
     @Published public var streamId: String = ""
+    @Published public var rotationAngle: Double = 0.0
 
     private var frameCount: Int = 0
     private var lastFpsTime: Date = Date()
 
     public var onStopRequested: (() -> Void)?
     public var onFlipCameraRequested: (() -> Void)?
+
+    public func routeNextOrientation() {
+        rotationAngle = (rotationAngle + 90.0).truncatingRemainder(dividingBy: 360.0)
+    }
+
+    public func setRouteDirection(_ degrees: Double) {
+        rotationAngle = degrees
+    }
+
+    public var orientationLabel: String {
+        switch Int(rotationAngle) {
+        case 90: return "Right (90 deg)"
+        case 180: return "Down (180 deg)"
+        case 270: return "Left (270 deg)"
+        default: return "Up (0 deg)"
+        }
+    }
 
     public var isMobilePeer: Bool {
         let lower = deviceName.lowercased()
@@ -30,7 +48,7 @@ public class CameraStreamViewModel: ObservableObject {
 
     public func updateFrame(_ image: NSImage, width: Int, height: Int) {
         self.currentImage = image
-        self.resolutionText = "\(width) × \(height)"
+        self.resolutionText = "\(width) x \(height)"
         self.isLive = true
 
         frameCount += 1
@@ -56,6 +74,7 @@ public struct CameraStreamView: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
+                    .rotationEffect(.degrees(viewModel.rotationAngle))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 12) {
@@ -111,6 +130,23 @@ public struct CameraStreamView: View {
                     .background(Color.black.opacity(0.65))
                     .cornerRadius(6)
 
+                    // Route Orientation Button
+                    Button(action: {
+                        viewModel.routeNextOrientation()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Route: \(viewModel.orientationLabel)")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.purple.opacity(0.85))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+
                     // Flip camera button: only shown for mobile devices (phones/tablets with front and rear cameras)
                     if viewModel.isMobilePeer {
                         Button(action: {
@@ -149,6 +185,32 @@ public struct CameraStreamView: View {
                 .padding(12)
 
                 Spacer()
+            }
+
+            // Bottom Directional Route Dock (Up, Right, Down, Left)
+            VStack {
+                Spacer()
+                HStack(spacing: 6) {
+                    ForEach([(0.0, "Up"), (90.0, "Right"), (180.0, "Down"), (270.0, "Left")], id: \.0) { deg, label in
+                        let isSelected = Int(viewModel.rotationAngle) == Int(deg)
+                        Button(action: {
+                            viewModel.setRouteDirection(deg)
+                        }) {
+                            Text(label)
+                                .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                                .foregroundColor(isSelected ? .white : .white.opacity(0.7))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(isSelected ? Color.blue : Color.black.opacity(0.6))
+                                .cornerRadius(12)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(6)
+                .background(Color.black.opacity(0.5))
+                .cornerRadius(16)
+                .padding(.bottom, 16)
             }
         }
         .frame(minWidth: 480, minHeight: 360)

@@ -3599,6 +3599,8 @@ fun ScreenStreamViewerDialog(
     deviceName: String,
     onStop: () -> Unit
 ) {
+    var rotationAngle by remember { mutableStateOf(0f) }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -3616,7 +3618,9 @@ fun ScreenStreamViewerDialog(
                 androidx.compose.foundation.Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "$deviceName Screen Stream",
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { rotationZ = rotationAngle },
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
             } else {
@@ -3706,6 +3710,25 @@ fun ScreenStreamViewerDialog(
                             )
                         }
 
+                        // Route Orientation Cycle Button
+                        OutlinedButton(
+                            onClick = {
+                                rotationAngle = (rotationAngle + 90f) % 360f
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                            border = BorderStroke(1.dp, Color(0xFF0284C7)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            val dirLabel = when (rotationAngle.toInt()) {
+                                90 -> "Right (90 deg)"
+                                180 -> "Down (180 deg)"
+                                270 -> "Left (270 deg)"
+                                else -> "Up (0 deg)"
+                            }
+                            Text("Route: $dirLabel", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF38BDF8))
+                        }
+
                         Button(
                             onClick = onStop,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
@@ -3728,6 +3751,45 @@ fun ScreenStreamViewerDialog(
                     }
                 }
             }
+
+            // Bottom Directional Route Dock (Up, Right, Down, Left)
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 28.dp),
+                color = Color(0xCC0F172A),
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        0f to "Up",
+                        90f to "Right",
+                        180f to "Down",
+                        270f to "Left"
+                    ).forEach { (deg, label) ->
+                        val isSelected = (rotationAngle == deg)
+                        TextButton(
+                            onClick = { rotationAngle = deg },
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = if (isSelected) Color(0xFF38BDF8) else Color(0xFF94A3B8)
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -3742,6 +3804,7 @@ fun CameraStreamViewerDialog(
     onFlipCamera: (() -> Unit)? = null
 ) {
     val isLaptop = isLaptopDevice(deviceName)
+    var rotationAngle by remember { mutableStateOf(0f) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -3760,7 +3823,9 @@ fun CameraStreamViewerDialog(
                 androidx.compose.foundation.Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "$deviceName Camera Feed",
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { rotationZ = rotationAngle },
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
             } else {
@@ -3850,6 +3915,25 @@ fun CameraStreamViewerDialog(
                             )
                         }
 
+                        // Route Orientation Cycle Button
+                        OutlinedButton(
+                            onClick = {
+                                rotationAngle = (rotationAngle + 90f) % 360f
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA855F7)),
+                            border = BorderStroke(1.dp, Color(0xFF7E22CE)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            val dirLabel = when (rotationAngle.toInt()) {
+                                90 -> "Right (90 deg)"
+                                180 -> "Down (180 deg)"
+                                270 -> "Left (270 deg)"
+                                else -> "Up (0 deg)"
+                            }
+                            Text("Route: $dirLabel", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFFA855F7))
+                        }
+
                         // Flip Camera button: only shown for mobile devices (laptops only have a single built-in webcam)
                         if (!isLaptop && onFlipCamera != null) {
                             OutlinedButton(
@@ -3880,6 +3964,45 @@ fun CameraStreamViewerDialog(
                                 imageVector = DexoIcons.Close,
                                 contentDescription = "Close Viewer",
                                 tint = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Bottom Directional Route Dock (Up, Right, Down, Left)
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 28.dp),
+                color = Color(0xCC0F172A),
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 6.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        0f to "Up",
+                        90f to "Right",
+                        180f to "Down",
+                        270f to "Left"
+                    ).forEach { (deg, label) ->
+                        val isSelected = (rotationAngle == deg)
+                        TextButton(
+                            onClick = { rotationAngle = deg },
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = if (isSelected) Color(0xFF38BDF8) else Color(0xFF94A3B8)
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }

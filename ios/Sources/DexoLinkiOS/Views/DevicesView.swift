@@ -2,6 +2,8 @@ import SwiftUI
 
 struct DevicesView: View {
     @ObservedObject var appState: iOSAppState
+    @State private var showingCameraPreview: Bool = false
+    @State private var previewRotation: Double = 0.0
 
     var body: some View {
         NavigationStack {
@@ -144,6 +146,21 @@ struct DevicesView: View {
                             }
                             .buttonStyle(.borderless)
                         }
+
+                        Button(action: {
+                            showingCameraPreview = true
+                        }) {
+                            HStack {
+                                Image(systemName: "viewfinder")
+                                    .foregroundColor(.purple)
+                                Text("Preview & Route Feed")
+                                    .fontWeight(.medium)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
 
                     Toggle(isOn: $appState.isScreenSharingEnabled) {
@@ -195,6 +212,104 @@ struct DevicesView: View {
                 }
             }
             .navigationTitle("Devices & Settings")
+            .fullScreenCover(isPresented: $showingCameraPreview) {
+                ZStack {
+                    Color.black.edgesIgnoringSafeArea(.all)
+
+                    // Simulated live camera preview viewfinder
+                    VStack {
+                        Spacer()
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.blue.opacity(0.6), lineWidth: 2)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .padding(24)
+
+                            VStack(spacing: 8) {
+                                Image(systemName: "camera.fill")
+                                    .font(.system(size: 48))
+                                    .foregroundColor(.white.opacity(0.8))
+                                Text("DexoLink Camera Stream")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                Text("Active Sensor: \(appState.isFrontCamera ? "Front Camera" : "Rear Camera")")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .rotationEffect(.degrees(previewRotation))
+                        Spacer()
+                    }
+
+                    // Top Bar Controls
+                    VStack {
+                        HStack(spacing: 8) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 8, height: 8)
+                                Text("LIVE")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.black.opacity(0.7))
+                            .cornerRadius(6)
+
+                            Spacer()
+
+                            Button(action: {
+                                appState.toggleCameraLens()
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "camera.rotate")
+                                    Text("Flip Camera")
+                                }
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.blue.opacity(0.85))
+                                .cornerRadius(6)
+                            }
+
+                            Button(action: {
+                                showingCameraPreview = false
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(.white.opacity(0.85))
+                            }
+                        }
+                        .padding(16)
+
+                        Spacer()
+
+                        // Bottom Directional Route Dock (Up, Right, Down, Left)
+                        HStack(spacing: 6) {
+                            ForEach([(0.0, "Up"), (90.0, "Right"), (180.0, "Down"), (270.0, "Left")], id: \.0) { deg, label in
+                                let isSelected = Int(previewRotation) == Int(deg)
+                                Button(action: {
+                                    previewRotation = deg
+                                }) {
+                                    Text(label)
+                                        .font(.system(size: 12, weight: isSelected ? .bold : .medium))
+                                        .foregroundColor(isSelected ? .white : .white.opacity(0.7))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(isSelected ? Color.blue : Color.black.opacity(0.6))
+                                        .cornerRadius(12)
+                                }
+                            }
+                        }
+                        .padding(6)
+                        .background(Color.black.opacity(0.5))
+                        .cornerRadius(16)
+                        .padding(.bottom, 24)
+                    }
+                }
+            }
         }
     }
 }

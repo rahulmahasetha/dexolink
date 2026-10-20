@@ -793,6 +793,20 @@ class DexoLinkWindowsEngine:
                 except Exception:
                     pass
 
+    def send_stream_switch_camera(self, stream_id: str):
+        """Sends remote switch_camera request to peer."""
+        req_msg = ProtocolCodec.encode_message({
+            "type": "STREAM_REQUEST",
+            "streamId": stream_id,
+            "streamType": "camera",
+            "options": {"action": "switch_camera", "lens": "toggle"}
+        })
+        for sock in list(self.active_connections.values()):
+            try:
+                sock.sendall(req_msg)
+            except Exception:
+                pass
+
     def handle_desktop_input(self, stream_id: str, event_type: str, x: float, y: float, button: int = 0, key: str = ""):
         """Injects remote input events when Desktop Mode is enabled."""
         if not self.desktop_mode_enabled:

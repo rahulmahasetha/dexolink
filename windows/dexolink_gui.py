@@ -37,17 +37,20 @@ COLOR_DANGER = "#EF4444"     # Red
 COLOR_BORDER = "#334155"
 
 class ScreenViewerWindow(tk.Toplevel):
-    """Full-featured live screen viewing window for Windows."""
+    """Full-featured live screen and camera viewing window for Windows."""
     def __init__(self, master, stream_id: str, engine, device_name: str = "Remote Device"):
         super().__init__(master)
         self.stream_id = stream_id
         self.engine = engine
         self.device_name = device_name
-        self.title(f"DexoLink Screen Mirroring — {device_name}")
+        self.is_camera = ("camera" in stream_id.lower() or "cam" in stream_id.lower())
+        title_prefix = "DexoLink Live Camera" if self.is_camera else "DexoLink Screen Mirroring"
+        self.title(f"{title_prefix} - {device_name}")
         self.geometry("960x600")
         self.minsize(540, 380)
         self.configure(bg="#000000")
 
+        self.rotation_angle = 0
         self.frame_count = 0
         self.last_fps_time = time.time()
         self.current_fps = 0
@@ -61,24 +64,62 @@ class ScreenViewerWindow(tk.Toplevel):
         self.header_frame = tk.Frame(self, bg="#0F172A", height=42, padx=12, pady=6)
         self.header_frame.pack(side=tk.TOP, fill=tk.X)
 
-        lbl_live = tk.Label(self.header_frame, text="LIVE MIRROR", font=("Segoe UI", 9, "bold"), fg="#22C55E", bg="#0F172A")
+        badge_text = "LIVE CAMERA" if self.is_camera else "LIVE MIRROR"
+        badge_fg = "#EF4444" if self.is_camera else "#22C55E"
+        lbl_live = tk.Label(self.header_frame, text=badge_text, font=("Segoe UI", 9, "bold"), fg=badge_fg, bg="#0F172A")
         lbl_live.pack(side=tk.LEFT, padx=(4, 10))
 
         self.lbl_title = tk.Label(self.header_frame, text=self.device_name, font=("Segoe UI", 10, "bold"), fg="#F8FAFC", bg="#0F172A")
         self.lbl_title.pack(side=tk.LEFT, padx=4)
 
-        btn_stop = tk.Button(self.header_frame, text="Stop Mirroring", font=("Segoe UI", 9, "bold"), fg="#FFFFFF", bg="#DC2626", activebackground="#B91C1C", activeforeground="#FFFFFF", relief=tk.FLAT, padx=10, pady=2, command=self._on_close)
+        btn_stop = tk.Button(self.header_frame, text="Stop Feed", font=("Segoe UI", 9, "bold"), fg="#FFFFFF", bg="#DC2626", activebackground="#B91C1C", activeforeground="#FFFFFF", relief=tk.FLAT, padx=10, pady=2, command=self._on_close)
         btn_stop.pack(side=tk.RIGHT, padx=4)
+
+        # Route Orientation Cycle Button
+        self.btn_route = tk.Button(self.header_frame, text="Route: Up (0 deg)", font=("Segoe UI", 9, "bold"), fg="#38BDF8", bg="#0F172A", activebackground="#1E293B", activeforeground="#38BDF8", relief=tk.FLAT, padx=8, pady=2, command=self._route_orientation)
+        self.btn_route.pack(side=tk.RIGHT, padx=4)
+
+        # Flip Camera button: only for mobile devices
+        is_laptop = any(k in self.device_name.lower() for k in ["mac", "windows", "pc", "laptop", "desktop"])
+        if not is_laptop:
+            btn_flip = tk.Button(self.header_frame, text="Flip Camera", font=("Segoe UI", 9, "bold"), fg="#A855F7", bg="#0F172A", activebackground="#1E293B", activeforeground="#A855F7", relief=tk.FLAT, padx=8, pady=2, command=self._flip_camera)
+            btn_flip.pack(side=tk.RIGHT, padx=4)
 
         self.lbl_fps = tk.Label(self.header_frame, text="0 FPS", font=("Segoe UI", 9, "bold"), fg="#22C55E", bg="#0F172A")
         self.lbl_fps.pack(side=tk.RIGHT, padx=10)
 
-        self.lbl_res = tk.Label(self.header_frame, text="960 x 540", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A")
+        self.lbl_res = tk.Label(self.header_frame, text="640 x 480", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A")
         self.lbl_res.pack(side=tk.RIGHT, padx=4)
+
+        # Bottom Directional Route Dock (Up, Right, Down, Left)
+        dock = tk.Frame(self, bg="#0F172A", height=32, padx=12, pady=4)
+        dock.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Label(dock, text="Route Orientation:", font=("Segoe UI", 8, "bold"), fg="#94A3B8", bg="#0F172A").pack(side=tk.LEFT, padx=(4, 8))
+        for deg, label in [(0, "Up (0 deg)"), (90, "Right (90 deg)"), (180, "Down (180 deg)"), (270, "Left (270 deg)")]:
+            b = tk.Button(dock, text=label, font=("Segoe UI", 8), fg="#38BDF8", bg="#1E293B",
+                          activebackground="#334155", activeforeground="#F8FAFC", relief=tk.FLAT, padx=6, pady=2,
+                          command=lambda d=deg: self.set_route_direction(d))
+            b.pack(side=tk.LEFT, padx=3)
 
         # Canvas for live frame
         self.canvas = tk.Canvas(self, bg="#000000", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
+
+    def _route_orientation(self):
+        self.rotation_angle = (self.rotation_angle + 90) % 360
+        labels = {0: "Up (0 deg)", 90: "Right (90 deg)", 180: "Down (180 deg)", 270: "Left (270 deg)"}
+        self.btn_route.config(text=f"Route: {labels.get(self.rotation_angle, '0 deg')}")
+
+    def set_route_direction(self, degrees: int):
+        self.rotation_angle = degrees % 360
+        labels = {0: "Up (0 deg)", 90: "Right (90 deg)", 180: "Down (180 deg)", 270: "Left (270 deg)"}
+        self.btn_route.config(text=f"Route: {labels.get(self.rotation_angle, '0 deg')}")
+
+    def _flip_camera(self):
+        try:
+            self.engine.send_stream_switch_camera(self.stream_id)
+        except Exception:
+            pass
 
     def update_frame(self, data_b64: str, width: int, height: int):
         self.frame_count += 1
@@ -98,6 +139,9 @@ class ScreenViewerWindow(tk.Toplevel):
         try:
             raw_bytes = base64.b64decode(data_b64)
             img = Image.open(io.BytesIO(raw_bytes))
+
+            if self.rotation_angle != 0:
+                img = img.rotate(-self.rotation_angle, expand=True)
 
             cw = self.canvas.winfo_width()
             ch = self.canvas.winfo_height()

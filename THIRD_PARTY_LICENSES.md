@@ -36,3 +36,35 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## webrtc-android (GetStream)
+
+- **Project:** webrtc-android (https://github.com/GetStream/webrtc-android)
+- **License:** Apache License 2.0
+- **Copyright:**
+  - Copyright (c) 2014-2023 Stream.io Inc. All rights reserved.
+  - Copyright (c) 2011 The WebRTC project authors. All rights reserved.
+- **Adapted Components:**
+  - Camera enumeration & lens facing detection (`Camera2Enumerator`, `isFrontFacing`, `isBackFacing`, `LENS_FACING_FRONT`, `LENS_FACING_BACK`)
+  - Supported resolution format negotiation (`CaptureFormat`, supported format matching)
+  - Display and video aspect ratio layout measurement (`RendererCommon`, `VideoLayoutMeasure`, `getLayoutMatrix`, `ScalingType`)
+  - Front camera horizontal mirroring and sensor rotation degree management (0, 90, 180, 270 degrees)
+  - WebRTC signaling protocol structures (SDP offer/answer negotiation and ICE candidate exchange)
+  - Seamless front/back camera lens toggling during active video streams
+
+### Apache License 2.0 Text
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+

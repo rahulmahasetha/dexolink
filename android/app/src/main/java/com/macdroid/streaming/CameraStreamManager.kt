@@ -84,6 +84,9 @@ class CameraStreamManager private constructor(private val context: Context) {
     private var remoteFrameCounter = 0
     private var lastRemoteFpsTime = 0L
 
+    private val webrtcCameraHelper by lazy { WebRtcCameraHelper(context) }
+    private var currentCameraSensorOrientation: Int = 90
+
     // MARK: - Inbound Frame Dispatch (Receiving camera feed from Mac/PC)
     fun handleIncomingStreamFrame(frame: StreamFrameMessage) {
         try {
@@ -336,6 +339,13 @@ class CameraStreamManager private constructor(private val context: Context) {
             return
         }
 
+        try {
+            val chars = cameraManager.getCameraCharacteristics(cameraId)
+            currentCameraSensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+        } catch (e: Exception) {
+            currentCameraSensorOrientation = 90
+        }
+
         backgroundThread = HandlerThread("CameraBackgroundThread").also { it.start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
 
@@ -428,6 +438,33 @@ class CameraStreamManager private constructor(private val context: Context) {
         val buffer = planes[0].buffer
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
+
+        val isFront = (currentLensFacing == CameraCharacteristics.LENS_FACING_FRONT)
+        val rotation = webrtcCameraHelper.calculateFrameRotation(isFront, currentCameraSensorOrientation)
+
+        if (rotation != 0 || isFront) {
+            try {
+                val originalBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (originalBmp != null) {
+                    val transformedBmp = webrtcCameraHelper.transformBitmap(
+                        source = originalBmp,
+                        rotationDegrees = rotation.toFloat(),
+                        mirrorHorizontal = isFront
+                    )
+                    val stream = ByteArrayOutputStream()
+                    transformedBmp.compress(Bitmap.CompressFormat.JPEG, 75, stream)
+                    val finalBytes = stream.toByteArray()
+                    if (transformedBmp != originalBmp) {
+                        transformedBmp.recycle()
+                    }
+                    originalBmp.recycle()
+                    sendEncodedJpegFrame(finalBytes, FRAME_WIDTH, FRAME_HEIGHT)
+                    return
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Frame transformation fallback: ${e.message}")
+            }
+        }
 
         sendEncodedJpegFrame(bytes, FRAME_WIDTH, FRAME_HEIGHT)
     }
