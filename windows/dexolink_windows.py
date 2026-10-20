@@ -578,6 +578,19 @@ class DexoLinkWindowsEngine:
             self.handle_desktop_input(stream_id, event_type, x, y, button, key)
             return None, None
 
+        elif msg_type == "STREAM_FRAME":
+            stream_id = msg.get("streamId", "")
+            data_b64 = msg.get("data", "")
+            width = int(msg.get("width", 640))
+            height = int(msg.get("height", 480))
+            fmt = msg.get("format", "jpeg")
+            if getattr(self, "on_frame_received", None):
+                try:
+                    self.on_frame_received(stream_id, data_b64, width, height, fmt)
+                except Exception:
+                    pass
+            return None, None
+
         elif msg_type == "PING":
             return {"type": "PONG"}, None
 
@@ -697,6 +710,19 @@ class DexoLinkWindowsEngine:
                 sock.sendall(encoded)
             except Exception:
                 pass
+
+    def send_protocol_message(self, msg: dict, target_peer_id: str = None) -> bool:
+        """Sends an encoded protocol message to a specific peer or all connected peers."""
+        encoded = ProtocolCodec.encode_message(msg)
+        sent = False
+        for dev_id, sock in list(self.active_connections.items()):
+            if target_peer_id is None or dev_id == target_peer_id:
+                try:
+                    sock.sendall(encoded)
+                    sent = True
+                except Exception:
+                    pass
+        return sent
 
     def send_file(self, peer_ip: str, peer_port: int, file_path: str, progress_callback=None) -> bool:
         """Sends a file in 64KB chunks with SHA-256 integrity over TCP to a peer."""

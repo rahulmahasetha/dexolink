@@ -975,6 +975,21 @@ struct DeviceRow: View {
                         .help("View live camera feed from this device")
                     }
 
+                    if appState.isScreenSharingEnabled {
+                        Button(action: {
+                            appState.requestRemoteScreenStream()
+                        }) {
+                            HStack(spacing: 2) {
+                                Image(systemName: "display")
+                                Text("Screen")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .tint(.orange)
+                        .help("View live screen mirror from this device")
+                    }
+
                     Button("Disconnect") {
                         appState.disconnect()
                     }
@@ -2086,24 +2101,78 @@ struct SettingsSheetView: View {
                                 }
                             )
 
-                            if appState.isCameraSharingEnabled && appState.connectionState.isConnected {
-                                Button(action: {
-                                    appState.requestRemoteCameraStream()
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "video.fill")
-                                        Text("Open Camera Viewer (Android → Mac)")
-                                            .font(.caption)
-                                            .fontWeight(.semibold)
+                            if appState.isCameraSharingEnabled {
+                                if appState.connectionState.isConnected, let remoteName = appState.connectedDeviceName {
+                                    let devType = appState.connectedDeviceType ?? appState.inferDeviceType(from: remoteName)
+                                    let typeDisplay: String = {
+                                        switch devType.lowercased() {
+                                        case "iphone": return "iPhone"
+                                        case "ipad": return "iPad"
+                                        case "windows": return "Windows PC"
+                                        case "mac": return "macOS"
+                                        default: return "Android"
+                                        }
+                                    }()
+
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(spacing: 4) {
+                                            Circle().fill(Color.green).frame(width: 6, height: 6)
+                                            Text("Verified Connected Device: \(remoteName) (\(typeDisplay))")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(.primary)
+                                        }
+                                        .padding(.horizontal, 4)
+
+                                        HStack(spacing: 6) {
+                                            Button(action: {
+                                                appState.requestRemoteCameraStream()
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "video.fill")
+                                                    Text("📷 View Remote Camera (\(remoteName) → Mac)")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                }
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .background(Color.teal.opacity(0.18))
+                                                .foregroundColor(.teal)
+                                                .cornerRadius(6)
+                                            }
+                                            .buttonStyle(.plain)
+
+                                            Button(action: {
+                                                appState.startSharingMacCameraToRemote()
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "arrow.up.right.video.fill")
+                                                    Text("📤 Stream Mac Camera (Mac → \(remoteName))")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                }
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .background(Color.teal.opacity(0.12))
+                                                .foregroundColor(.teal)
+                                                .cornerRadius(6)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(.horizontal, 4)
                                     }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 6)
-                                    .background(Color.teal.opacity(0.18))
-                                    .foregroundColor(.teal)
+                                    .padding(.vertical, 4)
+                                } else {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.orange)
+                                            .font(.caption)
+                                        Text("No verified device connected. Connect & pair with Android, Windows, iPhone, or Mac over Wi-Fi to start camera sharing.")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(8)
+                                    .background(Color.orange.opacity(0.08))
                                     .cornerRadius(6)
+                                    .padding(.horizontal, 4)
                                 }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 4)
                             }
 
                             // 2. Screen Sharing
@@ -2117,6 +2186,80 @@ struct SettingsSheetView: View {
                                     appState.setScreenSharingEnabled(!appState.isScreenSharingEnabled)
                                 }
                             )
+
+                            if appState.isScreenSharingEnabled {
+                                if appState.connectionState.isConnected, let remoteName = appState.connectedDeviceName {
+                                    let devType = appState.connectedDeviceType ?? appState.inferDeviceType(from: remoteName)
+                                    let typeDisplay: String = {
+                                        switch devType.lowercased() {
+                                        case "iphone": return "iPhone"
+                                        case "ipad": return "iPad"
+                                        case "windows": return "Windows PC"
+                                        case "mac": return "macOS"
+                                        default: return "Android"
+                                        }
+                                    }()
+
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(spacing: 4) {
+                                            Circle().fill(Color.green).frame(width: 6, height: 6)
+                                            Text("Verified Connected Device: \(remoteName) (\(typeDisplay))")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(.primary)
+                                        }
+                                        .padding(.horizontal, 4)
+
+                                        HStack(spacing: 6) {
+                                            Button(action: {
+                                                appState.requestRemoteScreenStream()
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "display")
+                                                    Text("🖥️ View Remote Screen (\(remoteName) → Mac)")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                }
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .background(Color.orange.opacity(0.18))
+                                                .foregroundColor(.orange)
+                                                .cornerRadius(6)
+                                            }
+                                            .buttonStyle(.plain)
+
+                                            Button(action: {
+                                                appState.startSharingMacScreenToRemote()
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "arrow.up.right.square")
+                                                    Text("📤 Mirror Mac Screen (Mac → \(remoteName))")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                }
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .background(Color.orange.opacity(0.12))
+                                                .foregroundColor(.orange)
+                                                .cornerRadius(6)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(.horizontal, 4)
+                                    }
+                                    .padding(.vertical, 4)
+                                } else {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.orange)
+                                            .font(.caption)
+                                        Text("No verified device connected. Connect & pair with Android, Windows, iPhone, or Mac over Wi-Fi to start screen mirroring.")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(8)
+                                    .background(Color.orange.opacity(0.08))
+                                    .cornerRadius(6)
+                                    .padding(.horizontal, 4)
+                                }
+                            }
 
                             // 3. Desktop Mode (beta)
                             CompactFeatureControl(

@@ -58,6 +58,19 @@ class CameraStreamManager private constructor(private val context: Context) {
     private val _currentFps = MutableStateFlow(0)
     val currentFps: StateFlow<Int> = _currentFps.asStateFlow()
 
+    // Remote camera receiver state (e.g. Mac/Windows -> Android camera viewer)
+    private val _isViewingRemoteCamera = MutableStateFlow(false)
+    val isViewingRemoteCamera: StateFlow<Boolean> = _isViewingRemoteCamera.asStateFlow()
+
+    private val _remoteCameraBitmap = MutableStateFlow<Bitmap?>(null)
+    val remoteCameraBitmap: StateFlow<Bitmap?> = _remoteCameraBitmap.asStateFlow()
+
+    private val _remoteCameraFps = MutableStateFlow(0)
+    val remoteCameraFps: StateFlow<Int> = _remoteCameraFps.asStateFlow()
+
+    private val _remoteDeviceName = MutableStateFlow("Remote Device")
+    val remoteDeviceName: StateFlow<String> = _remoteDeviceName.asStateFlow()
+
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var imageReader: ImageReader? = null
@@ -67,6 +80,53 @@ class CameraStreamManager private constructor(private val context: Context) {
 
     private var frameCounter = 0
     private var lastFpsCalculationTime = 0L
+
+    private var remoteFrameCounter = 0
+    private var lastRemoteFpsTime = 0L
+
+    // MARK: - Inbound Frame Dispatch (Receiving camera feed from Mac/PC)
+    fun handleIncomingStreamFrame(frame: StreamFrameMessage) {
+        try {
+            val bytes = Base64.decode(frame.data, Base64.DEFAULT)
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bmp != null) {
+                _remoteCameraBitmap.value = bmp
+                if (!_isViewingRemoteCamera.value) {
+                    _isViewingRemoteCamera.value = true
+                }
+                updateRemoteFps()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed decoding remote camera frame: ${e.message}")
+        }
+    }
+
+    private fun updateRemoteFps() {
+        remoteFrameCounter++
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastRemoteFpsTime
+        if (elapsed >= 1000L) {
+            _remoteCameraFps.value = ((remoteFrameCounter * 1000L) / elapsed).toInt()
+            remoteFrameCounter = 0
+            lastRemoteFpsTime = now
+        }
+    }
+
+    fun startViewingRemoteCamera(streamId: String, peerName: String) {
+        activeStreamId = streamId
+        _remoteDeviceName.value = peerName
+        _isViewingRemoteCamera.value = true
+        _remoteCameraBitmap.value = null
+        _remoteCameraFps.value = 0
+        lastRemoteFpsTime = System.currentTimeMillis()
+        remoteFrameCounter = 0
+    }
+
+    fun stopViewingRemoteCamera() {
+        _isViewingRemoteCamera.value = false
+        _remoteCameraBitmap.value = null
+        _remoteCameraFps.value = 0
+    }
 
     // Handle incoming stream request from Mac/Windows
     fun handleIncomingStreamRequest(req: StreamRequestMessage) {
@@ -82,6 +142,22 @@ class CameraStreamManager private constructor(private val context: Context) {
             )
             MacDroidApplication.connectionManager.sendMessage(response)
             Log.d(TAG, "Rejected StreamRequest ${req.streamId}: Camera sharing disabled")
+            return
+        }
+
+        val direction = req.options?.get("direction") ?: "outgoing"
+        if (direction == "outgoing" || req.options?.get("sender") == "mac" || req.options?.get("sender") == "windows") {
+            // Remote device wants to stream ITS camera TO Android
+            val senderName = req.options?.get("senderName") ?: "Remote Device"
+            startViewingRemoteCamera(req.streamId, senderName)
+            val response = StreamResponseMessage(
+                streamId = req.streamId,
+                streamType = req.streamType,
+                accepted = true,
+                reason = null
+            )
+            MacDroidApplication.connectionManager.sendMessage(response)
+            Log.d(TAG, "Accepted inbound camera stream from $senderName")
             return
         }
 
@@ -113,8 +189,9 @@ class CameraStreamManager private constructor(private val context: Context) {
 
     fun handleIncomingStreamStop(stop: StreamStopMessage) {
         Log.d(TAG, "Received StreamStop for ${stop.streamId}: ${stop.reason}")
-        if (activeStreamId == stop.streamId || isStreamingActive.get()) {
+        if (activeStreamId == stop.streamId || isStreamingActive.get() || _isViewingRemoteCamera.value) {
             stopCameraStreaming()
+            stopViewingRemoteCamera()
         }
     }
 

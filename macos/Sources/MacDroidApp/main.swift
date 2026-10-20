@@ -337,6 +337,7 @@ class AppState: ObservableObject {
     @Published var connectionState: ConnectionState = .disconnected
     @Published var connectedDeviceName: String? = nil
     @Published var connectedDeviceId: String? = nil
+    @Published var connectedDeviceType: String? = nil
     @Published var pairingPin: String? = nil
     @Published var incomingPairingRequest: PairingRequestInfo? = nil
     @Published var lastPingLatencyMs: Int? = nil
@@ -391,26 +392,50 @@ class AppState: ObservableObject {
         streamManager.isDesktopModeEnabled = self.isDesktopModeEnabled
         transferManager.delegate = self
 
-        // Wire camera streaming to native macOS viewer
-        streamManager.onRemoteFrameReceived = { [weak self] streamId, image, width, height in
+        // Wire camera & screen streaming to native macOS viewers
+        streamManager.onRemoteCameraFrameReceived = { [weak self] streamId, image, width, height in
             _ = self
             CameraStreamWindowController.shared.updateFrame(image, width: width, height: height)
         }
+        streamManager.onRemoteScreenFrameReceived = { [weak self] streamId, image, width, height in
+            _ = self
+            ScreenStreamWindowController.shared.updateFrame(image, width: width, height: height)
+        }
+        streamManager.onRemoteFrameReceived = { [weak self] streamId, image, width, height in
+            _ = self
+            let type = self?.streamManager.getStreamType(streamId: streamId)
+            if type == .screen || type == .desktopMode {
+                ScreenStreamWindowController.shared.updateFrame(image, width: width, height: height)
+            } else {
+                CameraStreamWindowController.shared.updateFrame(image, width: width, height: height)
+            }
+        }
         streamManager.onRemoteStreamStarted = { [weak self] streamId, streamType in
+            let devName = self?.connectedDeviceName ?? "Connected Device"
             if streamType == "camera" {
-                let devName = self?.connectedDeviceName ?? "Android Phone"
                 CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+            } else if streamType == "screen" || streamType == "desktop_mode" {
+                ScreenStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
             }
         }
         streamManager.onRemoteStreamStopped = { _ in
             CameraStreamWindowController.shared.close()
+            ScreenStreamWindowController.shared.close()
         }
         CameraStreamWindowController.shared.onClose = { [weak self] in
             guard let self = self else { return }
             let streamId = CameraStreamWindowController.shared.viewModel.streamId
             if !streamId.isEmpty {
                 self.streamManager.stopStream(streamId: streamId)
-                try? self.connectionManager.send(message: .streamStop(streamId: streamId, reason: "User closed viewer on Mac"))
+                try? self.connectionManager.send(message: .streamStop(streamId: streamId, reason: "User closed camera viewer on Mac"))
+            }
+        }
+        ScreenStreamWindowController.shared.onClose = { [weak self] in
+            guard let self = self else { return }
+            let streamId = ScreenStreamWindowController.shared.viewModel.streamId
+            if !streamId.isEmpty {
+                self.streamManager.stopStream(streamId: streamId)
+                try? self.connectionManager.send(message: .streamStop(streamId: streamId, reason: "User closed screen mirror viewer on Mac"))
             }
         }
 
@@ -698,8 +723,9 @@ class AppState: ObservableObject {
             return
         }
         let streamId = UUID().uuidString
-        let devName = connectedDeviceName ?? "Android Phone"
+        let devName = connectedDeviceName ?? "Connected Device"
         statusMessage = "Requesting camera stream from \(devName)..."
+        streamManager.registerActiveStream(streamId: streamId, type: .camera)
         CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
         let msg = ProtocolMessage.streamRequest(
             streamId: streamId,
@@ -707,6 +733,82 @@ class AppState: ObservableObject {
             options: ["direction": "outgoing", "sender": "mac", "action": "request_stream"]
         )
         try? connectionManager.send(message: msg)
+    }
+
+    func startSharingMacCameraToRemote() {
+        guard isEnabled else { return }
+        guard connectionState.isConnected else {
+            statusMessage = "Connect to your device first"
+            return
+        }
+        let streamId = UUID().uuidString
+        let devName = connectedDeviceName ?? "Connected Device"
+        statusMessage = "Streaming Mac camera to \(devName)..."
+        streamManager.registerActiveStream(streamId: streamId, type: .camera)
+        _ = streamManager.handleIncomingStreamRequest(
+            streamId: streamId,
+            streamType: "camera",
+            options: ["direction": "incoming"]
+        )
+        let myName = Host.current().localizedName ?? "MacBook"
+        let msg = ProtocolMessage.streamRequest(
+            streamId: streamId,
+            streamType: "camera",
+            options: ["direction": "outgoing", "sender": "mac", "senderName": myName]
+        )
+        try? connectionManager.send(message: msg)
+    }
+
+    func requestRemoteScreenStream() {
+        guard isEnabled else { return }
+        guard connectionState.isConnected else {
+            statusMessage = "Connect to your device first"
+            return
+        }
+        let streamId = UUID().uuidString
+        let devName = connectedDeviceName ?? "Connected Device"
+        statusMessage = "Requesting display mirror from \(devName)..."
+        streamManager.registerActiveStream(streamId: streamId, type: .screen)
+        ScreenStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+        let msg = ProtocolMessage.streamRequest(
+            streamId: streamId,
+            streamType: "screen",
+            options: ["direction": "outgoing", "sender": "mac", "action": "request_stream"]
+        )
+        try? connectionManager.send(message: msg)
+    }
+
+    func startSharingMacScreenToRemote() {
+        guard isEnabled else { return }
+        guard connectionState.isConnected else {
+            statusMessage = "Connect to your device first"
+            return
+        }
+        let streamId = UUID().uuidString
+        let devName = connectedDeviceName ?? "Connected Device"
+        statusMessage = "Mirroring Mac screen to \(devName)..."
+        streamManager.registerActiveStream(streamId: streamId, type: .screen)
+        _ = streamManager.handleIncomingStreamRequest(
+            streamId: streamId,
+            streamType: "screen",
+            options: ["direction": "incoming"]
+        )
+        let myName = Host.current().localizedName ?? "MacBook"
+        let msg = ProtocolMessage.streamRequest(
+            streamId: streamId,
+            streamType: "screen",
+            options: ["direction": "outgoing", "sender": "mac", "senderName": myName]
+        )
+        try? connectionManager.send(message: msg)
+    }
+
+    func inferDeviceType(from name: String) -> String {
+        let lower = name.lowercased()
+        if lower.contains("iphone") { return "iphone" }
+        if lower.contains("ipad") { return "ipad" }
+        if lower.contains("windows") || lower.contains("pc") { return "windows" }
+        if lower.contains("mac") || lower.contains("macbook") || lower.contains("imac") { return "mac" }
+        return "android"
     }
 
     func setScreenSharingEnabled(_ enabled: Bool) {
@@ -1048,6 +1150,7 @@ extension AppState: ConnectionManagerDelegate {
         case let .hello(_, deviceId, deviceName):
             self.connectedDeviceName = deviceName
             self.connectedDeviceId = deviceId
+            self.connectedDeviceType = self.discoveredDevices.first(where: { $0.id == deviceId })?.deviceType ?? self.inferDeviceType(from: deviceName)
             let myName = Host.current().localizedName ?? "MacBook"
             let isTrusted = TrustStore.shared.isPaired(deviceId: deviceId, deviceName: deviceName)
 
@@ -1080,6 +1183,7 @@ extension AppState: ConnectionManagerDelegate {
         case let .helloAck(_, deviceId, deviceName, paired):
             self.connectedDeviceName = deviceName
             self.connectedDeviceId = deviceId
+            self.connectedDeviceType = self.discoveredDevices.first(where: { $0.id == deviceId })?.deviceType ?? self.inferDeviceType(from: deviceName)
             if paired {
                 self.statusMessage = "Connected to \(deviceName) • Syncing"
                 self.applyClipboardSyncDirection()
@@ -1230,20 +1334,30 @@ extension AppState: ConnectionManagerDelegate {
                 self.streamManager.handleIncomingStreamFrame(streamId: streamId, sequence: sequence, format: format, width: width, height: height, data: data)
 
             case let .streamResponse(streamId, streamType, accepted, reason):
-                if accepted && streamType == "camera" {
-                    let devName = self.connectedDeviceName ?? "Android Phone"
-                    CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
-                    self.statusMessage = "Streaming camera from \(devName)"
-                } else if !accepted {
-                    self.statusMessage = "Camera stream rejected: \(reason ?? "unknown error")"
+                let devName = self.connectedDeviceName ?? "Connected Device"
+                if accepted {
+                    if streamType == "camera" {
+                        CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+                        self.statusMessage = "Streaming camera from \(devName)"
+                    } else if streamType == "screen" || streamType == "desktop_mode" {
+                        ScreenStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+                        self.statusMessage = "Screen mirroring with \(devName)"
+                    }
+                } else {
+                    self.statusMessage = "\(streamType.capitalized) stream rejected: \(reason ?? "unknown error")"
                 }
 
             case let .streamRequest(streamId, streamType, options):
                 let resp = self.streamManager.handleIncomingStreamRequest(streamId: streamId, streamType: streamType, options: options)
                 try? self.connectionManager.send(message: resp)
-                if streamType == "camera" && (options?["direction"] == "outgoing" || options?["sender"] == "android") {
-                    let devName = self.connectedDeviceName ?? "Android Phone"
-                    CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+                let devName = self.connectedDeviceName ?? "Connected Device"
+                let isRemoteFeed = options?["direction"] == "outgoing" || options?["sender"] == "android" || options?["sender"] == "windows"
+                if isRemoteFeed {
+                    if streamType == "camera" {
+                        CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+                    } else if streamType == "screen" || streamType == "desktop_mode" {
+                        ScreenStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
+                    }
                 }
 
             case let .desktopInputEvent(streamId, eventType, x, y, button, key):
@@ -1252,6 +1366,7 @@ extension AppState: ConnectionManagerDelegate {
             case let .streamStop(streamId, _):
                 self.streamManager.stopStream(streamId: streamId)
                 CameraStreamWindowController.shared.close()
+                ScreenStreamWindowController.shared.close()
 
             default:
                 self.transferManager.handleMessage(message)

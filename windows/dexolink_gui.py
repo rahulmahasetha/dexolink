@@ -574,9 +574,19 @@ class DexoLinkGUI:
         if not target_name or "Scanning" in target_name:
             messagebox.showwarning("No Target", "Please select a discovered target device first.")
             return
+        if not self.engine.active_connections:
+            messagebox.showwarning("Unverified Device", "No verified connected device. Please connect and pair with a device over Wi-Fi first.")
+            return
         if not self.engine.camera_sharing_enabled:
             messagebox.showinfo("Enable Feature", "Please turn ON Camera Sharing in Settings first.")
             return
+        stream_id = str(uuid.uuid4())
+        self.engine.send_protocol_message({
+            "type": "STREAM_REQUEST",
+            "streamId": stream_id,
+            "streamType": "camera",
+            "options": {"direction": "outgoing", "sender": "windows", "senderName": self.engine.device_name}
+        })
         messagebox.showinfo("Camera Stream", f"Camera stream requested with {target_name}. Local camera feed is ready.")
 
     def _request_screen_stream(self):
@@ -584,15 +594,28 @@ class DexoLinkGUI:
         if not target_name or "Scanning" in target_name:
             messagebox.showwarning("No Target", "Please select a discovered target device first.")
             return
+        if not self.engine.active_connections:
+            messagebox.showwarning("Unverified Device", "No verified connected device. Please connect and pair with a device over Wi-Fi first.")
+            return
         if not self.engine.screen_sharing_enabled:
             messagebox.showinfo("Enable Feature", "Please turn ON Screen Sharing in Settings first.")
             return
+        stream_id = str(uuid.uuid4())
+        self.engine.send_protocol_message({
+            "type": "STREAM_REQUEST",
+            "streamId": stream_id,
+            "streamType": "screen",
+            "options": {"direction": "outgoing", "sender": "windows", "senderName": self.engine.device_name}
+        })
         messagebox.showinfo("Screen Mirroring", f"Screen mirroring started with {target_name}.")
 
     def _request_desktop_stream(self):
         target_name = self.device_combo.get()
         if not target_name or "Scanning" in target_name:
             messagebox.showwarning("No Target", "Please select a discovered target device first.")
+            return
+        if not self.engine.active_connections:
+            messagebox.showwarning("Unverified Device", "No verified connected device. Please connect and pair with a device over Wi-Fi first.")
             return
         if not self.engine.desktop_mode_enabled:
             messagebox.showinfo("Enable Feature", "Please turn ON Desktop Mode in Settings first.")

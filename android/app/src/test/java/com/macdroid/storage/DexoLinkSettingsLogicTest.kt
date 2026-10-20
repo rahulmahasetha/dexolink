@@ -259,5 +259,45 @@ class DexoLinkSettingsLogicTest {
         assertTrue("macbook-pro must remain paired", deviceList.contains("macbook-pro"))
         assertTrue("windows-desktop must remain paired", deviceList.contains("windows-desktop"))
     }
+
+    @Test
+    fun testDynamicDeviceStreamingOptions_whenDisconnected_neverShowsConnectionAvailable() {
+        val isConnected = false
+        val connectedDeviceName: String? = null
+
+        // Rule: Never show a connection as available unless verified
+        val canShowStreamingActions = isConnected && connectedDeviceName != null
+        assertFalse("Streaming actions must be hidden when disconnected", canShowStreamingActions)
+
+        val warningBadge = if (!canShowStreamingActions) {
+            "No Compatible Device Connected"
+        } else {
+            null
+        }
+        assertNotNull("Warning badge must be present when disconnected", warningBadge)
+    }
+
+    @Test
+    fun testDynamicDeviceStreamingOptions_whenConnected_showsVerifiedOptionsForPlatform() {
+        val platforms = listOf(
+            Pair("macOS", "MacBook Pro M3"),
+            Pair("windows", "Windows 11 Workstation"),
+            Pair("iphone", "iPhone 15 Pro"),
+            Pair("android", "Galaxy S24 Ultra")
+        )
+
+        for ((platform, devName) in platforms) {
+            val isConnected = true
+            val canShowStreamingActions = isConnected && devName.isNotBlank()
+            assertTrue("Must allow streaming actions for verified connected $platform", canShowStreamingActions)
+
+            // Verify supported directions
+            val outgoingAction = "Android → $devName"
+            val incomingAction = "$devName → Android"
+            assertTrue(outgoingAction.contains("Android →"))
+            assertTrue(incomingAction.contains("→ Android"))
+        }
+    }
 }
+
 

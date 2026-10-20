@@ -243,5 +243,83 @@ final class CoreTests: XCTestCase {
         streamManager.stopStream(streamId: "remote-cam-1")
         waitForExpectations(timeout: 2.0)
     }
+
+    func testRemoteInboundScreenStream_acceptsAndDecodesFrames() {
+        let streamManager = StreamManager.shared
+        streamManager.isScreenSharingEnabled = true
+
+        let startedExp = self.expectation(description: "Remote screen stream started")
+        var startedStreamId = ""
+        streamManager.onRemoteStreamStarted = { streamId, streamType in
+            if streamId == "remote-screen-1" && streamType == "screen" {
+                startedStreamId = streamId
+                startedExp.fulfill()
+            }
+        }
+
+        // Test remote request (Android / Windows / iPhone mirroring screen TO Mac)
+        let resp = streamManager.handleIncomingStreamRequest(
+            streamId: "remote-screen-1",
+            streamType: "screen",
+            options: ["direction": "outgoing", "sender": "android"]
+        )
+
+        if case let .streamResponse(streamId, streamType, accepted, _) = resp {
+            XCTAssertEqual(streamId, "remote-screen-1")
+            XCTAssertEqual(streamType, "screen")
+            XCTAssertTrue(accepted)
+        } else {
+            XCTFail("Expected streamResponse")
+        }
+
+        waitForExpectations(timeout: 2.0)
+        XCTAssertEqual(startedStreamId, "remote-screen-1")
+
+        // Generate a valid 4x4 test JPEG
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 4,
+            pixelsHigh: 4,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .calibratedRGB,
+            bytesPerRow: 16,
+            bitsPerPixel: 32
+        )!
+        let jpegData = rep.representation(using: .jpeg, properties: [:])!
+        let base64String = jpegData.base64EncodedString()
+
+        let screenFrameExp = self.expectation(description: "Remote screen frame received")
+        streamManager.onRemoteScreenFrameReceived = { streamId, image, width, height in
+            XCTAssertEqual(streamId, "remote-screen-1")
+            XCTAssertEqual(width, 960)
+            XCTAssertEqual(height, 540)
+            XCTAssertNotNil(image)
+            screenFrameExp.fulfill()
+        }
+
+        streamManager.handleIncomingStreamFrame(
+            streamId: "remote-screen-1",
+            sequence: 1,
+            format: "jpeg",
+            width: 960,
+            height: 540,
+            data: base64String
+        )
+
+        waitForExpectations(timeout: 2.0)
+
+        // Stop stream
+        let stopExp = self.expectation(description: "Remote screen stream stopped")
+        streamManager.onRemoteStreamStopped = { streamId in
+            if streamId == "remote-screen-1" {
+                stopExp.fulfill()
+            }
+        }
+        streamManager.stopStream(streamId: "remote-screen-1")
+        waitForExpectations(timeout: 2.0)
+    }
 }
 

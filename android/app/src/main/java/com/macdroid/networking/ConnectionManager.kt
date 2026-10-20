@@ -624,15 +624,29 @@ class ConnectionManager(private val context: Context) {
 
             is StreamRequestMessage -> {
                 try {
-                    com.macdroid.streaming.CameraStreamManager.getInstance(context).handleIncomingStreamRequest(message)
+                    if (message.streamType == "screen") {
+                        com.macdroid.streaming.ScreenStreamManager.getInstance(context).handleIncomingStreamRequest(message)
+                    } else {
+                        com.macdroid.streaming.CameraStreamManager.getInstance(context).handleIncomingStreamRequest(message)
+                    }
                 } catch (e: Exception) {
                     log("Error handling stream request: ${e.message}")
+                }
+            }
+
+            is StreamFrameMessage -> {
+                try {
+                    com.macdroid.streaming.ScreenStreamManager.getInstance(context).handleIncomingStreamFrame(message)
+                    com.macdroid.streaming.CameraStreamManager.getInstance(context).handleIncomingStreamFrame(message)
+                } catch (e: Exception) {
+                    log("Error handling incoming stream frame: ${e.message}")
                 }
             }
 
             is StreamStopMessage -> {
                 try {
                     com.macdroid.streaming.CameraStreamManager.getInstance(context).handleIncomingStreamStop(message)
+                    com.macdroid.streaming.ScreenStreamManager.getInstance(context).handleIncomingStreamStop(message)
                 } catch (e: Exception) {
                     log("Error handling stream stop: ${e.message}")
                 }

@@ -187,8 +187,18 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     // MARK: - Remote Inbound Streams (e.g. Android -> Mac)
     public var onRemoteFrameReceived: ((_ streamId: String, _ image: NSImage, _ width: Int, _ height: Int) -> Void)?
+    public var onRemoteCameraFrameReceived: ((_ streamId: String, _ image: NSImage, _ width: Int, _ height: Int) -> Void)?
+    public var onRemoteScreenFrameReceived: ((_ streamId: String, _ image: NSImage, _ width: Int, _ height: Int) -> Void)?
     public var onRemoteStreamStarted: ((_ streamId: String, _ streamType: String) -> Void)?
     public var onRemoteStreamStopped: ((_ streamId: String) -> Void)?
+
+    public func registerActiveStream(streamId: String, type: StreamType) {
+        activeStreams[streamId] = type
+    }
+
+    public func getStreamType(streamId: String) -> StreamType? {
+        return activeStreams[streamId]
+    }
 
     public func handleIncomingStreamFrame(streamId: String, sequence: Int64, format: String, width: Int, height: Int, data: String) {
         guard let frameData = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
@@ -196,8 +206,19 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             return
         }
 
+        let type = activeStreams[streamId]
+
         DispatchQueue.main.async { [weak self] in
             self?.onRemoteFrameReceived?(streamId, image, width, height)
+            if type == .screen || type == .desktopMode {
+                self?.onRemoteScreenFrameReceived?(streamId, image, width, height)
+            } else if type == .camera {
+                self?.onRemoteCameraFrameReceived?(streamId, image, width, height)
+            } else {
+                // If stream type was not pre-registered, notify both handlers
+                self?.onRemoteCameraFrameReceived?(streamId, image, width, height)
+                self?.onRemoteScreenFrameReceived?(streamId, image, width, height)
+            }
         }
     }
 

@@ -1604,17 +1604,31 @@ fun HomeScreenContent(
     val homeScreenCaptureLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
             settings.setScreenSharing(true)
-            Toast.makeText(context, "Screen capture permission granted. Screen mirroring active.", Toast.LENGTH_SHORT).show()
             val streamId = UUID.randomUUID().toString()
+            com.macdroid.streaming.ScreenStreamManager.getInstance(context).startScreenCapture(result.resultCode, data, streamId)
             com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                StreamRequestMessage(streamId, "screen", mapOf("fps" to "15"))
+                StreamRequestMessage(streamId, "screen", mapOf("direction" to "outgoing", "sender" to "android", "fps" to "15"))
             )
+            Toast.makeText(context, "Screen capture active. Mirroring display to connected device.", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "Screen capture permission was cancelled.", Toast.LENGTH_SHORT).show()
         }
     }
+
+    val screenStreamManager = remember { com.macdroid.streaming.ScreenStreamManager.getInstance(context) }
+    val isViewingRemoteScreen by screenStreamManager.isViewingRemoteScreen.collectAsState()
+    val remoteScreenBitmap by screenStreamManager.remoteScreenBitmap.collectAsState()
+    val remoteScreenFps by screenStreamManager.remoteScreenFps.collectAsState()
+    val remoteScreenDeviceName by screenStreamManager.remoteDeviceName.collectAsState()
+
+    val cameraStreamManager = remember { com.macdroid.streaming.CameraStreamManager.getInstance(context) }
+    val isViewingRemoteCamera by cameraStreamManager.isViewingRemoteCamera.collectAsState()
+    val remoteCameraBitmap by cameraStreamManager.remoteCameraBitmap.collectAsState()
+    val remoteCameraFps by cameraStreamManager.remoteCameraFps.collectAsState()
+    val remoteCameraDeviceName by cameraStreamManager.remoteDeviceName.collectAsState()
 
     if (showHandoffToMacDialog) {
         HandoffToMacDialog(
@@ -3068,11 +3082,17 @@ fun HomeScreenContent(
         item { Spacer(modifier = Modifier.height(10.dp)) }
     }
 
+    val connectedDeviceName = pairedDevice?.deviceName
+        ?: (connectionState as? ConnectionState.Authenticated)?.peerName
+        ?: (connectionState as? ConnectionState.Connected)?.peerName
+
     if (showCameraSharingDialog) {
         val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         CameraSharingDialog(
             onDismiss = { showCameraSharingDialog = false },
             hasPermission = hasCam,
+            isConnected = isConnected,
+            connectedDeviceName = connectedDeviceName,
             onRequestPermission = {
                 homeCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             },
@@ -3089,7 +3109,7 @@ fun HomeScreenContent(
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamRequestMessage(streamId, "camera", mapOf("direction" to "outgoing", "sender" to "android", "quality" to "medium"))
                 )
-                Toast.makeText(context, "Streaming camera feed to connected device...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Streaming camera feed to $connectedDeviceName...", Toast.LENGTH_SHORT).show()
             },
             onRequestRemoteStream = {
                 showCameraSharingDialog = false
@@ -3097,7 +3117,7 @@ fun HomeScreenContent(
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamRequestMessage(streamId, "camera", mapOf("direction" to "incoming"))
                 )
-                Toast.makeText(context, "Requested camera stream from ${pairedDevice?.deviceName ?: "connected device"}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Requested camera stream from ${connectedDeviceName ?: "connected device"}", Toast.LENGTH_SHORT).show()
             },
             onStopStream = {
                 showCameraSharingDialog = false
@@ -3114,6 +3134,8 @@ fun HomeScreenContent(
     if (showScreenSharingDialog) {
         ScreenSharingDialog(
             onDismiss = { showScreenSharingDialog = false },
+            isConnected = isConnected,
+            connectedDeviceName = connectedDeviceName,
             onStartMirroring = {
                 showScreenSharingDialog = false
                 if (homeMediaProjectionManager != null) {
@@ -3122,13 +3144,66 @@ fun HomeScreenContent(
                     Toast.makeText(context, "Screen capture service unavailable", Toast.LENGTH_SHORT).show()
                 }
             },
+            onRequestRemoteScreen = {
+                showScreenSharingDialog = false
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamRequestMessage(streamId, "screen", mapOf("direction" to "incoming"))
+                )
+                Toast.makeText(context, "Requested screen mirror from ${connectedDeviceName ?: "connected device"}", Toast.LENGTH_SHORT).show()
+            },
             onStopMirroring = {
                 showScreenSharingDialog = false
+                com.macdroid.streaming.ScreenStreamManager.getInstance(context).stopScreenCapture()
                 val streamId = UUID.randomUUID().toString()
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamStopMessage(streamId, "Screen sharing stopped")
                 )
                 Toast.makeText(context, "Screen sharing stopped", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    if (isViewingRemoteScreen) {
+        ScreenStreamViewerDialog(
+            onDismiss = {
+                screenStreamManager.stopViewingRemoteScreen()
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamStopMessage(streamId, "User closed remote screen viewer")
+                )
+            },
+            bitmap = remoteScreenBitmap,
+            fps = remoteScreenFps,
+            deviceName = remoteScreenDeviceName,
+            onStop = {
+                screenStreamManager.stopViewingRemoteScreen()
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamStopMessage(streamId, "User stopped viewing remote screen")
+                )
+            }
+        )
+    }
+
+    if (isViewingRemoteCamera) {
+        CameraStreamViewerDialog(
+            onDismiss = {
+                cameraStreamManager.stopViewingRemoteCamera()
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamStopMessage(streamId, "User closed remote camera viewer")
+                )
+            },
+            bitmap = remoteCameraBitmap,
+            fps = remoteCameraFps,
+            deviceName = remoteCameraDeviceName,
+            onStop = {
+                cameraStreamManager.stopViewingRemoteCamera()
+                val streamId = UUID.randomUUID().toString()
+                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
+                    StreamStopMessage(streamId, "User stopped viewing remote camera")
+                )
             }
         )
     }
@@ -3151,6 +3226,8 @@ fun HomeScreenContent(
 fun CameraSharingDialog(
     onDismiss: () -> Unit,
     hasPermission: Boolean,
+    isConnected: Boolean,
+    connectedDeviceName: String?,
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartStream: () -> Unit,
@@ -3179,7 +3256,7 @@ fun CameraSharingDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Stream your phone's camera feed directly to your Mac or Windows PC, or request remote camera video over local Wi-Fi.",
+                    "Stream your phone's camera feed directly to your Mac, PC, or iPhone, or request remote camera video securely over local Wi-Fi.",
                     fontSize = 12.sp,
                     color = Color(0xFF475569)
                 )
@@ -3215,6 +3292,27 @@ fun CameraSharingDialog(
                             }
                         }
                     }
+                } else if (!isConnected || connectedDeviceName == null) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+                        border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("⚠️", fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("No Compatible Device Connected", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF92400E))
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Connect and pair with a Mac, Windows PC, iPhone, or another Android device over local Wi-Fi to start camera sharing.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB45309)
+                            )
+                        }
+                    }
                 } else {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
@@ -3222,28 +3320,34 @@ fun CameraSharingDialog(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Verified Connected Device: $connectedDeviceName", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF0F172A))
+                            }
+
                             Button(
                                 onClick = onStartStream,
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEC4899)),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Start Streaming Phone Camera", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("📷 Stream Phone Camera (Android → $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = onRequestRemoteStream,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Request Remote Camera Stream", fontSize = 12.sp, color = Color(0xFF0F172A))
+                                Text("📥 View Remote Camera ($connectedDeviceName → Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
                             }
                             OutlinedButton(
                                 onClick = onStopStream,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Stop Active Feed", fontSize = 12.sp, color = Color(0xFFDC2626))
+                                Text("⏹️ Stop Active Camera Feed", fontSize = 11.sp, color = Color(0xFFDC2626))
                             }
                         }
                     }
@@ -3261,7 +3365,10 @@ fun CameraSharingDialog(
 @Composable
 fun ScreenSharingDialog(
     onDismiss: () -> Unit,
+    isConnected: Boolean,
+    connectedDeviceName: String?,
     onStartMirroring: () -> Unit,
+    onRequestRemoteScreen: () -> Unit,
     onStopMirroring: () -> Unit
 ) {
     AlertDialog(
@@ -3290,27 +3397,64 @@ fun ScreenSharingDialog(
                     fontSize = 12.sp,
                     color = Color(0xFF475569)
                 )
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(
-                            onClick = onStartMirroring,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Start Screen Mirroring Now", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+
+                if (!isConnected || connectedDeviceName == null) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+                        border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("⚠️", fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("No Compatible Device Connected", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF92400E))
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Connect and pair with a Mac, Windows PC, iPhone, or another Android device over local Wi-Fi to start screen mirroring.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB45309)
+                            )
                         }
-                        OutlinedButton(
-                            onClick = onStopMirroring,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Stop Screen Mirroring", fontSize = 12.sp, color = Color(0xFFDC2626))
+                    }
+                } else {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Verified Connected Device: $connectedDeviceName", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF0F172A))
+                            }
+
+                            Button(
+                                onClick = onStartMirroring,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("🖥️ Mirror Phone Screen (Android → $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                            OutlinedButton(
+                                onClick = onRequestRemoteScreen,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("📥 View Remote Screen ($connectedDeviceName → Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
+                            }
+                            OutlinedButton(
+                                onClick = onStopMirroring,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("⏹️ Stop Screen Mirroring", fontSize = 11.sp, color = Color(0xFFDC2626))
+                            }
                         }
                     }
                 }
@@ -3319,6 +3463,142 @@ fun ScreenSharingDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Close", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun ScreenStreamViewerDialog(
+    onDismiss: () -> Unit,
+    bitmap: Bitmap?,
+    fps: Int,
+    deviceName: String,
+    onStop: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F172A),
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF22C55E)))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("🖥️ $deviceName Display", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                }
+                Text("$fps FPS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF22C55E))
+            }
+        },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                if (bitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Remote Screen",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Color(0xFF38BDF8), modifier = Modifier.size(36.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Waiting for display stream...", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onStop,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Stop Mirroring", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Hide", color = Color(0xFF94A3B8))
+            }
+        }
+    )
+}
+
+@Composable
+fun CameraStreamViewerDialog(
+    onDismiss: () -> Unit,
+    bitmap: Bitmap?,
+    fps: Int,
+    deviceName: String,
+    onStop: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F172A),
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFEF4444)))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("📷 $deviceName Camera", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                }
+                Text("$fps FPS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF22C55E))
+            }
+        },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                if (bitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Remote Camera Feed",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Color(0xFFEC4899), modifier = Modifier.size(36.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Waiting for remote camera feed...", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onStop,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Stop Feed", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Hide", color = Color(0xFF94A3B8))
             }
         }
     )

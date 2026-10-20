@@ -227,7 +227,28 @@ class TestWindowsProtocol(unittest.TestCase):
         engine.set_desktop_mode_enabled(False)
         self.assertEqual(len(engine.active_streams), 0)
 
+    def test_stream_frame_dispatch(self):
+        engine = DexoLinkWindowsEngine(port=52999)
+        received_frames = []
+
+        def on_frame(stream_id, data_b64, width, height, fmt):
+            received_frames.append((stream_id, width, height, fmt))
+
+        engine.on_frame_received = on_frame
+        msg = {
+            "type": "STREAM_FRAME",
+            "streamId": "test-stream-101",
+            "data": "aGVsbG8=",
+            "width": 960,
+            "height": 540,
+            "format": "jpeg"
+        }
+        engine._process_message(msg, None, None)
+        self.assertEqual(len(received_frames), 1)
+        self.assertEqual(received_frames[0], ("test-stream-101", 960, 540, "jpeg"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
