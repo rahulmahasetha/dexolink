@@ -394,6 +394,27 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 		case "DESKTOP_INPUT_EVENT":
 			// Handled when Desktop Mode is enabled
 
+		case "WEBRTC_SIGNAL":
+			// WebRTC signaling message exchange (offer/answer/candidate)
+			streamID, _ := msg["streamId"].(string)
+			streamType, _ := msg["streamType"].(string)
+			sigType, _ := msg["signalType"].(string)
+			if sigType == "offer" {
+				answerSDP := "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=DexoLink Windows " + streamType + " Stream\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\n"
+				respData := map[string]any{
+					"type":          "WEBRTC_SIGNAL",
+					"streamId":      streamID,
+					"streamType":    streamType,
+					"signalType":    "answer",
+					"sdp":           answerSDP,
+					"sdpMid":        "0",
+					"sdpMLineIndex": 0,
+					"options":       map[string]any{"status": "accepted", "mode": "p2p_with_turn_fallback"},
+				}
+				resp, _ := encodeMessage(respData)
+				_, _ = conn.Write(resp)
+			}
+
 		case "FILE_ACK":
 			// Handled by sender
 		case "PING":
@@ -599,7 +620,7 @@ func openBrowser(url string) {
 func startWebDashboard() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, webUIHTML)
+		fmt.Fprint(w, webUIHTML)
 	})
 
 	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {

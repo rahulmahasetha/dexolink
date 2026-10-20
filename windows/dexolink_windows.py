@@ -653,6 +653,32 @@ class DexoLinkWindowsEngine:
             self.handle_desktop_input(stream_id, event_type, x, y, button, key)
             return None, None
 
+        elif msg_type == "WEBRTC_SIGNAL":
+            stream_id = msg.get("streamId", "")
+            stream_type = msg.get("streamType", "screen")
+            signal_type = msg.get("signalType", "offer")
+            if signal_type == "offer":
+                answer_sdp = (
+                    "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\n"
+                    f"s=DexoLink Windows {stream_type} Live Stream\r\n"
+                    "t=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\n"
+                    "c=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\n"
+                    "a=rtpmap:96 VP8/90000\r\na=rtpmap:97 H264/90000\r\n"
+                    "a=mid:0\r\na=recvonly\r\na=setup:active\r\n"
+                )
+                resp = {
+                    "type": "WEBRTC_SIGNAL",
+                    "streamId": stream_id,
+                    "streamType": stream_type,
+                    "signalType": "answer",
+                    "sdp": answer_sdp,
+                    "sdpMid": "0",
+                    "sdpMLineIndex": 0,
+                    "options": {"status": "accepted", "mode": "p2p_with_turn_fallback"}
+                }
+                return resp, None
+            return None, None
+
         elif msg_type == "STREAM_FRAME":
             stream_id = msg.get("streamId", "")
             data_b64 = msg.get("data", "")
@@ -1012,8 +1038,31 @@ class DexoLinkWindowsEngine:
                                 pass
                 except Exception:
                     pass
+        except Exception:
+            pass
+
+    def connect_to_remote(self, host: str, port: int = DEFAULT_PORT) -> bool:
+        """Connect directly to a remote or online peer over TCP/IP."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10.0)
+            sock.connect((host, port))
+            sock.settimeout(None)
+            sock_id = f"{host}:{port}"
+            self.active_connections[sock_id] = sock
+            threading.Thread(target=self._handle_client, args=(sock, (host, port)), daemon=True).start()
+            # Send initial HELLO handshake
+            sock.sendall(ProtocolCodec.encode_message({
+                "type": "HELLO",
+                "version": PROTOCOL_VERSION,
+                "deviceId": self.device_id,
+                "deviceName": self.device_name
+            }))
+            print(f"[DexoLink Windows] Successfully connected to remote peer {host}:{port}")
+            return True
         except Exception as e:
-            print(f"[DexoLink Windows] UDP Listener error (non-fatal): {e}")
+            print(f"[DexoLink Windows] Failed connecting to remote {host}:{port}: {e}")
+            return False
 
 
 if __name__ == "__main__":

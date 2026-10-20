@@ -42,6 +42,7 @@ public enum ProtocolMessage: Codable, Equatable {
     case streamFrame(streamId: String, sequence: Int64, format: String, width: Int, height: Int, data: String)
     case streamStop(streamId: String, reason: String? = nil)
     case desktopInputEvent(streamId: String, eventType: String, x: Double, y: Double, button: Int, key: String? = nil)
+    case webrtcSignal(streamId: String, streamType: String, signalType: String, sdp: String? = nil, candidate: String? = nil, sdpMid: String? = nil, sdpMLineIndex: Int? = nil, options: [String: String]? = nil)
 
     private enum CodingKeys: String, CodingKey {
         case type, version, deviceId, deviceName, paired, publicKey, accepted, reason
@@ -50,6 +51,7 @@ public enum ProtocolMessage: Codable, Equatable {
         case sequenceNumber, content, mode
         case activityId, activityType, title, subtitle, url, contentPayload, position, progress, timestamp, sourceDevice, enabled
         case streamId, streamType, format, sequence, width, height, eventType, x, y, button, key, options
+        case signalType, sdp, candidate, sdpMid, sdpMLineIndex
     }
 
     private enum MessageType: String, Codable {
@@ -83,6 +85,7 @@ public enum ProtocolMessage: Codable, Equatable {
         case streamFrame = "STREAM_FRAME"
         case streamStop = "STREAM_STOP"
         case desktopInputEvent = "DESKTOP_INPUT_EVENT"
+        case webrtcSignal = "WEBRTC_SIGNAL"
     }
 
     public init(from decoder: Decoder) throws {
@@ -238,6 +241,17 @@ public enum ProtocolMessage: Codable, Equatable {
                 button: try container.decode(Int.self, forKey: .button),
                 key: try container.decodeIfPresent(String.self, forKey: .key)
             )
+        case .webrtcSignal:
+            self = .webrtcSignal(
+                streamId: try container.decode(String.self, forKey: .streamId),
+                streamType: try container.decode(String.self, forKey: .streamType),
+                signalType: try container.decode(String.self, forKey: .signalType),
+                sdp: try container.decodeIfPresent(String.self, forKey: .sdp),
+                candidate: try container.decodeIfPresent(String.self, forKey: .candidate),
+                sdpMid: try container.decodeIfPresent(String.self, forKey: .sdpMid),
+                sdpMLineIndex: try container.decodeIfPresent(Int.self, forKey: .sdpMLineIndex),
+                options: try container.decodeIfPresent([String: String].self, forKey: .options)
+            )
         }
     }
 
@@ -381,6 +395,16 @@ public enum ProtocolMessage: Codable, Equatable {
             try container.encode(y, forKey: .y)
             try container.encode(button, forKey: .button)
             if let key = key { try container.encode(key, forKey: .key) }
+        case let .webrtcSignal(streamId, streamType, signalType, sdp, candidate, sdpMid, sdpMLineIndex, options):
+            try container.encode(MessageType.webrtcSignal, forKey: .type)
+            try container.encode(streamId, forKey: .streamId)
+            try container.encode(streamType, forKey: .streamType)
+            try container.encode(signalType, forKey: .signalType)
+            if let sdp = sdp { try container.encode(sdp, forKey: .sdp) }
+            if let candidate = candidate { try container.encode(candidate, forKey: .candidate) }
+            if let sdpMid = sdpMid { try container.encode(sdpMid, forKey: .sdpMid) }
+            if let sdpMLineIndex = sdpMLineIndex { try container.encode(sdpMLineIndex, forKey: .sdpMLineIndex) }
+            if let options = options { try container.encode(options, forKey: .options) }
         }
     }
 }

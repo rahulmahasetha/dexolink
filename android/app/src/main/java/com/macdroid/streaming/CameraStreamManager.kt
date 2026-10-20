@@ -87,8 +87,15 @@ class CameraStreamManager private constructor(private val context: Context) {
     private val webrtcCameraHelper by lazy { WebRtcCameraHelper(context) }
     private var currentCameraSensorOrientation: Int = 90
 
+    fun isStreamOwned(streamId: String): Boolean {
+        return activeStreamId.isNotEmpty() && activeStreamId == streamId
+    }
+
     // MARK: - Inbound Frame Dispatch (Receiving camera feed from Mac/PC)
     fun handleIncomingStreamFrame(frame: StreamFrameMessage) {
+        if (ScreenStreamManager.getInstance(context).isStreamOwned(frame.streamId)) {
+            return
+        }
         try {
             val bytes = Base64.decode(frame.data, Base64.DEFAULT)
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)

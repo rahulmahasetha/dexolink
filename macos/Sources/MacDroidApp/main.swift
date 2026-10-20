@@ -820,6 +820,7 @@ class AppState: ObservableObject {
         let streamId = UUID().uuidString
         let devName = connectedDeviceName ?? "Connected Device"
         statusMessage = "Requesting camera stream from \(devName)..."
+        streamManager.isCameraSharingEnabled = true
         streamManager.registerActiveStream(streamId: streamId, type: .camera)
         CameraStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
         let msg = ProtocolMessage.streamRequest(
@@ -839,6 +840,7 @@ class AppState: ObservableObject {
         let streamId = UUID().uuidString
         let devName = connectedDeviceName ?? "Connected Device"
         statusMessage = "Streaming Mac camera to \(devName)..."
+        streamManager.isCameraSharingEnabled = true
         streamManager.registerActiveStream(streamId: streamId, type: .camera)
         _ = streamManager.handleIncomingStreamRequest(
             streamId: streamId,
@@ -863,6 +865,7 @@ class AppState: ObservableObject {
         let streamId = UUID().uuidString
         let devName = connectedDeviceName ?? "Connected Device"
         statusMessage = "Requesting display mirror from \(devName)..."
+        streamManager.isScreenSharingEnabled = true
         streamManager.registerActiveStream(streamId: streamId, type: .screen)
         ScreenStreamWindowController.shared.showStream(streamId: streamId, deviceName: devName)
         let msg = ProtocolMessage.streamRequest(
@@ -882,6 +885,7 @@ class AppState: ObservableObject {
         let streamId = UUID().uuidString
         let devName = connectedDeviceName ?? "Connected Device"
         statusMessage = "Mirroring Mac screen to \(devName)..."
+        streamManager.isScreenSharingEnabled = true
         streamManager.registerActiveStream(streamId: streamId, type: .screen)
         _ = streamManager.handleIncomingStreamRequest(
             streamId: streamId,
@@ -1462,6 +1466,19 @@ extension AppState: ConnectionManagerDelegate {
                 self.streamManager.stopStream(streamId: streamId)
                 CameraStreamWindowController.shared.close()
                 ScreenStreamWindowController.shared.close()
+
+            case let .webrtcSignal(streamId, streamType, signalType, sdp, candidate, sdpMid, sdpMLineIndex, options):
+                WebRtcSignalingManager.shared.handleIncomingSignal(
+                    streamId: streamId,
+                    streamType: streamType,
+                    signalType: signalType,
+                    sdp: sdp,
+                    candidate: candidate,
+                    sdpMid: sdpMid,
+                    sdpMLineIndex: sdpMLineIndex,
+                    options: options,
+                    connectionManager: self.connectionManager
+                )
 
             default:
                 self.transferManager.handleMessage(message)

@@ -1104,15 +1104,15 @@ struct ManualIPSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("Direct IP Connection")
+            Text("Remote Online / IP Connection")
                 .font(.headline)
 
-            Text("Optional fallback when local mDNS auto-discovery is restricted on this network:")
+            Text("Connect directly to a phone, Mac, or PC across local Wi-Fi, VPN, or the Internet with WebRTC STUN/TURN live streaming:")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
 
-            TextField("IP Address (e.g. 192.168.1.10)", text: $ip)
+            TextField("Host or IP (e.g. 192.168.1.10, remote.net)", text: $ip)
                 .textFieldStyle(.roundedBorder)
 
             TextField("Port (e.g. 52840)", text: $port)

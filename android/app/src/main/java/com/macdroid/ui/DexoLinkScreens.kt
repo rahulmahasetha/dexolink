@@ -809,7 +809,7 @@ fun MainScreenRoot(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "Manual IP Connection",
+                        "Connect Remote Device / Online IP",
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                         color = Color(0xFF0F172A)
@@ -819,14 +819,14 @@ fun MainScreenRoot(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Connect directly using your Mac's local IP address if Wi-Fi discovery is restricted by your router.",
+                        "Connect directly to your computer or phone across local Wi-Fi, VPN, or over the Internet. Live streaming uses WebRTC with STUN direct traversal and TURN relay fallback.",
                         fontSize = 12.sp,
                         color = Color(0xFF64748B)
                     )
                     OutlinedTextField(
                         value = ipInput,
                         onValueChange = { ipInput = it },
-                        label = { Text("Mac IP Address (e.g. 192.168.1.15)") },
+                        label = { Text("Host or IP Address (e.g. 192.168.1.15, remote.net)") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color(0xFF0F172A),
@@ -3190,10 +3190,12 @@ fun HomeScreenContent(
             onRequestRemoteStream = {
                 showCameraSharingDialog = false
                 val streamId = UUID.randomUUID().toString()
+                val peerName = connectedDeviceName ?: "connected device"
+                cameraStreamManager.startViewingRemoteCamera(streamId, peerName)
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamRequestMessage(streamId, "camera", mapOf("direction" to "incoming"))
                 )
-                Toast.makeText(context, "Requested camera stream from ${connectedDeviceName ?: "connected device"}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Requested camera stream from $peerName", Toast.LENGTH_SHORT).show()
             },
             onStopStream = {
                 showCameraSharingDialog = false
@@ -3223,10 +3225,12 @@ fun HomeScreenContent(
             onRequestRemoteScreen = {
                 showScreenSharingDialog = false
                 val streamId = UUID.randomUUID().toString()
+                val peerName = connectedDeviceName ?: "connected device"
+                screenStreamManager.startViewingRemoteScreen(streamId, peerName)
                 com.macdroid.MacDroidApplication.connectionManager.sendMessage(
                     StreamRequestMessage(streamId, "screen", mapOf("direction" to "incoming"))
                 )
-                Toast.makeText(context, "Requested screen mirror from ${connectedDeviceName ?: "connected device"}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Requested screen mirror from $peerName", Toast.LENGTH_SHORT).show()
             },
             onStopMirroring = {
                 showScreenSharingDialog = false

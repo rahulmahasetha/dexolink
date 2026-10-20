@@ -32,7 +32,8 @@ enum class MessageType(val value: String) {
     STREAM_RESPONSE("STREAM_RESPONSE"),
     STREAM_FRAME("STREAM_FRAME"),
     STREAM_STOP("STREAM_STOP"),
-    DESKTOP_INPUT_EVENT("DESKTOP_INPUT_EVENT");
+    DESKTOP_INPUT_EVENT("DESKTOP_INPUT_EVENT"),
+    WEBRTC_SIGNAL("WEBRTC_SIGNAL");
 
     companion object {
         fun fromValue(value: String): MessageType? {
@@ -189,6 +190,21 @@ sealed class ProtocolMessage {
                     y = json.optDouble("y", 0.0),
                     button = json.optInt("button", 0),
                     key = if (json.has("key") && !json.isNull("key")) json.getString("key") else null
+                )
+                MessageType.WEBRTC_SIGNAL -> WebRtcSignalMessage(
+                    streamId = json.optString("streamId", ""),
+                    streamType = json.optString("streamType", "screen"),
+                    signalType = json.optString("signalType", "offer"),
+                    sdp = if (json.has("sdp") && !json.isNull("sdp")) json.getString("sdp") else null,
+                    candidate = if (json.has("candidate") && !json.isNull("candidate")) json.getString("candidate") else null,
+                    sdpMid = if (json.has("sdpMid") && !json.isNull("sdpMid")) json.getString("sdpMid") else null,
+                    sdpMLineIndex = json.optInt("sdpMLineIndex", 0),
+                    options = if (json.has("options") && !json.isNull("options")) {
+                        val optObj = json.getJSONObject("options")
+                        val map = mutableMapOf<String, String>()
+                        optObj.keys().forEach { k -> map[k] = optObj.getString(k) }
+                        map
+                    } else null
                 )
             }
         }
@@ -531,6 +547,30 @@ data class DesktopInputEventMessage(
         put("y", y)
         put("button", button)
         key?.let { put("key", it) }
+    }
+}
+
+data class WebRtcSignalMessage(
+    val streamId: String,
+    val streamType: String,
+    val signalType: String,
+    val sdp: String? = null,
+    val candidate: String? = null,
+    val sdpMid: String? = null,
+    val sdpMLineIndex: Int = 0,
+    val options: Map<String, String>? = null
+) : ProtocolMessage() {
+    override val type = MessageType.WEBRTC_SIGNAL
+    override fun toJson() = JSONObject().apply {
+        put("type", type.value)
+        put("streamId", streamId)
+        put("streamType", streamType)
+        put("signalType", signalType)
+        sdp?.let { put("sdp", it) }
+        candidate?.let { put("candidate", it) }
+        sdpMid?.let { put("sdpMid", it) }
+        put("sdpMLineIndex", sdpMLineIndex)
+        options?.let { put("options", JSONObject(it)) }
     }
 }
 

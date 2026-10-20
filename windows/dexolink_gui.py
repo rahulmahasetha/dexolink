@@ -533,10 +533,54 @@ class DexoLinkGUI:
 
         self.paired_listbox = tk.Listbox(paired_box, bg=COLOR_CARD, fg=COLOR_TEXT, borderwidth=0, highlightthickness=0, font=("Segoe UI", 9))
         self.paired_listbox.pack(fill=tk.BOTH, expand=True)
+        btn_row = tk.Frame(container, bg=COLOR_BG)
+        btn_row.pack(fill=tk.X)
 
-        btn_unpair = tk.Button(container, text="Unpair Selected Device", bg=COLOR_CARD, fg=COLOR_DANGER,
+        btn_remote = tk.Button(btn_row, text="Connect Remote Online Device...", bg=COLOR_PRIMARY, fg="#FFFFFF",
+                               font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=6, cursor="hand2", command=self._open_connect_remote_modal)
+        btn_remote.pack(side=tk.LEFT)
+
+        btn_unpair = tk.Button(btn_row, text="Unpair Selected Device", bg=COLOR_CARD, fg=COLOR_DANGER,
                                font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=6, cursor="hand2", command=self._unpair_selected_device)
-        btn_unpair.pack(anchor=tk.E)
+        btn_unpair.pack(side=tk.RIGHT)
+
+    def _open_connect_remote_modal(self):
+        modal = tk.Toplevel(self.root)
+        modal.title("Connect Remote Device / Online IP")
+        modal.geometry("380x260")
+        modal.configure(bg=COLOR_BG)
+        modal.transient(self.root)
+        modal.grab_set()
+
+        tk.Label(modal, text="Remote Online Connection", font=("Segoe UI", 12, "bold"), fg=COLOR_TEXT, bg=COLOR_BG).pack(anchor=tk.W, padx=20, pady=(16, 4))
+        tk.Label(modal, text="Connect across local Wi-Fi, VPN, or over the Internet with WebRTC STUN/TURN live streaming.", font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_BG, wraplength=340).pack(anchor=tk.W, padx=20, pady=(0, 12))
+
+        tk.Label(modal, text="Host or IP Address:", font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT, bg=COLOR_BG).pack(anchor=tk.W, padx=20)
+        ent_host = tk.Entry(modal, font=("Segoe UI", 10), bg=COLOR_CARD, fg=COLOR_TEXT, highlightthickness=1)
+        ent_host.pack(fill=tk.X, padx=20, pady=(2, 8))
+        ent_host.focus_set()
+
+        tk.Label(modal, text="Port (Default: 52840):", font=("Segoe UI", 9, "bold"), fg=COLOR_TEXT, bg=COLOR_BG).pack(anchor=tk.W, padx=20)
+        ent_port = tk.Entry(modal, font=("Segoe UI", 10), bg=COLOR_CARD, fg=COLOR_TEXT, highlightthickness=1)
+        ent_port.insert(0, "52840")
+        ent_port.pack(fill=tk.X, padx=20, pady=(2, 12))
+
+        def do_connect():
+            h = ent_host.get().strip()
+            p = int(ent_port.get().strip() or "52840")
+            if h:
+                success = self.engine.connect_to_remote(h, p)
+                if success:
+                    messagebox.showinfo("Connected", f"Connected to {h}:{p}")
+                    modal.destroy()
+                else:
+                    messagebox.showerror("Connection Failed", f"Could not connect to {h}:{p}")
+
+        btn_conn = tk.Button(modal, text="Connect", bg=COLOR_PRIMARY, fg="#FFFFFF", font=("Segoe UI", 9, "bold"), relief="flat", padx=16, pady=6, cursor="hand2", command=do_connect)
+        btn_conn.pack(side=tk.RIGHT, padx=20, pady=10)
+
+        btn_cancel = tk.Button(modal, text="Cancel", bg=COLOR_CARD, fg=COLOR_MUTED, font=("Segoe UI", 9), relief="flat", padx=12, pady=6, cursor="hand2", command=modal.destroy)
+        btn_cancel.pack(side=tk.RIGHT, pady=10)
 
     def _open_settings_modal(self):
         modal = tk.Toplevel(self.root)

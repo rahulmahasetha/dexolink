@@ -242,7 +242,7 @@ public class StreamManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             return .streamResponse(streamId: streamId, streamType: streamType, accepted: false, reason: "Unsupported stream type")
         }
 
-        let isRemoteSendingFeed = options?["direction"] == "outgoing" || options?["sender"] == "android"
+        let isRemoteSendingFeed = options?["direction"] == "outgoing" || options?["sender"] == "android" || options?["sender"] == "ios" || options?["sender"] == "windows" || options?["sender"] == "phone"
 
         switch type {
         case .camera:

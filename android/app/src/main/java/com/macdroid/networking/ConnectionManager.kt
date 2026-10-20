@@ -645,6 +645,24 @@ class ConnectionManager(private val context: Context) {
                 }
             }
 
+            is StreamResponseMessage -> {
+                try {
+                    log("StreamResponseMessage received for ${message.streamId}, type=${message.streamType}, accepted=${message.accepted}")
+                    if (message.accepted) {
+                        val peerName = currentPeerName ?: "Remote Device"
+                        if (message.streamType == "screen" || message.streamType == "desktop_mode") {
+                            com.macdroid.streaming.ScreenStreamManager.getInstance(context).startViewingRemoteScreen(message.streamId, peerName)
+                        } else if (message.streamType == "camera") {
+                            com.macdroid.streaming.CameraStreamManager.getInstance(context).startViewingRemoteCamera(message.streamId, peerName)
+                        }
+                    } else {
+                        log("Stream rejected by remote: ${message.reason}")
+                    }
+                } catch (e: Exception) {
+                    log("Error handling stream response: ${e.message}")
+                }
+            }
+
             is StreamFrameMessage -> {
                 try {
                     com.macdroid.streaming.ScreenStreamManager.getInstance(context).handleIncomingStreamFrame(message)
@@ -660,6 +678,14 @@ class ConnectionManager(private val context: Context) {
                     com.macdroid.streaming.ScreenStreamManager.getInstance(context).handleIncomingStreamStop(message)
                 } catch (e: Exception) {
                     log("Error handling stream stop: ${e.message}")
+                }
+            }
+
+            is WebRtcSignalMessage -> {
+                try {
+                    com.macdroid.streaming.WebRtcSignalingManager.getInstance(context).handleIncomingSignal(message)
+                } catch (e: Exception) {
+                    log("Error handling WebRTC signal: ${e.message}")
                 }
             }
 

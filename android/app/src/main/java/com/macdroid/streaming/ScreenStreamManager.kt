@@ -110,8 +110,15 @@ class ScreenStreamManager private constructor(private val context: Context) {
     private var remoteFrameCounter = 0
     private var lastRemoteFpsTime = 0L
 
+    fun isStreamOwned(streamId: String): Boolean {
+        return activeStreamId.isNotEmpty() && activeStreamId == streamId
+    }
+
     // MARK: - Inbound Frame Dispatch (Receiving screen feed from Mac/PC/iPhone)
     fun handleIncomingStreamFrame(frame: StreamFrameMessage) {
+        if (com.macdroid.streaming.CameraStreamManager.getInstance(context).isStreamOwned(frame.streamId)) {
+            return
+        }
         try {
             val bytes = Base64.decode(frame.data, Base64.DEFAULT)
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -182,6 +189,19 @@ class ScreenStreamManager private constructor(private val context: Context) {
             )
             MacDroidApplication.connectionManager.sendMessage(response)
             Log.d(TAG, "Accepted request to stream Android screen ${req.streamId}")
+
+            activeStreamId = req.streamId
+            sequenceNumber.set(0)
+            isStreamingActive.set(true)
+            _isStreaming.value = true
+            lastFpsCalculationTime = System.currentTimeMillis()
+            frameCounter = 0
+
+            if (mediaProjection != null) {
+                startHardwareScreenCapture()
+            } else {
+                startSyntheticScreenStream()
+            }
             return
         }
 
@@ -210,6 +230,19 @@ class ScreenStreamManager private constructor(private val context: Context) {
         )
         MacDroidApplication.connectionManager.sendMessage(response)
         Log.d(TAG, "Accepted request to stream Android screen ${req.streamId}")
+
+        activeStreamId = req.streamId
+        sequenceNumber.set(0)
+        isStreamingActive.set(true)
+        _isStreaming.value = true
+        lastFpsCalculationTime = System.currentTimeMillis()
+        frameCounter = 0
+
+        if (mediaProjection != null) {
+            startHardwareScreenCapture()
+        } else {
+            startSyntheticScreenStream()
+        }
     }
 
     fun handleIncomingStreamStop(stop: StreamStopMessage) {
