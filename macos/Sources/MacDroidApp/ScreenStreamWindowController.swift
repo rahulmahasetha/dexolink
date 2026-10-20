@@ -84,7 +84,7 @@ public struct ScreenStreamView: View {
                     .background(Color.black.opacity(0.7))
                     .cornerRadius(6)
 
-                    Text("🖥️ \(viewModel.deviceName)")
+                    Text(viewModel.deviceName)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 8)
@@ -146,7 +146,7 @@ public class ScreenStreamWindowController: NSWindowController, NSWindowDelegate 
             backing: .buffered,
             defer: false
         )
-        window.title = "🖥️ DexoLink Screen Sharing"
+        window.title = "DexoLink Screen Sharing"
         window.center()
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
@@ -170,7 +170,7 @@ public class ScreenStreamWindowController: NSWindowController, NSWindowDelegate 
         viewModel.deviceName = deviceName
         viewModel.currentImage = nil
         viewModel.fps = 0
-        window?.title = "🖥️ Screen Mirror - \(deviceName)"
+        window?.title = "Screen Mirror - \(deviceName)"
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

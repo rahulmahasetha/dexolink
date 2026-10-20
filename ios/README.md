@@ -28,5 +28,5 @@ A modern, fast, and easy-to-use native SwiftUI app for iPhone running iOS 16.0+.
 1. Open Xcode on your Mac.
 2. Choose **File > Open** and select the `ios` directory (or add the folder to your Xcode workspace).
 3. Select your iPhone or an iOS Simulator as the run target.
-4. Press **⌘ + R** (Run) to build and launch DexoLink on your iPhone.
+4. Press **Cmd + R** (Run) to build and launch DexoLink on your iPhone.
 

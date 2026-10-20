@@ -3374,7 +3374,12 @@ fun CameraSharingDialog(
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("⚠️", fontSize = 14.sp)
+                                Box(
+                                    modifier = Modifier.size(16.dp).clip(CircleShape).background(Color(0xFFF59E0B)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("!", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("No Compatible Device Connected", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF92400E))
                             }
@@ -3406,21 +3411,21 @@ fun CameraSharingDialog(
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("📷 Stream Phone Camera (Android → $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("Stream Phone Camera (Android -> $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = onRequestRemoteStream,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("📥 View Remote Camera ($connectedDeviceName → Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
+                                Text("View Remote Camera ($connectedDeviceName -> Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
                             }
                             OutlinedButton(
                                 onClick = onStopStream,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("⏹️ Stop Active Camera Feed", fontSize = 11.sp, color = Color(0xFFDC2626))
+                                Text("Stop Active Camera Feed", fontSize = 11.sp, color = Color(0xFFDC2626))
                             }
                         }
                     }
@@ -3480,7 +3485,12 @@ fun ScreenSharingDialog(
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("⚠️", fontSize = 14.sp)
+                                Box(
+                                    modifier = Modifier.size(16.dp).clip(CircleShape).background(Color(0xFFF59E0B)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("!", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("No Compatible Device Connected", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF92400E))
                             }
@@ -3512,21 +3522,21 @@ fun ScreenSharingDialog(
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("🖥️ Mirror Phone Screen (Android → $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("Mirror Phone Screen (Android -> $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = onRequestRemoteScreen,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("📥 View Remote Screen ($connectedDeviceName → Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
+                                Text("View Remote Screen ($connectedDeviceName -> Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
                             }
                             OutlinedButton(
                                 onClick = onStopMirroring,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("⏹️ Stop Screen Mirroring", fontSize = 11.sp, color = Color(0xFFDC2626))
+                                Text("Stop Screen Mirroring", fontSize = 11.sp, color = Color(0xFFDC2626))
                             }
                         }
                     }
@@ -3562,7 +3572,7 @@ fun ScreenStreamViewerDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF22C55E)))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("🖥️ $deviceName Display", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                    Text("$deviceName Display", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
                 }
                 Text("$fps FPS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF22C55E))
             }
@@ -3630,7 +3640,7 @@ fun CameraStreamViewerDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFEF4444)))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("📷 $deviceName Camera", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                    Text("$deviceName Camera", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
                 }
                 Text("$fps FPS", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF22C55E))
             }
@@ -5612,7 +5622,7 @@ fun SettingsTabContent(
                                                     shape = RoundedCornerShape(4.dp)
                                                 ) {
                                                     Text(
-                                                        "✓ Verified",
+                                                        "Verified",
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = Color(0xFF16A34A),

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACOS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$MACOS_DIR/.." && pwd)"
 
-echo "🚀 Building DexoLink macOS release binary..."
+echo "Building DexoLink macOS release binary..."
 cd "$MACOS_DIR"
 swift build -c release
 
@@ -21,7 +21,7 @@ if [ ! -f "$BIN_PATH" ]; then
 fi
 
 if [ ! -f "$BIN_PATH" ]; then
-    echo "❌ Error: Release binary not found at $BIN_PATH"
+    echo "Error: Release binary not found at $BIN_PATH"
     exit 1
 fi
 
@@ -37,11 +37,11 @@ mkdir -p "$DIST_DIR"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-echo "📦 Copying binary to $APP_NAME..."
+echo "Copying binary to $APP_NAME..."
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/DexoLink"
 chmod +x "$APP_BUNDLE/Contents/MacOS/DexoLink"
 
-echo "🎨 Generating AppIcon.icns from dexolink_app_logo..."
+echo "Generating AppIcon.icns from dexolink_app_logo..."
 LOGO_PATH="$REPO_DIR/dexolink_app_logo.jpg"
 if [ -f "$LOGO_PATH" ]; then
     ICONSET="$DIST_DIR/DexoLink.iconset"
@@ -60,7 +60,7 @@ if [ -f "$LOGO_PATH" ]; then
     rm -rf "$ICONSET"
 fi
 
-echo "📝 Writing Info.plist..."
+echo "Writing Info.plist..."
 cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -157,17 +157,17 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
 </plist>
 EOF
 
-echo "💿 Staging DMG creation..."
+echo "Staging DMG creation..."
 mkdir -p "$STAGE_DIR"
 cp -R "$APP_BUNDLE" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
 
-echo "💽 Building DexoLink.dmg with hdiutil..."
+echo "Building DexoLink.dmg with hdiutil..."
 rm -f "$DMG_OUTPUT"
 hdiutil create -volname "DexoLink" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_OUTPUT"
 rm -rf "$STAGE_DIR"
 
-echo "✅ Successfully created installable macOS app and DMG:"
+echo "Successfully created installable macOS app and DMG:"
 echo "   App: $APP_BUNDLE"
 echo "   DMG: $DMG_OUTPUT"
 ls -lh "$DMG_OUTPUT"

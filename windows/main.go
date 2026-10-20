@@ -818,7 +818,7 @@ const webUIHTML = `<!DOCTYPE html>
 <body>
   <div class="header">
     <div class="brand">
-      <h1>⚡ DexoLink</h1>
+      <h1>DexoLink</h1>
       <span class="badge">v4.0.1 (Windows App)</span>
     </div>
     <div style="display:flex; align-items:center; gap:12px;">
@@ -827,7 +827,7 @@ const webUIHTML = `<!DOCTYPE html>
         <span id="devName">Windows PC (Ready)</span>
       </div>
       <button class="btn" onclick="openSettingsModal()" style="display:flex; align-items:center; gap:6px; background:var(--card); border:1px solid var(--border); color:var(--text); padding:7px 14px; font-size:12px; font-weight:700; border-radius:8px; cursor:pointer;">
-        ⚙️ Settings
+        Settings
       </button>
     </div>
   </div>
@@ -835,10 +835,10 @@ const webUIHTML = `<!DOCTYPE html>
   <div class="grid">
     <!-- Send Files -->
     <div class="card">
-      <h2>📁 File Sharing</h2>
+      <h2>File Sharing</h2>
       <p class="muted" style="margin-bottom:12px;">Fast local WiFi streaming with 64KB chunking & SHA-256 verification.</p>
       <input type="file" id="fileInput" class="input">
-      <button class="btn" style="width:100%;" onclick="alert('File selected! In the desktop version, select a file to stream directly to your paired device.')">📤 Stream File to Device</button>
+      <button class="btn" style="width:100%;" onclick="alert('File selected! In the desktop version, select a file to stream directly to your paired device.')">Stream File to Device</button>
       <h3 style="font-size:13px; margin-top:16px; margin-bottom:6px;">Recent Transfers</h3>
       <ul class="list" id="transfersList">
         <li class="muted">No transfers yet today.</li>
@@ -847,10 +847,10 @@ const webUIHTML = `<!DOCTYPE html>
 
     <!-- Universal Clipboard -->
     <div class="card">
-      <h2>📋 Universal Clipboard</h2>
+      <h2>Universal Clipboard</h2>
       <p class="muted" style="margin-bottom:12px;">Automatic text sync across Windows, Mac, Android, and iPhone.</p>
       <input type="text" id="clipText" class="input" placeholder="Type or paste text to sync...">
-      <button class="btn" style="width:100%;" onclick="pushClip()">🚀 Push Text to Devices</button>
+      <button class="btn" style="width:100%;" onclick="pushClip()">Push Text to Devices</button>
       <h3 style="font-size:13px; margin-top:16px; margin-bottom:6px;">Clipboard History</h3>
       <ul class="list" id="clipList">
         <li class="muted">No clipboard history yet.</li>
@@ -859,15 +859,15 @@ const webUIHTML = `<!DOCTYPE html>
 
     <!-- Continuity / Handoff -->
     <div class="card">
-      <h2>🌐 Continuity & Handoff</h2>
+      <h2>Continuity & Handoff</h2>
       <p class="muted" style="margin-bottom:12px;">Instantly open links on your Mac, iPhone, or Android tablet.</p>
       <input type="url" id="contUrl" class="input" value="https://">
-      <button class="btn" style="width:100%;" onclick="sendCont()">🚀 Launch on Device</button>
+      <button class="btn" style="width:100%;" onclick="sendCont()">Launch on Device</button>
     </div>
 
     <!-- Devices & Settings -->
     <div class="card">
-      <h2>⚙️ Devices & Pairing</h2>
+      <h2>Devices & Pairing</h2>
       <div class="toggle-row">
         <div>
           <div style="font-weight:600; font-size:13px;">Multiple Paired Devices</div>
@@ -878,7 +878,7 @@ const webUIHTML = `<!DOCTYPE html>
       <!-- Feature Controls Card (Matching Reference Design) -->
       <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin-top:12px; margin-bottom:12px;">
         <div style="display:flex; align-items:center; gap:10px;">
-          <div style="width:32px; height:32px; border-radius:8px; background:rgba(30,58,138,0.4); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa; font-size:14px;">⚙️</div>
+          <div style="width:32px; height:32px; border-radius:8px; background:rgba(30,58,138,0.4); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></div>
           <div style="display:flex; align-items:center; gap:8px;">
             <span style="font-weight:700; font-size:13px; color:var(--text);">Feature Controls</span>
             <span id="featCountBadge" style="background:#14532d; color:#4ade80; font-size:9px; font-weight:800; padding:2px 7px; border-radius:999px;">4 ACTIVE</span>
@@ -898,10 +898,10 @@ const webUIHTML = `<!DOCTYPE html>
     <div style="background:var(--card); border:1px solid var(--border); border-radius:14px; width:92%; max-width:540px; max-height:85vh; overflow-y:auto; padding:24px; box-shadow:0 16px 40px rgba(0,0,0,0.6);">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:18px;">
         <div>
-          <h2 style="font-size:18px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:8px;">⚙️ DexoLink Settings</h2>
+          <h2 style="font-size:18px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:8px;">DexoLink Settings</h2>
           <p class="muted" style="margin-top:2px;">All feature controls, security rules, and device preferences</p>
         </div>
-        <button class="btn" onclick="closeSettingsModal()" style="padding:6px 12px; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--muted); cursor:pointer;">✕</button>
+        <button class="btn" onclick="closeSettingsModal()" style="padding:6px 12px; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--muted); cursor:pointer;">&times;</button>
       </div>
 
       <!-- Core Features Section -->
@@ -995,7 +995,7 @@ const webUIHTML = `<!DOCTYPE html>
       <!-- Extensible Future Toggles Container -->
       <div style="font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Extensible Future Features</div>
       <div style="background:rgba(56,189,248,0.05); border:1px dashed var(--border); border-radius:8px; padding:12px;">
-        <div class="muted" style="font-size:12px;">✦ Future feature toggles and experimental protocols automatically register into this dedicated panel.</div>
+        <div class="muted" style="font-size:12px;">Future feature toggles and experimental protocols automatically register into this dedicated panel.</div>
       </div>
 
       <!-- Modal Footer -->
@@ -1054,7 +1054,7 @@ const webUIHTML = `<!DOCTYPE html>
         const pList = document.getElementById('pairedList');
         if (data.paired_devices && data.paired_devices.length > 0) {
           pList.innerHTML = data.paired_devices.map(d => 
-            '<li class="list-item"><span>📱 <b>' + d.device_name + '</b></span>' +
+            '<li class="list-item"><span><b>' + d.device_name + '</b></span>' +
             '<button class="btn btn-danger" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button></li>'
           ).join('');
         } else {

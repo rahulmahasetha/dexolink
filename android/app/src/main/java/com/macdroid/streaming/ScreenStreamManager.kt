@@ -370,7 +370,7 @@ class ScreenStreamManager private constructor(private val context: Context) {
                     textSize = 26f
                     typeface = Typeface.DEFAULT_BOLD
                 }
-                canvas.drawText("🖥️ DexoLink Display Mirroring", 30f, 50f, paint)
+                canvas.drawText("DexoLink Display Mirroring", 30f, 50f, paint)
 
                 // Device & System Info
                 paint.apply {

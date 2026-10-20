@@ -2128,7 +2128,7 @@ struct SettingsSheetView: View {
                                             }) {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "video.fill")
-                                                    Text("📷 View Remote Camera (\(remoteName) → Mac)")
+                                                    Text("View Remote Camera (\(remoteName) -> Mac)")
                                                         .font(.system(size: 11, weight: .semibold))
                                                 }
                                                 .frame(maxWidth: .infinity)
@@ -2144,7 +2144,7 @@ struct SettingsSheetView: View {
                                             }) {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "arrow.up.right.video.fill")
-                                                    Text("📤 Stream Mac Camera (Mac → \(remoteName))")
+                                                    Text("Stream Mac Camera (Mac -> \(remoteName))")
                                                         .font(.system(size: 11, weight: .semibold))
                                                 }
                                                 .frame(maxWidth: .infinity)
@@ -2214,7 +2214,7 @@ struct SettingsSheetView: View {
                                             }) {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "display")
-                                                    Text("🖥️ View Remote Screen (\(remoteName) → Mac)")
+                                                    Text("View Remote Screen (\(remoteName) -> Mac)")
                                                         .font(.system(size: 11, weight: .semibold))
                                                 }
                                                 .frame(maxWidth: .infinity)
@@ -2230,7 +2230,7 @@ struct SettingsSheetView: View {
                                             }) {
                                                 HStack(spacing: 4) {
                                                     Image(systemName: "arrow.up.right.square")
-                                                    Text("📤 Mirror Mac Screen (Mac → \(remoteName))")
+                                                    Text("Mirror Mac Screen (Mac -> \(remoteName))")
                                                         .font(.system(size: 11, weight: .semibold))
                                                 }
                                                 .frame(maxWidth: .infinity)

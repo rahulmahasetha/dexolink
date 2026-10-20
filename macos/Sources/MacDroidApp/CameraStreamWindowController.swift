@@ -78,7 +78,7 @@ public struct CameraStreamView: View {
                     .background(Color.black.opacity(0.65))
                     .cornerRadius(6)
 
-                    Text("📷 \(viewModel.deviceName)")
+                    Text(viewModel.deviceName)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 8)
@@ -140,7 +140,7 @@ public class CameraStreamWindowController: NSWindowController, NSWindowDelegate 
             backing: .buffered,
             defer: false
         )
-        window.title = "📷 DexoLink Camera Sharing"
+        window.title = "DexoLink Camera Sharing"
         window.center()
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
@@ -164,7 +164,7 @@ public class CameraStreamWindowController: NSWindowController, NSWindowDelegate 
         viewModel.deviceName = deviceName
         viewModel.currentImage = nil
         viewModel.fps = 0
-        window?.title = "📷 Android Camera - \(deviceName)"
+        window?.title = "Camera - \(deviceName)"
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

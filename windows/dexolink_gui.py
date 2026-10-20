@@ -87,7 +87,7 @@ class DexoLinkGUI:
         title_box = tk.Frame(header, bg=COLOR_BG)
         title_box.pack(side=tk.LEFT)
         
-        lbl_brand = tk.Label(title_box, text="⚡ DexoLink", font=("Segoe UI", 16, "bold"), fg=COLOR_CYAN, bg=COLOR_BG)
+        lbl_brand = tk.Label(title_box, text="DexoLink", font=("Segoe UI", 16, "bold"), fg=COLOR_CYAN, bg=COLOR_BG)
         lbl_brand.pack(side=tk.LEFT)
         
         lbl_ver = tk.Label(title_box, text="v4.0.1", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_BG, padx=8)
@@ -97,10 +97,10 @@ class DexoLinkGUI:
         header_actions = tk.Frame(header, bg=COLOR_BG)
         header_actions.pack(side=tk.RIGHT)
 
-        self.lbl_status = tk.Label(header_actions, text="● Local Network Active", font=("Segoe UI", 10, "bold"), fg=COLOR_SUCCESS, bg=COLOR_BG)
+        self.lbl_status = tk.Label(header_actions, text="Local Network Active", font=("Segoe UI", 10, "bold"), fg=COLOR_SUCCESS, bg=COLOR_BG)
         self.lbl_status.pack(side=tk.LEFT, padx=(0, 10))
 
-        btn_settings = tk.Button(header_actions, text="⚙️ Settings", bg=COLOR_CARD, fg=COLOR_TEXT,
+        btn_settings = tk.Button(header_actions, text="Settings", bg=COLOR_CARD, fg=COLOR_TEXT,
                                  activebackground=COLOR_BORDER, activeforeground=COLOR_TEXT,
                                  font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=4, cursor="hand2",
                                  highlightbackground=COLOR_BORDER, highlightthickness=1,
@@ -117,10 +117,10 @@ class DexoLinkGUI:
         self.tab_continuity = ttk.Frame(self.notebook)
         self.tab_settings = ttk.Frame(self.notebook)
 
-        self.notebook.add(self.tab_transfer, text="📁 Send Files")
-        self.notebook.add(self.tab_clipboard, text="📋 Clipboard")
-        self.notebook.add(self.tab_continuity, text="🌐 Continuity")
-        self.notebook.add(self.tab_settings, text="⚙️ Devices & Settings")
+        self.notebook.add(self.tab_transfer, text="Send Files")
+        self.notebook.add(self.tab_clipboard, text="Clipboard")
+        self.notebook.add(self.tab_continuity, text="Continuity")
+        self.notebook.add(self.tab_settings, text="Devices & Settings")
 
         self._init_transfer_tab()
         self._init_clipboard_tab()
@@ -145,17 +145,17 @@ class DexoLinkGUI:
         media_btn_box = tk.Frame(dest_card, bg=COLOR_CARD)
         media_btn_box.pack(fill=tk.X, pady=(6, 2))
 
-        btn_cam = tk.Button(media_btn_box, text="📷 Camera Stream", bg=COLOR_BG, fg=COLOR_TEXT,
+        btn_cam = tk.Button(media_btn_box, text="Camera Stream", bg=COLOR_BG, fg=COLOR_TEXT,
                             font=("Segoe UI", 9, "bold"), relief="flat", padx=8, pady=4, cursor="hand2",
                             highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._request_camera_stream)
         btn_cam.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_screen = tk.Button(media_btn_box, text="🖥️ Screen Mirror", bg=COLOR_BG, fg=COLOR_TEXT,
+        btn_screen = tk.Button(media_btn_box, text="Screen Mirror", bg=COLOR_BG, fg=COLOR_TEXT,
                                font=("Segoe UI", 9, "bold"), relief="flat", padx=8, pady=4, cursor="hand2",
                                highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._request_screen_stream)
         btn_screen.pack(side=tk.LEFT, padx=(0, 6))
 
-        btn_desk = tk.Button(media_btn_box, text="🖱️ Desktop Mode", bg=COLOR_BG, fg=COLOR_TEXT,
+        btn_desk = tk.Button(media_btn_box, text="Desktop Mode", bg=COLOR_BG, fg=COLOR_TEXT,
                              font=("Segoe UI", 9, "bold"), relief="flat", padx=8, pady=4, cursor="hand2",
                              highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._request_desktop_stream)
         btn_desk.pack(side=tk.LEFT)
@@ -164,7 +164,7 @@ class DexoLinkGUI:
         btn_box = tk.Frame(container, bg=COLOR_BG)
         btn_box.pack(fill=tk.X, pady=(0, 10))
 
-        btn_send = tk.Button(btn_box, text="📤 Select File to Send", bg=COLOR_ACCENT, fg=COLOR_TEXT, activebackground=COLOR_ACCENT_HOVER,
+        btn_send = tk.Button(btn_box, text="Select File to Send", bg=COLOR_ACCENT, fg=COLOR_TEXT, activebackground=COLOR_ACCENT_HOVER,
                              font=("Segoe UI", 11, "bold"), relief="flat", padx=16, pady=10, cursor="hand2", command=self._choose_and_send_file)
         btn_send.pack(fill=tk.X)
 
@@ -187,7 +187,7 @@ class DexoLinkGUI:
         self.transfer_listbox.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         # Open downloads folder button
-        btn_open_folder = tk.Button(container, text="📂 Open Received Downloads Folder", bg=COLOR_CARD, fg=COLOR_CYAN,
+        btn_open_folder = tk.Button(container, text="Open Received Downloads Folder", bg=COLOR_CARD, fg=COLOR_CYAN,
                                     font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=6, cursor="hand2", command=self._open_downloads)
         btn_open_folder.pack(anchor=tk.E, pady=(8, 0))
 
@@ -218,11 +218,11 @@ class DexoLinkGUI:
 
             success = self.engine.send_file(target_dev["ip"], target_dev["port"], fpath, progress_callback=_prog)
             if success:
-                self.root.after(0, lambda: self.lbl_progress.config(text=f"✅ Successfully sent {os.path.basename(fpath)}!"))
-                self.root.after(0, lambda: self.transfer_listbox.insert(0, f"📤 Sent: {os.path.basename(fpath)} → {target_dev['deviceName']} (Verified)"))
+                self.root.after(0, lambda: self.lbl_progress.config(text=f"Successfully sent {os.path.basename(fpath)}!"))
+                self.root.after(0, lambda: self.transfer_listbox.insert(0, f"Sent: {os.path.basename(fpath)} -> {target_dev['deviceName']} (Verified)"))
                 self.root.after(0, lambda: self.progress_var.set(100))
             else:
-                self.root.after(0, lambda: self.lbl_progress.config(text=f"❌ Transfer failed to {target_dev['deviceName']}."))
+                self.root.after(0, lambda: self.lbl_progress.config(text=f"Transfer failed to {target_dev['deviceName']}."))
                 self.root.after(0, lambda: self.progress_var.set(0))
 
         threading.Thread(target=_do_send, daemon=True).start()
@@ -247,7 +247,7 @@ class DexoLinkGUI:
         self.txt_push = tk.Entry(card_push, font=("Segoe UI", 10), bg=COLOR_BG, fg=COLOR_TEXT, insertbackground=COLOR_TEXT)
         self.txt_push.pack(fill=tk.X, pady=(8, 8))
 
-        btn_push = tk.Button(card_push, text="🚀 Send to All Paired Devices", bg=COLOR_ACCENT, fg=COLOR_TEXT,
+        btn_push = tk.Button(card_push, text="Send to All Paired Devices", bg=COLOR_ACCENT, fg=COLOR_TEXT,
                              font=("Segoe UI", 9, "bold"), relief="flat", padx=12, pady=6, cursor="hand2", command=self._push_text_clipboard)
         btn_push.pack(anchor=tk.E)
 
@@ -274,7 +274,7 @@ class DexoLinkGUI:
         self.clip_listbox.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         # Copy selected button
-        btn_copy = tk.Button(container, text="📋 Copy Selected to Clipboard", bg=COLOR_CARD, fg=COLOR_CYAN,
+        btn_copy = tk.Button(container, text="Copy Selected to Clipboard", bg=COLOR_CARD, fg=COLOR_CYAN,
                              font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=6, cursor="hand2", command=self._copy_selected_clipboard)
         btn_copy.pack(anchor=tk.E, pady=(8, 0))
 
@@ -283,7 +283,7 @@ class DexoLinkGUI:
         if not text:
             return
         self.engine.push_clipboard(text)
-        self.clip_listbox.insert(0, f"📤 Sent: {text[:50]}")
+        self.clip_listbox.insert(0, f"Sent: {text[:50]}")
         self.txt_push.delete(0, tk.END)
 
     def _copy_selected_clipboard(self):
@@ -310,7 +310,7 @@ class DexoLinkGUI:
         self.txt_url.insert(0, "https://")
         self.txt_url.pack(fill=tk.X, pady=(0, 10))
 
-        btn_cont = tk.Button(card_cont, text="🌐 Launch on Device", bg=COLOR_ACCENT, fg=COLOR_TEXT,
+        btn_cont = tk.Button(card_cont, text="Launch on Device", bg=COLOR_ACCENT, fg=COLOR_TEXT,
                              font=("Segoe UI", 10, "bold"), relief="flat", padx=14, pady=8, cursor="hand2", command=self._send_continuity)
         btn_cont.pack(anchor=tk.E)
 
@@ -329,7 +329,7 @@ class DexoLinkGUI:
         if not url or url == "https://":
             return
         self.engine.send_continuity_url(url)
-        self.act_listbox.insert(0, f"🌐 Handoff Sent: {url}")
+        self.act_listbox.insert(0, f"Handoff Sent: {url}")
         messagebox.showinfo("Continuity Sent", f"Sent URL to connected devices:\n{url}")
 
     def get_active_features_count(self) -> int:
@@ -358,7 +358,7 @@ class DexoLinkGUI:
         # Blue squircle icon container
         fc_icon_box = tk.Frame(fc_left, bg="#1E3A8A", padx=6, pady=4)
         fc_icon_box.pack(side=tk.LEFT, padx=(0, 10))
-        tk.Label(fc_icon_box, text="⚙️", font=("Segoe UI", 12), bg="#1E3A8A", fg="#60A5FA").pack()
+        tk.Label(fc_icon_box, text="FC", font=("Segoe UI", 9, "bold"), bg="#1E3A8A", fg="#60A5FA").pack()
 
         # Title and dynamic Active count badge (no feature names)
         tk.Label(fc_left, text="Feature Controls", font=("Segoe UI", 11, "bold"), fg=COLOR_TEXT, bg=COLOR_CARD).pack(side=tk.LEFT, padx=(0, 8))
@@ -397,7 +397,7 @@ class DexoLinkGUI:
         self.paired_listbox = tk.Listbox(paired_box, bg=COLOR_CARD, fg=COLOR_TEXT, borderwidth=0, highlightthickness=0, font=("Segoe UI", 9))
         self.paired_listbox.pack(fill=tk.BOTH, expand=True)
 
-        btn_unpair = tk.Button(container, text="❌ Unpair Selected Device", bg=COLOR_CARD, fg=COLOR_DANGER,
+        btn_unpair = tk.Button(container, text="Unpair Selected Device", bg=COLOR_CARD, fg=COLOR_DANGER,
                                font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=6, cursor="hand2", command=self._unpair_selected_device)
         btn_unpair.pack(anchor=tk.E)
 
@@ -416,7 +416,7 @@ class DexoLinkGUI:
 
         m_title_box = tk.Frame(m_head, bg=COLOR_BG)
         m_title_box.pack(side=tk.LEFT)
-        tk.Label(m_title_box, text="⚙️ Settings & Feature Controls", font=("Segoe UI", 14, "bold"), fg=COLOR_TEXT, bg=COLOR_BG).pack(anchor=tk.W)
+        tk.Label(m_title_box, text="Settings & Feature Controls", font=("Segoe UI", 14, "bold"), fg=COLOR_TEXT, bg=COLOR_BG).pack(anchor=tk.W)
         tk.Label(m_title_box, text="Manage all sync features, security policies, and network preferences", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG).pack(anchor=tk.W, pady=(2, 0))
 
         # Scrollable Canvas / Card Container
@@ -510,7 +510,7 @@ class DexoLinkGUI:
         storage_btns = tk.Frame(sec_storage, bg=COLOR_CARD)
         storage_btns.pack(fill=tk.X)
 
-        btn_open = tk.Button(storage_btns, text="📂 Open Folder", bg=COLOR_BG, fg=COLOR_CYAN,
+        btn_open = tk.Button(storage_btns, text="Open Folder", bg=COLOR_BG, fg=COLOR_CYAN,
                              font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=4, cursor="hand2", command=self._open_downloads)
         btn_open.pack(side=tk.LEFT, padx=(0, 8))
 
@@ -553,7 +553,7 @@ class DexoLinkGUI:
         sec_future.pack(fill=tk.X, pady=(0, 12))
 
         tk.Label(sec_future, text="EXTENSIBLE FEATURE ARCHITECTURE", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_CARD).pack(anchor=tk.W, pady=(0, 4))
-        tk.Label(sec_future, text="✦ New feature toggles and experimental protocols automatically register here cleanly.",
+        tk.Label(sec_future, text="New feature toggles and experimental protocols automatically register here cleanly.",
                  font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD).pack(anchor=tk.W)
 
         # 6. FOOTER / DONE
@@ -683,7 +683,7 @@ class DexoLinkGUI:
             self.paired_listbox.insert(tk.END, "No paired devices yet.")
         else:
             for d in devices:
-                self.paired_listbox.insert(tk.END, f"📱 {d.get('device_name', 'Device')} [{d.get('device_id', '')}]")
+                self.paired_listbox.insert(tk.END, f"{d.get('device_name', 'Device')} [{d.get('device_id', '')}]")
 
     def _build_statusbar(self):
         status_bar = tk.Frame(self.root, bg=COLOR_CARD, height=28, padx=14)
@@ -699,8 +699,8 @@ class DexoLinkGUI:
         self.root.after(0, self._update_discovered_devices)
 
     def _on_transfer_complete(self, file_name, verified):
-        status = "Verified ✅" if verified else "Failed ❌"
-        self.root.after(0, lambda: self.transfer_listbox.insert(0, f"📥 Received: {file_name} ({status})"))
+        status = "Verified" if verified else "Failed"
+        self.root.after(0, lambda: self.transfer_listbox.insert(0, f"Received: {file_name} ({status})"))
 
     def _update_discovered_devices(self):
         devices = list(self.engine.discovered_devices.values())

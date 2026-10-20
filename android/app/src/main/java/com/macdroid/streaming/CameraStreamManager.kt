@@ -415,7 +415,7 @@ class CameraStreamManager private constructor(private val context: Context) {
                     textSize = 28f
                     typeface = Typeface.DEFAULT_BOLD
                 }
-                canvas.drawText("📷 DexoLink Android Camera", 30f, 60f, paint)
+                canvas.drawText("DexoLink Android Camera", 30f, 60f, paint)
 
                 // Device Info
                 paint.apply {

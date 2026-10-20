@@ -141,7 +141,7 @@ struct TransferView: View {
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                                 Spacer()
-                                Text(transfer.isComplete ? "Verified ✅" : "Streaming 64KB chunks...")
+                                Text(transfer.isComplete ? "Verified" : "Streaming 64KB chunks...")
                                     .font(.caption2)
                                     .foregroundColor(transfer.isComplete ? .green : .secondary)
                             }
