@@ -44,8 +44,11 @@ class DexoLinkGUI:
         # UI State
         self.selected_target_id = tk.StringVar(value="")
         self.multi_paired_var = tk.BooleanVar(value=self.engine.trust_store.multiple_paired_devices_enabled)
-        self.auto_sync_clip_var = tk.BooleanVar(value=True)
-        self.enhanced_clip_var = tk.BooleanVar(value=False)
+        self.auto_sync_clip_var = tk.BooleanVar(value=self.engine.clipboard_sync_enabled)
+        self.enhanced_clip_var = tk.BooleanVar(value=self.engine.enhanced_clipboard_enabled)
+        self.continuity_var = tk.BooleanVar(value=self.engine.continuity_enabled)
+        self.auto_discovery_var = tk.BooleanVar(value=self.engine.auto_discovery_enabled)
+        self.auto_accept_var = tk.BooleanVar(value=self.engine.auto_accept_enabled)
         self.clipboard_history = []
         self.transfers_history = []
 
@@ -86,9 +89,19 @@ class DexoLinkGUI:
         lbl_ver = tk.Label(title_box, text="v4.0.0", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_BG, padx=8)
         lbl_ver.pack(side=tk.LEFT, pady=(4, 0))
 
-        # Status badge
-        self.lbl_status = tk.Label(header, text="● Local Network Active", font=("Segoe UI", 10, "bold"), fg=COLOR_SUCCESS, bg=COLOR_BG)
-        self.lbl_status.pack(side=tk.RIGHT)
+        # Status badge & compact Settings button
+        header_actions = tk.Frame(header, bg=COLOR_BG)
+        header_actions.pack(side=tk.RIGHT)
+
+        self.lbl_status = tk.Label(header_actions, text="● Local Network Active", font=("Segoe UI", 10, "bold"), fg=COLOR_SUCCESS, bg=COLOR_BG)
+        self.lbl_status.pack(side=tk.LEFT, padx=(0, 10))
+
+        btn_settings = tk.Button(header_actions, text="⚙️ Settings", bg=COLOR_CARD, fg=COLOR_TEXT,
+                                 activebackground=COLOR_BORDER, activeforeground=COLOR_TEXT,
+                                 font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=4, cursor="hand2",
+                                 highlightbackground=COLOR_BORDER, highlightthickness=1,
+                                 command=self._open_settings_modal)
+        btn_settings.pack(side=tk.LEFT)
 
     def _build_notebook(self):
         self.notebook = ttk.Notebook(self.root)
@@ -301,6 +314,12 @@ class DexoLinkGUI:
         container = tk.Frame(self.tab_settings, bg=COLOR_BG, padx=16, pady=16)
         container.pack(fill=tk.BOTH, expand=True)
 
+        # Quick Dedicated Settings Launcher
+        btn_open_all = tk.Button(container, text="⚙️ Open Dedicated Settings & All Feature Controls", bg=COLOR_CARD, fg=COLOR_CYAN,
+                                 activebackground=COLOR_BORDER, font=("Segoe UI", 10, "bold"), relief="flat", padx=12, pady=10,
+                                 cursor="hand2", highlightbackground=COLOR_BORDER, highlightthickness=1, command=self._open_settings_modal)
+        btn_open_all.pack(fill=tk.X, pady=(0, 14))
+
         # Multiple Paired Devices Card
         card_multi = tk.Frame(container, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
         card_multi.pack(fill=tk.X, pady=(0, 14))
@@ -327,6 +346,164 @@ class DexoLinkGUI:
         btn_unpair = tk.Button(container, text="❌ Unpair Selected Device", bg=COLOR_CARD, fg=COLOR_DANGER,
                                font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=6, cursor="hand2", command=self._unpair_selected_device)
         btn_unpair.pack(anchor=tk.E)
+
+    def _open_settings_modal(self):
+        modal = tk.Toplevel(self.root)
+        modal.title("DexoLink — Settings & Feature Controls")
+        modal.geometry("560x620")
+        modal.minsize(500, 520)
+        modal.configure(bg=COLOR_BG)
+        modal.transient(self.root)
+        modal.grab_set()
+
+        # Modal Header
+        m_head = tk.Frame(modal, bg=COLOR_BG, padx=20, pady=16)
+        m_head.pack(fill=tk.X)
+
+        m_title_box = tk.Frame(m_head, bg=COLOR_BG)
+        m_title_box.pack(side=tk.LEFT)
+        tk.Label(m_title_box, text="⚙️ Settings & Feature Controls", font=("Segoe UI", 14, "bold"), fg=COLOR_TEXT, bg=COLOR_BG).pack(anchor=tk.W)
+        tk.Label(m_title_box, text="Manage all sync features, security policies, and network preferences", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG).pack(anchor=tk.W, pady=(2, 0))
+
+        # Scrollable Canvas / Card Container
+        canvas = tk.Canvas(modal, bg=COLOR_BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(modal, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=COLOR_BG, padx=20, pady=4)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 1. CORE FEATURE CONTROLS
+        sec_core = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        sec_core.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(sec_core, text="CORE FEATURES", font=("Segoe UI", 9, "bold"), fg=COLOR_CYAN, bg=COLOR_CARD).pack(anchor=tk.W, pady=(0, 6))
+
+        # Continuity
+        chk_cont = tk.Checkbutton(sec_core, text="Continuity / Handoff", variable=self.continuity_var,
+                                  command=self._on_toggle_continuity, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                  activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_cont.pack(anchor=tk.W)
+        tk.Label(sec_core, text="Seamlessly open web pages and documents across your Mac, iPhone, and Android.",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W, pady=(0, 8))
+
+        # Auto Clipboard Sync
+        chk_clip = tk.Checkbutton(sec_core, text="Auto Clipboard Sync", variable=self.auto_sync_clip_var,
+                                  command=self._on_toggle_auto_sync_clip, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                  activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_clip.pack(anchor=tk.W)
+        tk.Label(sec_core, text="Instantly mirror copied text to all paired devices over secure local WiFi.",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W, pady=(0, 8))
+
+        # Enhanced Clipboard
+        chk_enh = tk.Checkbutton(sec_core, text="Enhanced Clipboard (BETA — Rich Text & Images)", variable=self.enhanced_clip_var,
+                                 command=self._on_toggle_enhanced_clip, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                 activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_enh.pack(anchor=tk.W)
+        tk.Label(sec_core, text="Supports rich formatted text, HTML, and image synchronization across platforms.",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W, pady=(0, 8))
+
+        # Multiple Paired Devices
+        chk_multi = tk.Checkbutton(sec_core, text="Multiple Paired Devices (OFF by default)", variable=self.multi_paired_var,
+                                   command=self._on_toggle_multi_paired, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                   activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_multi.pack(anchor=tk.W)
+        tk.Label(sec_core, text="OFF by default (strict single-device mode). When ON, allows multiple trusted devices to connect simultaneously.",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W)
+
+        # 2. DISCOVERY & NETWORK
+        sec_net = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        sec_net.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(sec_net, text="DISCOVERY & NETWORK", font=("Segoe UI", 9, "bold"), fg=COLOR_CYAN, bg=COLOR_CARD).pack(anchor=tk.W, pady=(0, 6))
+
+        chk_disc = tk.Checkbutton(sec_net, text="Auto Device Discovery (UDP Beacons)", variable=self.auto_discovery_var,
+                                  command=self._on_toggle_auto_discovery, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                  activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_disc.pack(anchor=tk.W)
+        tk.Label(sec_net, text="Broadcast and listen on port 52841 for instant Zero-Config peer detection.",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W, pady=(0, 8))
+
+        chk_acc = tk.Checkbutton(sec_net, text="Auto-Accept from Paired Devices", variable=self.auto_accept_var,
+                                 command=self._on_toggle_auto_accept, fg=COLOR_TEXT, bg=COLOR_CARD, selectcolor=COLOR_BG,
+                                 activebackground=COLOR_CARD, font=("Segoe UI", 10, "bold"))
+        chk_acc.pack(anchor=tk.W)
+        tk.Label(sec_net, text="Automatically receive transfers from trusted paired devices without prompting.",
+                 font=("Segoe UI", 8), fg=COLOR_MUTED, bg=COLOR_CARD, padx=24).pack(anchor=tk.W)
+
+        # 3. STORAGE & DOWNLOADS
+        sec_storage = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        sec_storage.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(sec_storage, text="STORAGE & RECEIVED FILES", font=("Segoe UI", 9, "bold"), fg=COLOR_CYAN, bg=COLOR_CARD).pack(anchor=tk.W, pady=(0, 6))
+        
+        self.lbl_down_path = tk.Label(sec_storage, text=f"Downloads: {self.engine.download_dir}", font=("Segoe UI", 9), fg=COLOR_TEXT, bg=COLOR_CARD)
+        self.lbl_down_path.pack(anchor=tk.W, pady=(0, 6))
+
+        storage_btns = tk.Frame(sec_storage, bg=COLOR_CARD)
+        storage_btns.pack(fill=tk.X)
+
+        btn_open = tk.Button(storage_btns, text="📂 Open Folder", bg=COLOR_BG, fg=COLOR_CYAN,
+                             font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=4, cursor="hand2", command=self._open_downloads)
+        btn_open.pack(side=tk.LEFT, padx=(0, 8))
+
+        btn_change = tk.Button(storage_btns, text="Change Folder...", bg=COLOR_BG, fg=COLOR_TEXT,
+                              font=("Segoe UI", 9), relief="flat", padx=10, pady=4, cursor="hand2", command=self._change_downloads)
+        btn_change.pack(side=tk.LEFT)
+
+        # 4. FUTURE FEATURE CONTROLS
+        sec_future = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
+        sec_future.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(sec_future, text="EXTENSIBLE FEATURE ARCHITECTURE", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_CARD).pack(anchor=tk.W, pady=(0, 4))
+        tk.Label(sec_future, text="✦ New feature toggles and experimental protocols automatically register here cleanly.",
+                 font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD).pack(anchor=tk.W)
+
+        # 5. FOOTER / DONE
+        footer = tk.Frame(modal, bg=COLOR_BG, padx=20, pady=14)
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+
+        lbl_info = tk.Label(footer, text="DexoLink v4.0.0 • Native Engine Active", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG)
+        lbl_info.pack(side=tk.LEFT)
+
+        btn_done = tk.Button(footer, text="Done", bg=COLOR_ACCENT, fg=COLOR_TEXT, activebackground=COLOR_ACCENT_HOVER,
+                             font=("Segoe UI", 10, "bold"), relief="flat", padx=20, pady=6, cursor="hand2", command=modal.destroy)
+        btn_done.pack(side=tk.RIGHT)
+
+    def _on_toggle_continuity(self):
+        self.engine.continuity_enabled = self.continuity_var.get()
+
+    def _on_toggle_auto_sync_clip(self):
+        self.engine.clipboard_sync_enabled = self.auto_sync_clip_var.get()
+
+    def _on_toggle_enhanced_clip(self):
+        self.engine.enhanced_clipboard_enabled = self.enhanced_clip_var.get()
+
+    def _on_toggle_auto_discovery(self):
+        self.engine.auto_discovery_enabled = self.auto_discovery_var.get()
+
+    def _on_toggle_auto_accept(self):
+        self.engine.auto_accept_enabled = self.auto_accept_var.get()
+
+    def _change_downloads(self):
+        new_dir = filedialog.askdirectory(title="Select DexoLink Downloads Directory")
+        if new_dir:
+            self.engine.download_dir = new_dir
+            if hasattr(self, "lbl_down_path"):
+                self.lbl_down_path.config(text=f"Downloads: {new_dir}")
 
     def _on_toggle_multi_paired(self):
         val = self.multi_paired_var.get()

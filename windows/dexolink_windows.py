@@ -266,6 +266,12 @@ class DexoLinkWindowsEngine:
         self.discovered_devices: Dict[str, Dict[str, Any]] = {}
         self.download_dir = os.path.expanduser("~/Downloads/DexoLink")
         os.makedirs(self.download_dir, exist_ok=True)
+        # Feature state toggles (extensible architecture)
+        self.continuity_enabled = True
+        self.clipboard_sync_enabled = True
+        self.enhanced_clipboard_enabled = False
+        self.auto_discovery_enabled = True
+        self.auto_accept_enabled = True
         # Event callbacks for GUI
         self.on_device_discovered = None
         self.on_device_connected = None
@@ -385,6 +391,8 @@ class DexoLinkWindowsEngine:
             }, sender_id
 
         elif msg_type == "CLIPBOARD_PUSH":
+            if not self.clipboard_sync_enabled:
+                return {"type": "CLIPBOARD_ACK", "status": "disabled"}, None
             seq = msg.get("sequenceNumber", 0)
             content = msg.get("content", "")
             h = self.clipboard.compute_hash(content)
@@ -395,6 +403,8 @@ class DexoLinkWindowsEngine:
             return {"type": "CLIPBOARD_ACK", "sequenceNumber": seq}, None
 
         elif msg_type == "CONTINUITY_ACTIVITY":
+            if not self.continuity_enabled:
+                return {"type": "CONTINUITY_ACK", "status": "disabled"}, None
             act_id = msg.get("activityId", str(uuid.uuid4()))
             act_type = msg.get("activityType", "")
             url = msg.get("url")
@@ -629,6 +639,8 @@ class DexoLinkWindowsEngine:
             sock.bind(("", BEACON_PORT))
             while self.running:
                 data, addr = sock.recvfrom(2048)
+                if not self.auto_discovery_enabled:
+                    continue
                 try:
                     payload = json.loads(data.decode("utf-8"))
                     dev_id = payload.get("deviceId")

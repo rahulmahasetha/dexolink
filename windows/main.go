@@ -113,15 +113,20 @@ func (ts *TrustStore) SetMultiPaired(enabled bool) {
 
 // DexoLinkEngine manages connections, transfers, and discovery
 type DexoLinkEngine struct {
-	DeviceID          string
-	DeviceName        string
-	TrustStore        *TrustStore
-	DiscoveredDevices sync.Map // map[string]DeviceInfo
-	ActiveConnections sync.Map // map[string]net.Conn
-	DownloadDir       string
-	mu                sync.Mutex
-	History           []TransferRecord
-	ClipboardHistory  []string
+	DeviceID             string
+	DeviceName           string
+	TrustStore           *TrustStore
+	DiscoveredDevices    sync.Map // map[string]DeviceInfo
+	ActiveConnections    sync.Map // map[string]net.Conn
+	DownloadDir          string
+	mu                   sync.Mutex
+	History              []TransferRecord
+	ClipboardHistory     []string
+	ContinuityEnabled    bool
+	AutoClipboardSync    bool
+	EnhancedClipboard    bool
+	AutoDiscoveryEnabled bool
+	AutoAcceptPaired     bool
 }
 
 type TransferRecord struct {
@@ -145,12 +150,17 @@ func initEngine() *DexoLinkEngine {
 	devID := fmt.Sprintf("win_%x", time.Now().UnixNano())[:16]
 
 	e := &DexoLinkEngine{
-		DeviceID:         devID,
-		DeviceName:       fmt.Sprintf("Windows PC (%s)", host),
-		TrustStore:       NewTrustStore(),
-		DownloadDir:      downDir,
-		History:          make([]TransferRecord, 0),
-		ClipboardHistory: make([]string, 0),
+		DeviceID:             devID,
+		DeviceName:           fmt.Sprintf("Windows PC (%s)", host),
+		TrustStore:           NewTrustStore(),
+		DownloadDir:          downDir,
+		History:              make([]TransferRecord, 0),
+		ClipboardHistory:     make([]string, 0),
+		ContinuityEnabled:    true,
+		AutoClipboardSync:    true,
+		EnhancedClipboard:    false,
+		AutoDiscoveryEnabled: true,
+		AutoAcceptPaired:     true,
 	}
 	return e
 }
@@ -356,7 +366,12 @@ func (e *DexoLinkEngine) startUDPBeacon() {
 	})
 
 	for {
-		_, _ = conn.Write(beacon)
+		e.mu.Lock()
+		disc := e.AutoDiscoveryEnabled
+		e.mu.Unlock()
+		if disc {
+			_, _ = conn.Write(beacon)
+		}
 		time.Sleep(3 * time.Second)
 	}
 }
@@ -373,6 +388,12 @@ func (e *DexoLinkEngine) startUDPListener() {
 		n, addr, err := l.ReadFromUDP(buf)
 		if err != nil {
 			break
+		}
+		e.mu.Lock()
+		disc := e.AutoDiscoveryEnabled
+		e.mu.Unlock()
+		if !disc {
+			continue
 		}
 		var payload map[string]any
 		if err := json.Unmarshal(buf[:n], &payload); err == nil {
@@ -543,6 +564,11 @@ func startWebDashboard() {
 		engine.mu.Lock()
 		history := engine.History
 		clipHistory := engine.ClipboardHistory
+		contEnabled := engine.ContinuityEnabled
+		autoClip := engine.AutoClipboardSync
+		enhClip := engine.EnhancedClipboard
+		autoDisc := engine.AutoDiscoveryEnabled
+		autoAcc := engine.AutoAcceptPaired
 		engine.mu.Unlock()
 
 		json.NewEncoder(w).Encode(map[string]any{
@@ -556,7 +582,32 @@ func startWebDashboard() {
 			"transfer_history":    history,
 			"clipboard_history":   clipHistory,
 			"download_dir":        engine.DownloadDir,
+			"continuity_enabled":  contEnabled,
+			"auto_clipboard_sync": autoClip,
+			"enhanced_clipboard":  enhClip,
+			"auto_discovery":      autoDisc,
+			"auto_accept_paired":  autoAcc,
 		})
+	})
+
+	http.HandleFunc("/api/toggle-feature", func(w http.ResponseWriter, r *http.Request) {
+		feature := r.URL.Query().Get("feature")
+		enabled := r.URL.Query().Get("enabled") == "true"
+		engine.mu.Lock()
+		switch feature {
+		case "continuity":
+			engine.ContinuityEnabled = enabled
+		case "clipboard":
+			engine.AutoClipboardSync = enabled
+		case "enhanced_clip":
+			engine.EnhancedClipboard = enabled
+		case "auto_discovery":
+			engine.AutoDiscoveryEnabled = enabled
+		case "auto_accept":
+			engine.AutoAcceptPaired = enabled
+		}
+		engine.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	})
 
 	http.HandleFunc("/api/toggle-multi-paired", func(w http.ResponseWriter, r *http.Request) {
@@ -578,8 +629,16 @@ func startWebDashboard() {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.Text != "" {
 			engine.mu.Lock()
-			engine.ClipboardHistory = append([]string{body.Text}, engine.ClipboardHistory...)
+			clipEnabled := engine.AutoClipboardSync
+			if clipEnabled {
+				engine.ClipboardHistory = append([]string{body.Text}, engine.ClipboardHistory...)
+			}
 			engine.mu.Unlock()
+
+			if !clipEnabled {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 
 			msg, _ := encodeMessage(map[string]any{
 				"type":           "CLIPBOARD_PUSH",
@@ -601,6 +660,15 @@ func startWebDashboard() {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.URL != "" {
+			engine.mu.Lock()
+			contEnabled := engine.ContinuityEnabled
+			engine.mu.Unlock()
+
+			if !contEnabled {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
 			msg, _ := encodeMessage(map[string]any{
 				"type":           "CONTINUITY_ACTIVITY",
 				"activityId":     fmt.Sprintf("act_%d", time.Now().UnixNano()),
@@ -684,9 +752,14 @@ const webUIHTML = `<!DOCTYPE html>
       <h1>⚡ DexoLink</h1>
       <span class="badge">v4.0.0 (Windows App)</span>
     </div>
-    <div class="status-pill">
-      <div class="status-dot"></div>
-      <span id="devName">Windows PC (Ready)</span>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div class="status-pill">
+        <div class="status-dot"></div>
+        <span id="devName">Windows PC (Ready)</span>
+      </div>
+      <button class="btn" onclick="openSettingsModal()" style="display:flex; align-items:center; gap:6px; background:var(--card); border:1px solid var(--border); color:var(--text); padding:7px 14px; font-size:12px; font-weight:700; border-radius:8px; cursor:pointer;">
+        ⚙️ Settings
+      </button>
     </div>
   </div>
 
@@ -733,6 +806,9 @@ const webUIHTML = `<!DOCTYPE html>
         </div>
         <input type="checkbox" id="multiToggle" onchange="toggleMulti(this.checked)">
       </div>
+      <button class="btn" onclick="openSettingsModal()" style="width:100%; margin-top:10px; background:var(--bg); border:1px solid var(--border); font-size:12px; color:var(--cyan);">
+        ⚙️ Open Dedicated Settings & All Feature Controls
+      </button>
       <h3 style="font-size:13px; margin-top:12px; margin-bottom:6px;">Paired Devices</h3>
       <ul class="list" id="pairedList">
         <li class="muted">Scanning local network...</li>
@@ -740,13 +816,120 @@ const webUIHTML = `<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Dedicated Settings Modal -->
+  <div id="settingsModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(15,23,42,0.85); backdrop-filter:blur(6px); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:var(--card); border:1px solid var(--border); border-radius:14px; width:92%; max-width:540px; max-height:85vh; overflow-y:auto; padding:24px; box-shadow:0 16px 40px rgba(0,0,0,0.6);">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:18px;">
+        <div>
+          <h2 style="font-size:18px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:8px;">⚙️ DexoLink Settings</h2>
+          <p class="muted" style="margin-top:2px;">All feature controls, security rules, and device preferences</p>
+        </div>
+        <button class="btn" onclick="closeSettingsModal()" style="padding:6px 12px; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--muted); cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Core Features Section -->
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-bottom:8px; letter-spacing:0.5px;">Core Feature Controls</div>
+      
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Continuity / Handoff</div>
+          <div class="muted">Seamlessly open web pages and links across paired devices</div>
+        </div>
+        <input type="checkbox" id="modalContinuityToggle" onchange="toggleFeature('continuity', this.checked)">
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Auto Clipboard Sync</div>
+          <div class="muted">Mirror copied text instantly over secure local Wi-Fi</div>
+        </div>
+        <input type="checkbox" id="modalClipToggle" onchange="toggleFeature('clipboard', this.checked)">
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Enhanced Clipboard (BETA)</div>
+          <div class="muted">Support rich formatted text, HTML, and image synchronization</div>
+        </div>
+        <input type="checkbox" id="modalEnhancedToggle" onchange="toggleFeature('enhanced_clip', this.checked)">
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Multiple Paired Devices</div>
+          <div class="muted">OFF by default (Single-device mode). Allows multi-peer connectivity when ON.</div>
+        </div>
+        <input type="checkbox" id="modalMultiToggle" onchange="toggleMulti(this.checked)">
+      </div>
+
+      <!-- Discovery & Network Section -->
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Discovery & Network</div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Auto Wi-Fi Discovery</div>
+          <div class="muted">UDP broadcast & listen on port 52841 for zero-config pairing</div>
+        </div>
+        <input type="checkbox" id="modalDiscoveryToggle" onchange="toggleFeature('auto_discovery', this.checked)">
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:13px;">Auto-Accept Paired Transfers</div>
+          <div class="muted">Automatically accept transfers from trusted paired devices</div>
+        </div>
+        <input type="checkbox" id="modalAcceptToggle" onchange="toggleFeature('auto_accept', this.checked)">
+      </div>
+
+      <!-- Storage Section -->
+      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Storage & Received Files</div>
+      <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:8px;">
+        <div class="muted" style="font-size:11px; margin-bottom:4px;">Received Downloads Location:</div>
+        <div id="modalDownPath" style="font-size:12px; font-family:monospace; color:var(--cyan); word-break:break-all;">~/Downloads/DexoLink</div>
+      </div>
+
+      <!-- Extensible Future Toggles Container -->
+      <div style="font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; margin-top:20px; margin-bottom:8px; letter-spacing:0.5px;">Extensible Future Features</div>
+      <div style="background:rgba(56,189,248,0.05); border:1px dashed var(--border); border-radius:8px; padding:12px;">
+        <div class="muted" style="font-size:12px;">✦ Future feature toggles and experimental protocols automatically register into this dedicated panel.</div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:22px; padding-top:14px; border-top:1px solid var(--border);">
+        <span class="muted">v4.0.0 • Port 52840</span>
+        <button class="btn" onclick="closeSettingsModal()" style="padding:8px 24px;">Done</button>
+      </div>
+    </div>
+  </div>
+
   <script>
+    function openSettingsModal() {
+      document.getElementById('settingsModal').style.display = 'flex';
+    }
+    function closeSettingsModal() {
+      document.getElementById('settingsModal').style.display = 'none';
+    }
+    async function toggleFeature(feat, val) {
+      await fetch('/api/toggle-feature?feature=' + feat + '&enabled=' + val);
+      loadStatus();
+    }
+
     async function loadStatus() {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
         document.getElementById('devName').innerText = data.deviceName + ' (Port ' + data.port + ')';
         document.getElementById('multiToggle').checked = data.multiple_paired;
+
+        if (document.getElementById('modalContinuityToggle')) {
+          document.getElementById('modalContinuityToggle').checked = data.continuity_enabled;
+          document.getElementById('modalClipToggle').checked = data.auto_clipboard_sync;
+          document.getElementById('modalEnhancedToggle').checked = data.enhanced_clipboard;
+          document.getElementById('modalMultiToggle').checked = data.multiple_paired;
+          document.getElementById('modalDiscoveryToggle').checked = data.auto_discovery;
+          document.getElementById('modalAcceptToggle').checked = data.auto_accept_paired;
+          document.getElementById('modalDownPath').innerText = data.download_dir;
+        }
 
         // Paired devices
         const pList = document.getElementById('pairedList');

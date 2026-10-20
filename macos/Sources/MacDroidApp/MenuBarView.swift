@@ -12,6 +12,7 @@ struct MenuBarView: View {
     @State private var manualPort = "52840"
     @State private var isTargetedForDrop = false
     @State private var showHandoffSheet = false
+    @State private var showSettingsSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,15 @@ struct MenuBarView: View {
                     .fontWeight(.bold)
 
                 Spacer()
+
+                Button(action: {
+                    showSettingsSheet.toggle()
+                }) {
+                    Image(systemName: "gearshape.fill")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Settings & All Feature Controls")
 
                 Button(action: {
                     historyInitialTab = 0
@@ -543,88 +553,58 @@ struct MenuBarView: View {
                     .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
                     .cornerRadius(10)
 
-                    // MARK: - Feature Controls (Compact & Extensible Architecture for Continuity, Clipboard Sync, and Future Features)
-                    if isConnected {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Feature Controls")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-
-                            VStack(spacing: 6) {
-                                // 1. Continuity (Handoff)
-                                CompactFeatureControl(
-                                    title: "Continuity (Handoff)",
-                                    subtitle: appState.continuityManager.incomingActivity != nil ? "Incoming activity ready to open" : "Continue reading PDFs, docs & web across devices",
-                                    icon: "arrow.triangle.2.circlepath.circle.fill",
-                                    tintColor: .cyan,
-                                    isEnabled: appState.continuityManager.isEnabled,
-                                    onToggle: {
-                                        appState.continuityManager.isEnabled.toggle()
-                                    },
-                                    actionTitle: "Handoff...",
-                                    actionIcon: "paperplane.fill",
-                                    onAction: {
-                                        showHandoffSheet = true
-                                    }
-                                )
-
-                                // 2. Auto Clipboard Sync
-                                CompactFeatureControl(
-                                    title: "Auto Clipboard Sync",
-                                    subtitle: appState.lastSyncedClipboardSnippet.map { "Synced: \"\($0.prefix(22))...\"" } ?? "Bidirectional text & links",
-                                    icon: "doc.on.clipboard.fill",
-                                    tintColor: .green,
-                                    isEnabled: appState.isClipboardSyncEnabled,
-                                    onToggle: {
-                                        appState.toggleClipboardSync()
-                                    },
-                                    actionTitle: "History",
-                                    actionIcon: "clock.arrow.circlepath",
-                                    onAction: {
-                                        historyInitialTab = 1
-                                        showHistorySheet = true
-                                    },
-                                    secondaryActionTitle: appState.lastPingLatencyMs != nil ? "\(appState.lastPingLatencyMs!)ms" : "Ping",
-                                    secondaryActionIcon: "bolt.fill",
-                                    onSecondaryAction: {
-                                        appState.sendPing()
-                                    }
-                                )
-
-                                // 3. Enhanced Clipboard (Extensible for all future features)
-                                CompactFeatureControl(
-                                    title: "Enhanced Clipboard",
-                                    subtitle: "Rich HTML & multi-MIME paste compatibility",
-                                    icon: "sparkles",
-                                    tintColor: .purple,
-                                    badgeText: "BETA",
-                                    isEnabled: appState.isEnhancedClipboardEnabled,
-                                    onToggle: {
-                                        appState.setEnhancedClipboardEnabled(!appState.isEnhancedClipboardEnabled)
-                                    }
-                                )
-
-                                // 4. Multiple Paired Devices
-                                CompactFeatureControl(
-                                    title: "Multiple Paired Devices",
-                                    subtitle: appState.isMultiplePairedDevicesEnabled ? "Connect multiple devices simultaneously" : "Single device mode (Strict 1-device policy)",
-                                    icon: "person.2.badge.key.fill",
-                                    tintColor: .indigo,
-                                    isEnabled: appState.isMultiplePairedDevicesEnabled,
-                                    onToggle: {
-                                        appState.toggleMultiplePairedDevices()
-                                    }
-                                )
-                            }
+                    // MARK: - Feature Controls Overview & Settings Link
+                    HStack(spacing: 8) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.cyan.opacity(0.16))
+                                .frame(width: 28, height: 28)
+                            Image(systemName: "gearshape.2.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.cyan)
                         }
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                        .cornerRadius(10)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Text("Feature Controls")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("4 Active")
+                                    .font(.system(size: 8, weight: .heavy))
+                                    .foregroundColor(.cyan)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.cyan.opacity(0.12)))
+                            }
+
+                            Text("Continuity • Clipboard • Enhanced • Multi-Device")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Button(action: {
+                            showSettingsSheet = true
+                        }) {
+                            HStack(spacing: 3) {
+                                Text("Configure")
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.cyan.opacity(0.12))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open dedicated Settings view containing all feature controls")
                     }
+                    .padding(8)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    .cornerRadius(10)
 
                     // MARK: - Nearby Discovered Devices
                     VStack(alignment: .leading, spacing: 6) {
@@ -761,6 +741,12 @@ struct MenuBarView: View {
             HandoffSheetView(
                 appState: appState,
                 isPresented: $showHandoffSheet
+            )
+        }
+        .sheet(isPresented: $showSettingsSheet) {
+            SettingsSheetView(
+                appState: appState,
+                isPresented: $showSettingsSheet
             )
         }
     }
@@ -1935,5 +1921,251 @@ struct CompactFeatureControl: View {
         )
     }
 }
+
+// MARK: - Dedicated Settings & Feature Controls Sheet
+struct SettingsSheetView: View {
+    @ObservedObject var appState: AppState
+    @Binding var isPresented: Bool
+    @State private var showHandoffSheet = false
+    @State private var showHistorySheet = false
+    @State private var historyInitialTab = 1
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape.fill")
+                    .foregroundColor(.cyan)
+                    .font(.title3)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Settings")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                    Text("Feature Controls & System Preferences")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Button("Done") {
+                    isPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 14) {
+                    // Section 1: Core Feature Controls
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "switch.2")
+                                .foregroundColor(.cyan)
+                                .font(.caption)
+                            Text("Core Feature Controls")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+
+                        VStack(spacing: 8) {
+                            // 1. Continuity (Handoff)
+                            CompactFeatureControl(
+                                title: "Continuity (Handoff)",
+                                subtitle: appState.continuityManager.incomingActivity != nil ? "Incoming activity ready to open" : "Continue reading PDFs, docs & web across devices",
+                                icon: "arrow.triangle.2.circlepath.circle.fill",
+                                tintColor: .cyan,
+                                isEnabled: appState.continuityManager.isEnabled,
+                                onToggle: {
+                                    appState.continuityManager.isEnabled.toggle()
+                                },
+                                actionTitle: "Send...",
+                                actionIcon: "paperplane.fill",
+                                onAction: {
+                                    showHandoffSheet = true
+                                }
+                            )
+
+                            // 2. Auto Clipboard Sync
+                            CompactFeatureControl(
+                                title: "Auto Clipboard Sync",
+                                subtitle: appState.lastSyncedClipboardSnippet.map { "Synced: \"\($0.prefix(22))...\"" } ?? "Bidirectional text & links synchronization",
+                                icon: "doc.on.clipboard.fill",
+                                tintColor: .green,
+                                isEnabled: appState.isClipboardSyncEnabled,
+                                onToggle: {
+                                    appState.toggleClipboardSync()
+                                },
+                                actionTitle: "History",
+                                actionIcon: "clock.arrow.circlepath",
+                                onAction: {
+                                    historyInitialTab = 1
+                                    showHistorySheet = true
+                                },
+                                secondaryActionTitle: appState.lastPingLatencyMs != nil ? "\(appState.lastPingLatencyMs!)ms" : "Ping",
+                                secondaryActionIcon: "bolt.fill",
+                                onSecondaryAction: {
+                                    appState.sendPing()
+                                }
+                            )
+
+                            // 3. Enhanced Clipboard
+                            CompactFeatureControl(
+                                title: "Enhanced Clipboard",
+                                subtitle: "Rich HTML & multi-MIME paste compatibility across restricted apps",
+                                icon: "sparkles",
+                                tintColor: .purple,
+                                badgeText: "BETA",
+                                isEnabled: appState.isEnhancedClipboardEnabled,
+                                onToggle: {
+                                    appState.setEnhancedClipboardEnabled(!appState.isEnhancedClipboardEnabled)
+                                }
+                            )
+
+                            // 4. Multiple Paired Devices
+                            CompactFeatureControl(
+                                title: "Multiple Paired Devices",
+                                subtitle: appState.isMultiplePairedDevicesEnabled ? "Connect multiple devices simultaneously" : "Single device mode (Strict 1-device policy - OFF by default)",
+                                icon: "person.2.badge.key.fill",
+                                tintColor: .indigo,
+                                isEnabled: appState.isMultiplePairedDevicesEnabled,
+                                onToggle: {
+                                    appState.toggleMultiplePairedDevices()
+                                }
+                            )
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                        .cornerRadius(10)
+                    }
+
+                    // Section 2: Wi-Fi Discovery & Network Preferences
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "network")
+                                .foregroundColor(.blue)
+                                .font(.caption)
+                            Text("Discovery & Network")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+
+                        VStack(spacing: 8) {
+                            CompactFeatureControl(
+                                title: "Auto Wi-Fi Discovery",
+                                subtitle: appState.discoveryEnabled ? "Broadcasting and listening on local subnet" : "Discovery paused to conserve battery",
+                                icon: "antenna.radiowaves.left.and.right",
+                                tintColor: .blue,
+                                isEnabled: appState.discoveryEnabled,
+                                onToggle: {
+                                    appState.setDiscoveryEnabled(!appState.discoveryEnabled)
+                                }
+                            )
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                        .cornerRadius(10)
+                    }
+
+                    // Section 3: File Storage Preferences
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "folder.fill")
+                                .foregroundColor(.orange)
+                                .font(.caption)
+                            Text("Received Files Storage")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Downloads Directory")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(appState.transferManager.downloadDirectory.path)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                            Button("Show in Finder") {
+                                NSWorkspace.shared.open(appState.transferManager.downloadDirectory)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                        .cornerRadius(10)
+                    }
+
+                    // Section 4: Extensible Architecture for Future Feature Toggles
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                            Text("Extensible Architecture")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+
+                        HStack {
+                            Text("All future toggles and capability flags dynamically mount in this central settings view.")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+                        .cornerRadius(10)
+                    }
+
+                    // Section 5: About & System Info
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("About DexoLink")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("v4.0.0")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.cyan)
+                        }
+
+                        HStack {
+                            Text("Port 52840 (TCP) • Port 52841 (UDP Beacon)")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("Developed by Rahul Mahaseth")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+                    .cornerRadius(10)
+                }
+                .padding(12)
+            }
+        }
+        .frame(width: 360, height: 500)
+        .sheet(isPresented: $showHandoffSheet) {
+            HandoffSheetView(appState: appState, isPresented: $showHandoffSheet)
+        }
+        .sheet(isPresented: $showHistorySheet) {
+            HistorySheetView(appState: appState, isPresented: $showHistorySheet, selectedTab: historyInitialTab)
+        }
+    }
+}
+
 
 
