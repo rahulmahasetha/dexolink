@@ -32,10 +32,10 @@ const (
 
 // TrustStore holds paired trusted devices
 type TrustStore struct {
-	mu                         sync.Mutex
-	MultiplePairedDevices      bool                  `json:"multiple_paired_devices_enabled"`
-	PairedDevices              map[string]DeviceInfo `json:"paired_devices"`
-	filePath                   string
+	mu                    sync.Mutex
+	MultiplePairedDevices bool                  `json:"multiple_paired_devices_enabled"`
+	PairedDevices         map[string]DeviceInfo `json:"paired_devices"`
+	filePath              string
 }
 
 type DeviceInfo struct {
@@ -49,17 +49,21 @@ type DeviceInfo struct {
 
 func NewTrustStore() *TrustStore {
 	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".dexolink_trust.json")
+	storeDir := filepath.Join(home, ".dexolink")
+	_ = os.MkdirAll(storeDir, 0755)
+	storePath := filepath.Join(storeDir, "trust_store.json")
+
 	ts := &TrustStore{
-		MultiplePairedDevices: false,
-		PairedDevices:         make(map[string]DeviceInfo),
-		filePath:              path,
+		PairedDevices: make(map[string]DeviceInfo),
+		filePath:      storePath,
 	}
 	ts.load()
 	return ts
 }
 
 func (ts *TrustStore) load() {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	data, err := os.ReadFile(ts.filePath)
 	if err == nil {
 		_ = json.Unmarshal(data, ts)
@@ -82,7 +86,6 @@ func (ts *TrustStore) AddDevice(dev DeviceInfo) {
 	if !ts.MultiplePairedDevices {
 		ts.PairedDevices = make(map[string]DeviceInfo)
 	}
-	dev.PairedAt = float64(time.Now().Unix())
 	ts.PairedDevices[dev.DeviceID] = dev
 	ts.save()
 }
@@ -90,11 +93,7 @@ func (ts *TrustStore) AddDevice(dev DeviceInfo) {
 func (ts *TrustStore) RemoveDevice(id string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if id == "" {
-		ts.PairedDevices = make(map[string]DeviceInfo)
-	} else {
-		delete(ts.PairedDevices, id)
-	}
+	delete(ts.PairedDevices, id)
 	ts.save()
 }
 
@@ -131,20 +130,30 @@ type DexoLinkEngine struct {
 	EnhancedClipboard    bool
 	AutoDiscoveryEnabled bool
 	AutoAcceptPaired     bool
-	// v4.0.1: Media Streaming & Remote Control (OFF by default)
 	CameraSharingEnabled bool
 	ScreenSharingEnabled bool
 	DesktopModeEnabled  bool
+
+	// Active Stream State
+	ActiveStreamMu     sync.RWMutex
+	ActiveStreamID     string
+	ActiveStreamType   string // "camera" or "screen"
+	ActiveStreamDevice string
+	LatestFrameBase64  string
+	LatestFrameTime    time.Time
+	FrameSequence      int64
+	StreamClientsMu    sync.Mutex
+	StreamClients      map[chan string]bool
 }
 
 type TransferRecord struct {
-	ID        string    `json:"id"`
-	FileName  string    `json:"file_name"`
-	Size      int64     `json:"size"`
-	IsIncoming bool     `json:"is_incoming"`
-	PeerName  string    `json:"peer_name"`
-	Success   bool      `json:"success"`
-	Time      time.Time `json:"time"`
+	ID         string    `json:"id"`
+	FileName   string    `json:"file_name"`
+	Size       int64     `json:"size"`
+	IsIncoming bool      `json:"is_incoming"`
+	PeerName   string    `json:"peer_name"`
+	Success    bool      `json:"success"`
+	Time       time.Time `json:"time"`
 }
 
 var engine *DexoLinkEngine
@@ -173,7 +182,9 @@ func initEngine() *DexoLinkEngine {
 		CameraSharingEnabled: false,
 		ScreenSharingEnabled: false,
 		DesktopModeEnabled:  false,
+		StreamClients:        make(map[chan string]bool),
 	}
+	e.startAutoConnectWorker()
 	return e
 }
 
@@ -191,11 +202,15 @@ func encodeMessage(payload any) ([]byte, error) {
 
 func encodeFileChunk(fileID string, offset int64, chunk []byte) ([]byte, error) {
 	meta := map[string]any{
-		"type":   "FILE_CHUNK",
-		"fileId": fileID,
-		"offset": offset,
+		"type":     "FILE_CHUNK",
+		"fileId":   fileID,
+		"offset":   offset,
+		"chunkLen": len(chunk),
 	}
-	metaBytes, _ := json.Marshal(meta)
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
 	payloadLen := 2 + len(metaBytes) + len(chunk)
 	buf := make([]byte, 4+payloadLen)
 	binary.BigEndian.PutUint32(buf[:4], uint32(payloadLen))
@@ -254,7 +269,6 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			if int(2+metaLen) <= len(buf) {
 				var meta map[string]any
 				if err := json.Unmarshal(buf[2:2+metaLen], &meta); err == nil && meta["type"] == "FILE_CHUNK" {
-					// Binary chunk
 					continue
 				}
 			}
@@ -294,6 +308,20 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			})
 			_, _ = conn.Write(resp)
 
+		case "HELLO_ACK":
+			pID, _ := msg["deviceId"].(string)
+			pName, _ := msg["deviceName"].(string)
+			if pID != "" {
+				peerID = pID
+				e.ActiveConnections.Store(peerID, conn)
+				e.DiscoveredDevices.Store(peerID, DeviceInfo{
+					DeviceID:   peerID,
+					DeviceName: pName,
+					IP:         strings.Split(conn.RemoteAddr().String(), ":")[0],
+					Port:       DefaultPort,
+				})
+			}
+
 		case "PAIR_REQUEST":
 			pID, _ := msg["deviceId"].(string)
 			pName, _ := msg["deviceName"].(string)
@@ -306,6 +334,9 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			e.TrustStore.AddDevice(DeviceInfo{
 				DeviceID:   pID,
 				DeviceName: pName,
+				IP:         strings.Split(conn.RemoteAddr().String(), ":")[0],
+				Port:       DefaultPort,
+				PairedAt:   float64(time.Now().Unix()),
 			})
 			resp, _ := encodeMessage(map[string]any{
 				"type":      "PAIR_RESPONSE",
@@ -358,7 +389,7 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 		case "STREAM_REQUEST":
 			streamID, _ := msg["streamId"].(string)
 			streamType, _ := msg["streamType"].(string)
-			accepted := false
+			accepted := true
 			reason := ""
 
 			e.mu.Lock()
@@ -367,24 +398,15 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			desk := e.DesktopModeEnabled
 			e.mu.Unlock()
 
-			if streamType == "camera" {
-				if cam {
-					accepted = true
-				} else {
-					reason = "Camera Sharing is turned OFF in Windows Settings."
-				}
-			} else if streamType == "screen" {
-				if screen {
-					accepted = true
-				} else {
-					reason = "Screen Sharing is turned OFF in Windows Settings."
-				}
-			} else if streamType == "desktop" {
-				if desk {
-					accepted = true
-				} else {
-					reason = "Desktop Mode is turned OFF in Windows Settings."
-				}
+			if streamType == "camera" && !cam {
+				accepted = false
+				reason = "Camera Sharing is turned OFF in Windows Settings."
+			} else if streamType == "screen" && !screen {
+				accepted = false
+				reason = "Screen Sharing is turned OFF in Windows Settings."
+			} else if streamType == "desktop" && !desk {
+				accepted = false
+				reason = "Desktop Mode is turned OFF in Windows Settings."
 			}
 
 			respData := map[string]any{
@@ -399,40 +421,227 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			resp, _ := encodeMessage(respData)
 			_, _ = conn.Write(resp)
 
+		case "STREAM_RESPONSE":
+			sID, _ := msg["streamId"].(string)
+			sType, _ := msg["streamType"].(string)
+			accepted, _ := msg["accepted"].(bool)
+			if accepted {
+				e.ActiveStreamMu.Lock()
+				e.ActiveStreamID = sID
+				if sType != "" {
+					e.ActiveStreamType = sType
+				}
+				e.ActiveStreamMu.Unlock()
+			}
+
+		case "STREAM_FRAME":
+			sID, _ := msg["streamId"].(string)
+			frameData, _ := msg["data"].(string)
+			seq, _ := msg["sequence"].(float64)
+			if frameData != "" {
+				e.ActiveStreamMu.Lock()
+				e.ActiveStreamID = sID
+				e.LatestFrameBase64 = frameData
+				e.LatestFrameTime = time.Now()
+				e.FrameSequence = int64(seq)
+
+				e.StreamClientsMu.Lock()
+				for ch := range e.StreamClients {
+					select {
+					case ch <- frameData:
+					default:
+					}
+				}
+				e.StreamClientsMu.Unlock()
+				e.ActiveStreamMu.Unlock()
+			}
+
 		case "STREAM_STOP":
-			// Acknowledge stream termination
+			e.ActiveStreamMu.Lock()
+			e.ActiveStreamID = ""
+			e.LatestFrameBase64 = ""
+			e.ActiveStreamMu.Unlock()
 
 		case "DESKTOP_INPUT_EVENT":
-			// Handled when Desktop Mode is enabled
-
-		case "WEBRTC_SIGNAL":
-			// WebRTC signaling message exchange (offer/answer/candidate)
-			streamID, _ := msg["streamId"].(string)
-			streamType, _ := msg["streamType"].(string)
-			sigType, _ := msg["signalType"].(string)
-			if sigType == "offer" {
-				answerSDP := "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=DexoLink Windows " + streamType + " Stream\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\n"
-				respData := map[string]any{
-					"type":          "WEBRTC_SIGNAL",
-					"streamId":      streamID,
-					"streamType":    streamType,
-					"signalType":    "answer",
-					"sdp":           answerSDP,
-					"sdpMid":        "0",
-					"sdpMLineIndex": 0,
-					"options":       map[string]any{"status": "accepted", "mode": "p2p_with_turn_fallback"},
-				}
-				resp, _ := encodeMessage(respData)
-				_, _ = conn.Write(resp)
-			}
+			// Handled when desktop control is enabled
 
 		case "FILE_ACK":
 			// Handled by sender
+
 		case "PING":
 			resp, _ := encodeMessage(map[string]any{"type": "PONG"})
 			_, _ = conn.Write(resp)
 		}
 	}
+}
+
+// EnsureConnected guarantees an active TCP connection to a peer
+func (e *DexoLinkEngine) EnsureConnected(peerIP string, peerPort int, peerID string, peerName string) (net.Conn, error) {
+	if peerIP == "" {
+		return nil, fmt.Errorf("empty peer IP")
+	}
+	if peerPort <= 0 {
+		peerPort = DefaultPort
+	}
+	if peerID == "" {
+		peerID = fmt.Sprintf("peer_%s", peerIP)
+	}
+
+	if val, ok := e.ActiveConnections.Load(peerID); ok {
+		if conn, ok := val.(net.Conn); ok && conn != nil {
+			return conn, nil
+		}
+	}
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", peerIP, peerPort), 4*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	e.ActiveConnections.Store(peerID, conn)
+	e.DiscoveredDevices.Store(peerID, DeviceInfo{
+		DeviceID:   peerID,
+		DeviceName: peerName,
+		IP:         peerIP,
+		Port:       peerPort,
+	})
+
+	hello, _ := encodeMessage(map[string]any{
+		"type":       "HELLO",
+		"version":    ProtocolVersion,
+		"deviceId":   e.DeviceID,
+		"deviceName": e.DeviceName,
+	})
+	_, _ = conn.Write(hello)
+
+	go e.handleClient(conn)
+	return conn, nil
+}
+
+// GetPrimaryPeer resolves the best target peer for transfers and commands
+func (e *DexoLinkEngine) GetPrimaryPeer() (string, int, string, string) {
+	var ip string
+	var port int = DefaultPort
+	var id string
+	var name string
+
+	// 1. Check ActiveConnections
+	e.ActiveConnections.Range(func(key, val any) bool {
+		id = key.(string)
+		if conn, ok := val.(net.Conn); ok && conn != nil {
+			parts := strings.Split(conn.RemoteAddr().String(), ":")
+			if len(parts) > 0 {
+				ip = parts[0]
+			}
+		}
+		if devVal, ok := e.DiscoveredDevices.Load(id); ok {
+			d := devVal.(DeviceInfo)
+			name = d.DeviceName
+			if d.IP != "" {
+				ip = d.IP
+			}
+			if d.Port > 0 {
+				port = d.Port
+			}
+		}
+		return false
+	})
+	if ip != "" {
+		return ip, port, id, name
+	}
+
+	// 2. Check PairedDevices in TrustStore
+	e.TrustStore.mu.Lock()
+	for pID, pDev := range e.TrustStore.PairedDevices {
+		id = pID
+		name = pDev.DeviceName
+		if pDev.IP != "" {
+			ip = pDev.IP
+			if pDev.Port > 0 {
+				port = pDev.Port
+			}
+		}
+		if devVal, ok := e.DiscoveredDevices.Load(pID); ok {
+			d := devVal.(DeviceInfo)
+			if d.IP != "" {
+				ip = d.IP
+			}
+			if d.Port > 0 {
+				port = d.Port
+			}
+			if name == "" {
+				name = d.DeviceName
+			}
+		}
+		break
+	}
+	e.TrustStore.mu.Unlock()
+	if ip != "" {
+		return ip, port, id, name
+	}
+
+	// 3. Check DiscoveredDevices
+	e.DiscoveredDevices.Range(func(key, val any) bool {
+		d := val.(DeviceInfo)
+		if d.IP != "" {
+			ip = d.IP
+			port = d.Port
+			id = d.DeviceID
+			name = d.DeviceName
+			return false
+		}
+		return true
+	})
+
+	return ip, port, id, name
+}
+
+// Background auto-connect worker keeps paired devices connected
+func (e *DexoLinkEngine) startAutoConnectWorker() {
+	go func() {
+		for {
+			time.Sleep(3 * time.Second)
+			e.mu.Lock()
+			enabled := e.Enabled
+			e.mu.Unlock()
+			if !enabled {
+				continue
+			}
+
+			e.TrustStore.mu.Lock()
+			paired := make([]DeviceInfo, 0, len(e.TrustStore.PairedDevices))
+			for _, d := range e.TrustStore.PairedDevices {
+				paired = append(paired, d)
+			}
+			e.TrustStore.mu.Unlock()
+
+			for _, p := range paired {
+				var targetIP string
+				var targetPort int = DefaultPort
+				if p.IP != "" {
+					targetIP = p.IP
+					if p.Port > 0 {
+						targetPort = p.Port
+					}
+				}
+				if val, ok := e.DiscoveredDevices.Load(p.DeviceID); ok {
+					d := val.(DeviceInfo)
+					if d.IP != "" {
+						targetIP = d.IP
+					}
+					if d.Port > 0 {
+						targetPort = d.Port
+					}
+				}
+
+				if targetIP != "" {
+					if _, hasConn := e.ActiveConnections.Load(p.DeviceID); !hasConn {
+						_, _ = e.EnsureConnected(targetIP, targetPort, p.DeviceID, p.DeviceName)
+					}
+				}
+			}
+		}
+	}()
 }
 
 // UDP Discovery
@@ -456,7 +665,7 @@ func (e *DexoLinkEngine) startUDPBeacon() {
 
 	for {
 		e.mu.Lock()
-		disc := e.AutoDiscoveryEnabled
+		disc := e.AutoDiscoveryEnabled && e.Enabled
 		e.mu.Unlock()
 		if disc {
 			_, _ = conn.Write(beacon)
@@ -479,7 +688,7 @@ func (e *DexoLinkEngine) startUDPListener() {
 			break
 		}
 		e.mu.Lock()
-		disc := e.AutoDiscoveryEnabled
+		disc := e.AutoDiscoveryEnabled && e.Enabled
 		e.mu.Unlock()
 		if !disc {
 			continue
@@ -499,6 +708,14 @@ func (e *DexoLinkEngine) startUDPListener() {
 					IP:         addr.IP.String(),
 					Port:       int(port),
 				})
+
+				// If paired, auto-connect immediately
+				e.TrustStore.mu.Lock()
+				_, isPaired := e.TrustStore.PairedDevices[devID]
+				e.TrustStore.mu.Unlock()
+				if isPaired {
+					go e.EnsureConnected(addr.IP.String(), int(port), devID, devName)
+				}
 			}
 		}
 	}
@@ -529,12 +746,18 @@ func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) 
 		"deviceId":   e.DeviceID,
 		"deviceName": e.DeviceName,
 	})
-	_, _ = conn.Write(hello)
+	if _, err := conn.Write(hello); err != nil {
+		return false, err
+	}
 
 	var lenBuf uint32
-	_ = binary.Read(conn, binary.BigEndian, &lenBuf)
+	if err := binary.Read(conn, binary.BigEndian, &lenBuf); err != nil {
+		return false, err
+	}
 	respBuf := make([]byte, lenBuf)
-	_, _ = io.ReadFull(conn, respBuf)
+	if _, err := io.ReadFull(conn, respBuf); err != nil {
+		return false, err
+	}
 
 	// 2. Transfer Request
 	transferID := fmt.Sprintf("tr_%d", time.Now().UnixNano())
@@ -545,11 +768,17 @@ func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) 
 		"totalFiles": 1,
 		"totalSize":  fileSize,
 	})
-	_, _ = conn.Write(trReq)
+	if _, err := conn.Write(trReq); err != nil {
+		return false, err
+	}
 
-	_ = binary.Read(conn, binary.BigEndian, &lenBuf)
+	if err := binary.Read(conn, binary.BigEndian, &lenBuf); err != nil {
+		return false, err
+	}
 	respBuf = make([]byte, lenBuf)
-	_, _ = io.ReadFull(conn, respBuf)
+	if _, err := io.ReadFull(conn, respBuf); err != nil {
+		return false, err
+	}
 
 	// 3. File Meta
 	meta, _ := encodeMessage(map[string]any{
@@ -560,7 +789,9 @@ func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) 
 		"size":       fileSize,
 		"mimeType":   "application/octet-stream",
 	})
-	_, _ = conn.Write(meta)
+	if _, err := conn.Write(meta); err != nil {
+		return false, err
+	}
 
 	// 4. Stream 64KB Chunks
 	hasher := sha256.New()
@@ -572,7 +803,9 @@ func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) 
 		if n > 0 {
 			hasher.Write(chunk[:n])
 			cFrame, _ := encodeFileChunk(fileID, offset, chunk[:n])
-			_, _ = conn.Write(cFrame)
+			if _, wErr := conn.Write(cFrame); wErr != nil {
+				return false, wErr
+			}
 			offset += int64(n)
 		}
 		if rErr != nil {
@@ -581,55 +814,28 @@ func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) 
 	}
 
 	// 5. File Complete
-	shaHex := hex.EncodeToString(hasher.Sum(nil))
+	fHash := hex.EncodeToString(hasher.Sum(nil))
 	comp, _ := encodeMessage(map[string]any{
-		"type":   "FILE_COMPLETE",
-		"fileId": fileID,
-		"sha256": shaHex,
+		"type":       "FILE_COMPLETE",
+		"transferId": transferID,
+		"fileId":     fileID,
+		"sha256":     fHash,
 	})
 	_, _ = conn.Write(comp)
 
-	// 6. File Ack
-	_ = binary.Read(conn, binary.BigEndian, &lenBuf)
-	respBuf = make([]byte, lenBuf)
-	_, _ = io.ReadFull(conn, respBuf)
-
-	var ack map[string]any
-	_ = json.Unmarshal(respBuf, &ack)
-	verified, _ := ack["verified"].(bool)
-
-	e.mu.Lock()
-	e.History = append([]TransferRecord{{
-		ID:        transferID,
-		FileName:  fileName,
-		Size:      fileSize,
-		IsIncoming: false,
-		PeerName:  peerIP,
-		Success:   verified,
-		Time:      time.Now(),
-	}}, e.History...)
-	e.mu.Unlock()
-
-	return verified, nil
+	return true, nil
 }
 
-// Helper to verify if path exists and is a regular file
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
-// openGUIWindow opens the DexoLink user interface window.
-// On Windows, it attempts Microsoft Edge standalone App Mode, then Chrome App Mode,
-// then falls back to Windows Shell (cmd /c start), PowerShell, and Explorer.
-// On Darwin, it uses 'open', on Linux 'xdg-open'.
+// openGUIWindow launches the DexoLink GUI in a dedicated window at macOS MenuBar aspect ratio
 func openGUIWindow(url string) bool {
 	switch runtime.GOOS {
 	case "windows":
-		// Tier 1: Microsoft Edge App Mode (Standalone borderless application window on Windows 10/11)
+		// Tier 1: Microsoft Edge App Mode
 		edgeCandidates := []string{
 			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
 			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
@@ -637,7 +843,7 @@ func openGUIWindow(url string) bool {
 		}
 		for _, p := range edgeCandidates {
 			if p != "" && fileExists(p) {
-				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=440,740")
 				if err := cmd.Start(); err == nil {
 					fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Microsoft Edge App Mode.")
 					return true
@@ -645,7 +851,7 @@ func openGUIWindow(url string) bool {
 			}
 		}
 		if p, err := exec.LookPath("msedge.exe"); err == nil {
-			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=440,740")
 			if err := cmd.Start(); err == nil {
 				fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Microsoft Edge App Mode.")
 				return true
@@ -660,7 +866,7 @@ func openGUIWindow(url string) bool {
 		}
 		for _, p := range chromeCandidates {
 			if p != "" && fileExists(p) {
-				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=440,740")
 				if err := cmd.Start(); err == nil {
 					fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Google Chrome App Mode.")
 					return true
@@ -668,7 +874,7 @@ func openGUIWindow(url string) bool {
 			}
 		}
 		if p, err := exec.LookPath("chrome.exe"); err == nil {
-			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
+			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=440,740")
 			if err := cmd.Start(); err == nil {
 				fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Google Chrome App Mode.")
 				return true
@@ -712,7 +918,6 @@ func openGUIWindow(url string) bool {
 	return false
 }
 
-// openBrowser is used for Continuity links and general URL opening
 func openBrowser(url string) {
 	if openGUIWindow(url) {
 		return
@@ -720,7 +925,6 @@ func openBrowser(url string) {
 	fmt.Printf("[DexoLink Windows] Notice: Could not open URL automatically: %s\n", url)
 }
 
-// checkIfInstanceRunning probes if another DexoLink process is currently active on WebUIPort
 func checkIfInstanceRunning() bool {
 	client := http.Client{Timeout: 350 * time.Millisecond}
 	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/status", WebUIPort))
@@ -731,7 +935,6 @@ func checkIfInstanceRunning() bool {
 	return false
 }
 
-// checkPortAvailable tests whether a TCP port can be bound
 func checkPortAvailable(port int) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -741,7 +944,7 @@ func checkPortAvailable(port int) error {
 	return nil
 }
 
-// Web UI Dashboard Server (runs on 127.0.0.1:52842)
+// Web UI Server
 func startWebDashboard(ready chan<- error) {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -758,54 +961,131 @@ func startWebDashboard(ready chan<- error) {
 
 		engine.TrustStore.mu.Lock()
 		paired := make([]DeviceInfo, 0, len(engine.TrustStore.PairedDevices))
-		for _, d := range engine.TrustStore.PairedDevices {
-			paired = append(paired, d)
+		for _, dev := range engine.TrustStore.PairedDevices {
+			paired = append(paired, dev)
 		}
 		multiPaired := engine.TrustStore.MultiplePairedDevices
 		engine.TrustStore.mu.Unlock()
 
 		engine.mu.Lock()
-		history := engine.History
-		clipHistory := engine.ClipboardHistory
+		hist := make([]TransferRecord, len(engine.History))
+		copy(hist, engine.History)
+		clips := make([]string, len(engine.ClipboardHistory))
+		copy(clips, engine.ClipboardHistory)
 		isEnabled := engine.Enabled
-		contEnabled := engine.ContinuityEnabled
-		autoClip := engine.AutoClipboardSync
+		cont := engine.ContinuityEnabled
+		clipSync := engine.AutoClipboardSync
 		enhClip := engine.EnhancedClipboard
 		autoDisc := engine.AutoDiscoveryEnabled
 		autoAcc := engine.AutoAcceptPaired
-		camSharing := engine.CameraSharingEnabled
-		screenSharing := engine.ScreenSharingEnabled
-		desktopMode := engine.DesktopModeEnabled
+		camShare := engine.CameraSharingEnabled
+		scrShare := engine.ScreenSharingEnabled
+		deskMode := engine.DesktopModeEnabled
+		downDir := engine.DownloadDir
 		engine.mu.Unlock()
 
 		connCount := 0
-		engine.ActiveConnections.Range(func(k, v any) bool {
+		activePeerName := ""
+		activePeerID := ""
+		engine.ActiveConnections.Range(func(key, val any) bool {
 			connCount++
+			activePeerID = key.(string)
+			if devVal, ok := engine.DiscoveredDevices.Load(activePeerID); ok {
+				activePeerName = devVal.(DeviceInfo).DeviceName
+			}
 			return true
 		})
+		if activePeerName == "" && len(paired) > 0 {
+			activePeerName = paired[0].DeviceName
+		}
 
-		json.NewEncoder(w).Encode(map[string]any{
-			"version":                "4.0.1",
-			"deviceId":               engine.DeviceID,
+		engine.ActiveStreamMu.RLock()
+		streamID := engine.ActiveStreamID
+		streamType := engine.ActiveStreamType
+		hasStream := (streamID != "" || engine.LatestFrameBase64 != "")
+		engine.ActiveStreamMu.RUnlock()
+
+		data := map[string]any{
 			"deviceName":             engine.DeviceName,
+			"deviceId":               engine.DeviceID,
 			"port":                   DefaultPort,
+			"download_dir":           downDir,
 			"is_enabled":             isEnabled,
+			"is_connected":           connCount > 0,
 			"connected_count":        connCount,
+			"connected_device_name":  activePeerName,
+			"connected_device_id":    activePeerID,
+			"has_active_stream":      hasStream,
+			"active_stream_id":       streamID,
+			"active_stream_type":     streamType,
 			"multiple_paired":        multiPaired,
 			"paired_devices":         paired,
 			"discovered_devices":     discovered,
-			"transfer_history":       history,
-			"clipboard_history":      clipHistory,
-			"download_dir":           engine.DownloadDir,
-			"continuity_enabled":     contEnabled,
-			"auto_clipboard_sync":    autoClip,
+			"recent_transfers":       hist,
+			"clipboard_history":      clips,
+			"continuity_enabled":     cont,
+			"auto_clipboard_sync":    clipSync,
 			"enhanced_clipboard":     enhClip,
 			"auto_discovery":         autoDisc,
 			"auto_accept_paired":     autoAcc,
-			"camera_sharing_enabled": camSharing,
-			"screen_sharing_enabled": screenSharing,
-			"desktop_mode_enabled":  desktopMode,
-		})
+			"camera_sharing_enabled": camShare,
+			"screen_sharing_enabled": scrShare,
+			"desktop_mode_enabled":   deskMode,
+		}
+		_ = json.NewEncoder(w).Encode(data)
+	})
+
+	http.HandleFunc("/api/upload-file", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = r.ParseMultipartForm(100 << 20)
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("FormFile error: %v", err), http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		tmpFile, err := os.CreateTemp("", "dexolink_send_*_"+header.Filename)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("CreateTemp error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
+
+		_, _ = io.Copy(tmpFile, file)
+		_ = tmpFile.Close()
+
+		peerIP, peerPort, _, peerName := engine.GetPrimaryPeer()
+		if peerIP == "" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "No connected or paired device found on local Wi-Fi"})
+			return
+		}
+
+		success, sendErr := engine.SendFile(peerIP, peerPort, tmpPath)
+		record := TransferRecord{
+			ID:         fmt.Sprintf("tr_%d", time.Now().UnixNano()),
+			FileName:   header.Filename,
+			Size:       header.Size,
+			IsIncoming: false,
+			PeerName:   peerName,
+			Success:    success,
+			Time:       time.Now(),
+		}
+		engine.mu.Lock()
+		engine.History = append([]TransferRecord{record}, engine.History...)
+		engine.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if sendErr != nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": sendErr.Error()})
+		} else {
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "fileName": header.Filename, "size": header.Size})
+		}
 	})
 
 	http.HandleFunc("/api/toggle-master", func(w http.ResponseWriter, r *http.Request) {
@@ -816,6 +1096,40 @@ func startWebDashboard(ready chan<- error) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	http.HandleFunc("/api/connect", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		ip := r.URL.Query().Get("ip")
+		portStr := r.URL.Query().Get("port")
+		port, _ := strconv.Atoi(portStr)
+		if port == 0 {
+			port = DefaultPort
+		}
+		name := r.URL.Query().Get("name")
+		if ip == "" && id != "" {
+			if val, ok := engine.DiscoveredDevices.Load(id); ok {
+				d := val.(DeviceInfo)
+				ip = d.IP
+				if d.Port > 0 {
+					port = d.Port
+				}
+				if name == "" {
+					name = d.DeviceName
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if ip != "" {
+			_, err := engine.EnsureConnected(ip, port, id, name)
+			if err != nil {
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": err.Error()})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+			}
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "device IP not found"})
+	})
+
 	http.HandleFunc("/api/connect-direct", func(w http.ResponseWriter, r *http.Request) {
 		ip := r.URL.Query().Get("ip")
 		portStr := r.URL.Query().Get("port")
@@ -824,26 +1138,8 @@ func startWebDashboard(ready chan<- error) {
 			port = DefaultPort
 		}
 		if ip != "" {
-			go func() {
-				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 5*time.Second)
-				if err == nil {
-					peerID := fmt.Sprintf("direct_%s", ip)
-					engine.ActiveConnections.Store(peerID, conn)
-					engine.DiscoveredDevices.Store(peerID, DeviceInfo{
-						DeviceID:   peerID,
-						DeviceName: fmt.Sprintf("Remote Device (%s)", ip),
-						IP:         ip,
-						Port:       port,
-					})
-					hello, _ := encodeMessage(map[string]any{
-						"type":       "HELLO",
-						"version":    ProtocolVersion,
-						"deviceId":   engine.DeviceID,
-						"deviceName": engine.DeviceName,
-					})
-					_, _ = conn.Write(hello)
-				}
-			}()
+			peerID := fmt.Sprintf("direct_%s", ip)
+			_, _ = engine.EnsureConnected(ip, port, peerID, fmt.Sprintf("Direct Device (%s)", ip))
 		}
 		w.WriteHeader(http.StatusOK)
 	})
@@ -866,6 +1162,9 @@ func startWebDashboard(ready chan<- error) {
 				PairedAt:   float64(time.Now().Unix()),
 			}
 			engine.TrustStore.AddDevice(dev)
+			if ip != "" {
+				go engine.EnsureConnected(ip, port, id, name)
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 	})
@@ -889,10 +1188,41 @@ func startWebDashboard(ready chan<- error) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	http.HandleFunc("/api/unpair", func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id != "" {
+			engine.TrustStore.RemoveDevice(id)
+			if val, ok := engine.ActiveConnections.Load(id); ok {
+				conn := val.(net.Conn)
+				_ = conn.Close()
+				engine.ActiveConnections.Delete(id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	http.HandleFunc("/api/stream-request", func(w http.ResponseWriter, r *http.Request) {
 		sType := r.URL.Query().Get("streamType")
+		if sType == "" {
+			sType = "camera"
+		}
 		action := r.URL.Query().Get("action")
+		if action == "" {
+			action = "request_stream"
+		}
+
+		peerIP, peerPort, peerID, peerName := engine.GetPrimaryPeer()
+		if peerIP != "" {
+			_, _ = engine.EnsureConnected(peerIP, peerPort, peerID, peerName)
+		}
+
 		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		engine.ActiveStreamMu.Lock()
+		engine.ActiveStreamID = streamID
+		engine.ActiveStreamType = sType
+		engine.ActiveStreamDevice = peerName
+		engine.ActiveStreamMu.Unlock()
+
 		msg, _ := encodeMessage(map[string]any{
 			"type":       "STREAM_REQUEST",
 			"streamId":   streamID,
@@ -901,6 +1231,7 @@ func startWebDashboard(ready chan<- error) {
 				"direction":  "outgoing",
 				"sender":     "windows",
 				"action":     action,
+				"lens":       "toggle",
 				"senderName": engine.DeviceName,
 			},
 		})
@@ -909,7 +1240,98 @@ func startWebDashboard(ready chan<- error) {
 			_, _ = conn.Write(msg)
 			return true
 		})
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "streamId": streamID, "streamType": sType, "device": peerName})
+	})
+
+	http.HandleFunc("/api/stream-stop", func(w http.ResponseWriter, r *http.Request) {
+		engine.ActiveStreamMu.Lock()
+		sID := engine.ActiveStreamID
+		engine.ActiveStreamID = ""
+		engine.LatestFrameBase64 = ""
+		engine.ActiveStreamMu.Unlock()
+
+		if sID != "" {
+			msg, _ := encodeMessage(map[string]any{
+				"type":     "STREAM_STOP",
+				"streamId": sID,
+				"reason":   "User closed stream viewer on Windows",
+			})
+			engine.ActiveConnections.Range(func(key, val any) bool {
+				conn := val.(net.Conn)
+				_, _ = conn.Write(msg)
+				return true
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	})
+
+	http.HandleFunc("/api/stream-latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		engine.ActiveStreamMu.RLock()
+		frame := engine.LatestFrameBase64
+		sID := engine.ActiveStreamID
+		sType := engine.ActiveStreamType
+		devName := engine.ActiveStreamDevice
+		seq := engine.FrameSequence
+		t := engine.LatestFrameTime
+		engine.ActiveStreamMu.RUnlock()
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"streamId":   sID,
+			"streamType": sType,
+			"device":     devName,
+			"sequence":   seq,
+			"timestamp":  t.UnixNano(),
+			"hasFrame":   frame != "",
+			"frame":      frame,
+		})
+	})
+
+	http.HandleFunc("/api/stream-sse", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		ch := make(chan string, 10)
+		engine.StreamClientsMu.Lock()
+		engine.StreamClients[ch] = true
+		engine.StreamClientsMu.Unlock()
+
+		defer func() {
+			engine.StreamClientsMu.Lock()
+			delete(engine.StreamClients, ch)
+			engine.StreamClientsMu.Unlock()
+			close(ch)
+		}()
+
+		engine.ActiveStreamMu.RLock()
+		initFrame := engine.LatestFrameBase64
+		engine.ActiveStreamMu.RUnlock()
+		if initFrame != "" {
+			fmt.Fprintf(w, "data: %s\n\n", initFrame)
+			flusher.Flush()
+		}
+
+		notify := r.Context().Done()
+		for {
+			select {
+			case <-notify:
+				return
+			case f, ok := <-ch:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "data: %s\n\n", f)
+				flusher.Flush()
+			}
+		}
 	})
 
 	http.HandleFunc("/api/send-desktop-input", func(w http.ResponseWriter, r *http.Request) {
@@ -921,7 +1343,12 @@ func startWebDashboard(ready chan<- error) {
 			Key       string  `json:"key"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		engine.ActiveStreamMu.RLock()
+		streamID := engine.ActiveStreamID
+		engine.ActiveStreamMu.RUnlock()
+		if streamID == "" {
+			streamID = fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		}
 		msg, _ := encodeMessage(map[string]any{
 			"type":      "DESKTOP_INPUT_EVENT",
 			"streamId":  streamID,
@@ -936,6 +1363,115 @@ func startWebDashboard(ready chan<- error) {
 			_, _ = conn.Write(msg)
 			return true
 		})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/push-clipboard", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Text != "" {
+			engine.mu.Lock()
+			clipEnabled := engine.AutoClipboardSync
+			if clipEnabled {
+				engine.ClipboardHistory = append([]string{body.Text}, engine.ClipboardHistory...)
+			}
+			engine.mu.Unlock()
+
+			if !clipEnabled {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			peerIP, peerPort, peerID, peerName := engine.GetPrimaryPeer()
+			if peerIP != "" {
+				_, _ = engine.EnsureConnected(peerIP, peerPort, peerID, peerName)
+			}
+
+			msg, _ := encodeMessage(map[string]any{
+				"type":           "CLIPBOARD_PUSH",
+				"sequenceNumber": time.Now().Unix(),
+				"content":        body.Text,
+			})
+			engine.ActiveConnections.Range(func(key, val any) bool {
+				conn := val.(net.Conn)
+				_, _ = conn.Write(msg)
+				return true
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	})
+
+	http.HandleFunc("/api/send-continuity", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			URL string `json:"url"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.URL != "" {
+			engine.mu.Lock()
+			contEnabled := engine.ContinuityEnabled
+			engine.mu.Unlock()
+
+			if !contEnabled {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			peerIP, peerPort, peerID, peerName := engine.GetPrimaryPeer()
+			if peerIP != "" {
+				_, _ = engine.EnsureConnected(peerIP, peerPort, peerID, peerName)
+			}
+
+			msg, _ := encodeMessage(map[string]any{
+				"type":           "CONTINUITY_ACTIVITY",
+				"activityId":     fmt.Sprintf("act_%d", time.Now().UnixNano()),
+				"activityType":   "web_browsing",
+				"title":          "Shared Web Page",
+				"url":            body.URL,
+				"timestamp":      float64(time.Now().Unix()),
+				"sourceDeviceId": engine.DeviceID,
+			})
+			engine.ActiveConnections.Range(func(key, val any) bool {
+				conn := val.(net.Conn)
+				_, _ = conn.Write(msg)
+				return true
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+	})
+
+	http.HandleFunc("/api/toggle-feature", func(w http.ResponseWriter, r *http.Request) {
+		feat := r.URL.Query().Get("feature")
+		val := r.URL.Query().Get("enabled") == "true"
+		engine.mu.Lock()
+		switch feat {
+		case "continuity":
+			engine.ContinuityEnabled = val
+		case "clipboard":
+			engine.AutoClipboardSync = val
+		case "enhanced":
+			engine.EnhancedClipboard = val
+		case "camera":
+			engine.CameraSharingEnabled = val
+		case "screen":
+			engine.ScreenSharingEnabled = val
+		case "desktop":
+			engine.DesktopModeEnabled = val
+		case "discovery":
+			engine.AutoDiscoveryEnabled = val
+		case "autoaccept":
+			engine.AutoAcceptPaired = val
+		}
+		engine.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	http.HandleFunc("/api/toggle-multi-paired", func(w http.ResponseWriter, r *http.Request) {
+		val := r.URL.Query().Get("enabled") == "true"
+		engine.TrustStore.SetMultiPaired(val)
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -961,115 +1497,22 @@ func startWebDashboard(ready chan<- error) {
 	http.HandleFunc("/api/delete-clip", func(w http.ResponseWriter, r *http.Request) {
 		idxStr := r.URL.Query().Get("index")
 		idx, err := strconv.Atoi(idxStr)
-		engine.mu.Lock()
-		if err == nil && idx >= 0 && idx < len(engine.ClipboardHistory) {
-			engine.ClipboardHistory = append(engine.ClipboardHistory[:idx], engine.ClipboardHistory[idx+1:]...)
-		}
-		engine.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	})
-
-	http.HandleFunc("/api/toggle-feature", func(w http.ResponseWriter, r *http.Request) {
-		feature := r.URL.Query().Get("feature")
-		enabled := r.URL.Query().Get("enabled") == "true"
-		engine.mu.Lock()
-		switch feature {
-		case "continuity":
-			engine.ContinuityEnabled = enabled
-		case "clipboard":
-			engine.AutoClipboardSync = enabled
-		case "enhanced_clip":
-			engine.EnhancedClipboard = enabled
-		case "auto_discovery":
-			engine.AutoDiscoveryEnabled = enabled
-		case "auto_accept":
-			engine.AutoAcceptPaired = enabled
-		case "camera_sharing":
-			engine.CameraSharingEnabled = enabled
-		case "screen_sharing":
-			engine.ScreenSharingEnabled = enabled
-		case "desktop_mode":
-			engine.DesktopModeEnabled = enabled
-		}
-		engine.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	})
-
-	http.HandleFunc("/api/toggle-multi-paired", func(w http.ResponseWriter, r *http.Request) {
-		enable := r.URL.Query().Get("enabled") == "true"
-		engine.TrustStore.SetMultiPaired(enable)
-		w.WriteHeader(http.StatusOK)
-	})
-
-	http.HandleFunc("/api/unpair", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		engine.TrustStore.RemoveDevice(id)
-		w.WriteHeader(http.StatusOK)
-	})
-
-	http.HandleFunc("/api/push-clipboard", func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Text string `json:"text"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.Text != "" {
+		if err == nil {
 			engine.mu.Lock()
-			clipEnabled := engine.AutoClipboardSync
-			if clipEnabled {
-				engine.ClipboardHistory = append([]string{body.Text}, engine.ClipboardHistory...)
+			if idx >= 0 && idx < len(engine.ClipboardHistory) {
+				engine.ClipboardHistory = append(engine.ClipboardHistory[:idx], engine.ClipboardHistory[idx+1:]...)
 			}
 			engine.mu.Unlock()
-
-			if !clipEnabled {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			msg, _ := encodeMessage(map[string]any{
-				"type":           "CLIPBOARD_PUSH",
-				"sequenceNumber": time.Now().Unix(),
-				"content":        body.Text,
-			})
-			engine.ActiveConnections.Range(func(key, val any) bool {
-				conn := val.(net.Conn)
-				_, _ = conn.Write(msg)
-				return true
-			})
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 
-	http.HandleFunc("/api/send-continuity", func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			URL string `json:"url"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.URL != "" {
-			engine.mu.Lock()
-			contEnabled := engine.ContinuityEnabled
-			engine.mu.Unlock()
-
-			if !contEnabled {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			msg, _ := encodeMessage(map[string]any{
-				"type":           "CONTINUITY_ACTIVITY",
-				"activityId":     fmt.Sprintf("act_%d", time.Now().UnixNano()),
-				"activityType":   "web_browsing",
-				"title":          "Shared Web Page",
-				"url":            body.URL,
-				"timestamp":      float64(time.Now().Unix()),
-				"sourceDeviceId": engine.DeviceID,
-			})
-			engine.ActiveConnections.Range(func(key, val any) bool {
-				conn := val.(net.Conn)
-				_, _ = conn.Write(msg)
-				return true
-			})
-		}
+	http.HandleFunc("/api/quit", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			os.Exit(0)
+		}()
 	})
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", WebUIPort))
@@ -1080,7 +1523,7 @@ func startWebDashboard(ready chan<- error) {
 		}
 		return
 	}
-	fmt.Printf("[DexoLink Windows] Web UI server listening on http://localhost:%d\n", WebUIPort)
+	fmt.Printf("[DexoLink Windows] Web UI listening on http://127.0.0.1:%d\n", WebUIPort)
 	if ready != nil {
 		ready <- nil
 	}
@@ -1088,725 +1531,982 @@ func startWebDashboard(ready chan<- error) {
 }
 
 func main() {
-	fmt.Println("======================================================")
-	fmt.Printf("  DexoLink for Windows v4.0.1 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Println("  Universal Cross-Platform Synchronization")
-	fmt.Println("======================================================")
+	fmt.Println("=====================================================")
+	fmt.Println("     DexoLink v4.0.1 (Windows Native Edition)        ")
+	fmt.Println("     Local Cross-Device Connectivity Engine          ")
+	fmt.Println("=====================================================")
 
-	// Step 1: Detect whether DexoLink is already running to avoid duplicate server instances
 	if checkIfInstanceRunning() {
-		fmt.Printf("[DexoLink Windows] An active DexoLink instance is already running on port %d / %d.\n", DefaultPort, WebUIPort)
-		fmt.Println("[DexoLink Windows] Activating DexoLink GUI application window...")
-		openGUIWindow(fmt.Sprintf("http://localhost:%d", WebUIPort))
-		os.Exit(0)
+		fmt.Println("[DexoLink Windows] Another DexoLink instance is already active.")
+		fmt.Println("[DexoLink Windows] Bringing existing DexoLink GUI window to front...")
+		openGUIWindow(fmt.Sprintf("http://127.0.0.1:%d", WebUIPort))
+		return
 	}
 
-	// Step 2: Validate that required ports are available before starting
 	if err := checkPortAvailable(DefaultPort); err != nil {
-		fmt.Printf("[DexoLink Windows] Fatal Startup Error: TCP port %d is already occupied (%v).\n", DefaultPort, err)
-		fmt.Println("[DexoLink Windows] Please terminate conflicting processes and restart DexoLink.")
-		os.Exit(1)
-	}
-	if err := checkPortAvailable(WebUIPort); err != nil {
-		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI port %d is already occupied (%v).\n", WebUIPort, err)
-		fmt.Println("[DexoLink Windows] Please terminate conflicting processes and restart DexoLink.")
-		os.Exit(1)
+		fmt.Printf("[DexoLink Windows] Warning: Port %d is already occupied: %v\n", DefaultPort, err)
 	}
 
-	// Step 3: Initialize engine and synchronize startup
 	engine = initEngine()
-	fmt.Printf("[DexoLink Windows] Initialized DexoLink engine for %s\n", engine.DeviceName)
-
-	tcpReady := make(chan error, 1)
-	webReady := make(chan error, 1)
-
-	go engine.startTCPServer(tcpReady)
 	go engine.startUDPBeacon()
 	go engine.startUDPListener()
+
+	tcpReady := make(chan error, 1)
+	go engine.startTCPServer(tcpReady)
+
+	webReady := make(chan error, 1)
 	go startWebDashboard(webReady)
 
-	// Verify servers initialized without error
 	if err := <-webReady; err != nil {
-		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI server could not start: %v\n", err)
-		os.Exit(1)
-	}
-	if err := <-tcpReady; err != nil {
-		fmt.Printf("[DexoLink Windows] Fatal Startup Error: TCP server could not start: %v\n", err)
-		os.Exit(1)
+		fmt.Printf("[DexoLink Windows] Fatal: Could not initialize Web Dashboard: %v\n", err)
+		return
 	}
 
-	// Step 4: Automatically open DexoLink GUI window
-	guiURL := fmt.Sprintf("http://localhost:%d", WebUIPort)
-	fmt.Println("[DexoLink Windows] Opening DexoLink GUI application window...")
-	if openGUIWindow(guiURL) {
-		fmt.Println("[DexoLink Windows] DexoLink GUI window opened successfully.")
-	} else {
-		fmt.Printf("[DexoLink Windows] Notice: Automatic window launch was blocked or unavailable.\n")
-	}
-	fmt.Printf("[DexoLink Windows] Local Web UI dashboard is accessible at: %s\n", guiURL)
-	fmt.Println("[DexoLink Windows] DexoLink is ready. Press Ctrl+C to stop.")
+	webURL := fmt.Sprintf("http://127.0.0.1:%d", WebUIPort)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		openGUIWindow(webURL)
+	}()
 
-	// Step 5: Graceful termination on OS interrupt
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
-	fmt.Println("\n[DexoLink Windows] Shutting down DexoLink servers gracefully...")
-	os.Exit(0)
+	fmt.Println("\n[DexoLink Windows] Shutting down gracefully...")
 }
 
+// Embedded Web UI matching exact macOS MenuBarView layout & interactive features
 const webUIHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DexoLink v4.0.1 (Windows)</title>
-<style>
-  :root {
-    --bg: #0b1120;
-    --card: #1e293b;
-    --card-hover: #24344d;
-    --border: #334155;
-    --accent: #0066ff;
-    --accent-hover: #1d4ed8;
-    --cyan: #38bdf8;
-    --text: #f8fafc;
-    --muted: #94a3b8;
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --purple: #a855f7;
-    --danger: #ef4444;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  body { background: var(--bg); color: var(--text); padding: 20px; line-height: 1.4; }
+  <meta charset="UTF-8">
+  <title>DexoLink v4.0.1 (Windows)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      --bg-window: #131519;
+      --bg-card: rgba(255, 255, 255, 0.05);
+      --bg-card-hover: rgba(255, 255, 255, 0.08);
+      --border-card: rgba(255, 255, 255, 0.09);
+      --text-main: #f5f5f7;
+      --text-sub: #86868b;
+      --accent-blue: #0071e3;
+      --accent-cyan: #32ade6;
+      --accent-green: #34c759;
+      --accent-orange: #ff9f0a;
+      --accent-purple: #af52de;
+      --accent-red: #ff3b30;
+      --btn-bg: rgba(255, 255, 255, 0.08);
+      --btn-hover: rgba(255, 255, 255, 0.14);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0c0d10;
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.4;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow-x: hidden;
+    }
+    .mac-window {
+      max-width: 420px;
+      margin: 0 auto;
+      min-height: 100vh;
+      background: var(--bg-window);
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--border-card);
+      border-right: 1px solid var(--border-card);
+    }
 
-  /* Header */
-  .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .brand h1 { font-size: 22px; font-weight: 800; color: var(--cyan); letter-spacing: -0.5px; }
-  .badge { background: rgba(56,189,248,0.15); color: var(--cyan); padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
-  .badge-green { background: rgba(34,197,94,0.18); color: var(--success); }
-  .badge-purple { background: rgba(168,85,247,0.18); color: var(--purple); }
-  .badge-orange { background: rgba(245,158,11,0.18); color: var(--warning); }
-  .header-actions { display: flex; align-items: center; gap: 10px; }
-  .icon-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 7px 11px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; transition: 0.15s; }
-  .icon-btn:hover { background: var(--card-hover); border-color: var(--cyan); color: #fff; }
-  .status-pill { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--success); background: rgba(34,197,94,0.12); padding: 6px 12px; border-radius: 20px; border: 1px solid rgba(34,197,94,0.25); }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 8px var(--success); }
+    /* Header */
+    .mac-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid var(--border-card);
+    }
+    .mac-header-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .mac-header-tools {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .mac-tool-btn {
+      background: none;
+      border: none;
+      color: var(--text-sub);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s ease;
+      padding: 4px;
+    }
+    .mac-tool-btn:hover { color: var(--text-main); }
 
-  /* Master ON/OFF Card */
-  .master-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-  .master-info { display: flex; align-items: center; gap: 14px; }
-  .master-icon-wrap { width: 44px; height: 44px; border-radius: 50%; background: rgba(56,189,248,0.15); display: flex; align-items: center; justify-content: center; color: var(--cyan); }
-  .master-title-row { display: flex; align-items: center; gap: 8px; }
-  .master-title { font-size: 15px; font-weight: 800; color: var(--text); }
-  .master-state-pill { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 12px; background: rgba(0,102,255,0.2); color: var(--cyan); }
-  .master-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    /* Master Card */
+    .master-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border-card);
+    }
+    .master-icon-wrap {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(0, 113, 227, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-blue);
+      flex-shrink: 0;
+    }
+    .master-icon-wrap.off {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-sub);
+    }
+    .master-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .master-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .master-title {
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .pill-badge {
+      font-size: 9px;
+      font-weight: 800;
+      padding: 1px 6px;
+      border-radius: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .pill-blue { background: rgba(0, 113, 227, 0.2); color: var(--accent-blue); }
+    .pill-grey { background: rgba(255, 255, 255, 0.1); color: var(--text-sub); }
+    .pill-green { background: rgba(52, 199, 89, 0.2); color: var(--accent-green); }
+    .pill-cyan { background: rgba(50, 173, 230, 0.2); color: var(--accent-cyan); }
+    .pill-orange { background: rgba(255, 159, 10, 0.2); color: var(--accent-orange); }
 
-  /* Switch Toggle */
-  .switch { position: relative; display: inline-block; width: 46px; height: 26px; }
-  .switch input { opacity: 0; width: 0; height: 0; }
-  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .25s; border-radius: 26px; }
-  .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .25s; border-radius: 50%; }
-  input:checked + .slider { background-color: var(--accent); }
-  input:checked + .slider:before { transform: translateX(20px); }
+    .master-subtitle {
+      font-size: 11px;
+      color: var(--text-sub);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
-  /* Grid Layout */
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 18px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-  .card h2 { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; color: var(--text); }
-  .card h3 { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 14px; margin-bottom: 6px; }
-  .muted { color: var(--muted); font-size: 12px; }
+    /* iOS Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.16);
+      transition: .25s;
+      border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .25s;
+      border-radius: 50%;
+    }
+    input:checked + .slider { background-color: var(--accent-blue); }
+    input:checked + .slider:before { transform: translateX(20px); }
 
-  /* Buttons */
-  .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 9px 15px; font-size: 12px; font-weight: 700; cursor: pointer; transition: 0.15s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-  .btn:hover { background: var(--accent-hover); }
-  .btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 6px; }
-  .btn-bordered { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  .btn-bordered:hover { background: var(--card-hover); border-color: var(--cyan); }
-  .btn-success { background: rgba(34,197,94,0.18); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
-  .btn-success:hover { background: rgba(34,197,94,0.3); }
-  .btn-danger { background: rgba(239,68,68,0.18); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
-  .btn-danger:hover { background: rgba(239,68,68,0.3); }
-  .btn-orange { background: rgba(245,158,11,0.18); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
-  .btn-purple { background: rgba(168,85,247,0.18); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+    /* Scrollable Body */
+    .mac-body {
+      flex: 1;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+    }
 
-  /* Inputs */
-  .input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; margin-bottom: 10px; font-size: 12px; }
-  .input:focus { outline: none; border-color: var(--cyan); }
+    /* Cards */
+    .mac-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .mac-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .mac-card-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 700;
+    }
 
-  /* Drop Zone */
-  .drop-zone { border: 2px dashed rgba(56,189,248,0.35); background: rgba(56,189,248,0.04); border-radius: 10px; padding: 18px; text-align: center; cursor: pointer; transition: 0.2s; margin-bottom: 12px; }
-  .drop-zone:hover, .drop-zone.dragover { border-color: var(--cyan); background: rgba(56,189,248,0.1); }
-  .drop-zone-icon { color: var(--cyan); margin-bottom: 6px; }
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+      text-decoration: none;
+      color: var(--text-main);
+    }
+    .btn-prominent { background: var(--accent-blue); color: white; }
+    .btn-prominent:hover { background: #0077ed; }
+    .btn-bordered { background: var(--btn-bg); border-color: var(--border-card); color: var(--text-main); }
+    .btn-bordered:hover { background: var(--btn-hover); }
+    .btn-teal { background: rgba(50, 173, 230, 0.15); border-color: rgba(50, 173, 230, 0.3); color: var(--accent-cyan); }
+    .btn-teal:hover { background: rgba(50, 173, 230, 0.25); }
+    .btn-orange { background: rgba(255, 159, 10, 0.15); border-color: rgba(255, 159, 10, 0.3); color: var(--accent-orange); }
+    .btn-orange:hover { background: rgba(255, 159, 10, 0.25); }
+    .btn-danger { background: rgba(255, 59, 48, 0.12); border-color: rgba(255, 59, 48, 0.25); color: var(--accent-red); }
+    .btn-danger:hover { background: rgba(255, 59, 48, 0.22); }
+    .btn-sm { padding: 2px 7px; font-size: 10px; }
 
-  /* Lists */
-  .list { list-style: none; margin-top: 8px; max-height: 200px; overflow-y: auto; }
-  .list-item { background: var(--bg); border: 1px solid var(--border); padding: 9px 12px; border-radius: 8px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
-  .list-item-left { display: flex; align-items: center; gap: 8px; overflow: hidden; }
-  .list-item-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-  .list-item-sub { font-size: 10px; color: var(--muted); }
+    /* Drop Zone */
+    .drop-zone {
+      border: 1.5px dashed rgba(255, 255, 255, 0.2);
+      background: rgba(0, 113, 227, 0.03);
+      border-radius: 10px;
+      padding: 16px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent-blue);
+      background: rgba(0, 113, 227, 0.1);
+    }
+    .drop-zone-icon {
+      color: var(--accent-blue);
+    }
+    .drop-zone-text {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .drop-zone-sub {
+      font-size: 9px;
+      color: var(--text-sub);
+    }
 
-  /* Toggles */
-  .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+    /* Device Rows */
+    .device-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .device-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .device-row:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .device-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+    .device-icon-box {
+      position: relative;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-cyan);
+      flex-shrink: 0;
+    }
+    .online-dot {
+      position: absolute;
+      bottom: 1px;
+      right: 1px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      border: 1px solid var(--bg-window);
+    }
+    .device-details {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .device-name-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .device-name {
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .device-sub {
+      font-size: 9px;
+      color: var(--text-sub);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .device-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
 
-  /* Turned Off State Card */
-  .turned-off-banner { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 40px 24px; text-align: center; margin-top: 10px; }
+    /* Turned Off State Banner */
+    .turned-off-banner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 30px 16px;
+      gap: 12px;
+    }
+    .turned-off-icon {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-sub);
+    }
+    .turned-off-title { font-size: 14px; font-weight: 700; }
+    .turned-off-desc { font-size: 11px; color: var(--text-sub); line-height: 1.4; max-width: 280px; }
 
-  /* Modals */
-  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(11,17,32,0.88); backdrop-filter: blur(8px); z-index: 9999; align-items: center; justify-content: center; }
-  .modal-box { background: var(--card); border: 1px solid var(--border); border-radius: 14px; width: 92%; max-width: 560px; max-height: 85vh; overflow-y: auto; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+    /* Footer */
+    .mac-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border-top: 1px solid var(--border-card);
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+    .footer-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent-green);
+    }
+    .mac-attr {
+      text-align: center;
+      padding: 5px;
+      font-size: 9px;
+      color: rgba(255, 255, 255, 0.4);
+      background: rgba(0, 0, 0, 0.2);
+    }
 
-  /* Footer */
-  .footer { display: flex; justify-content: space-between; align-items: center; padding-top: 16px; margin-top: 24px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
-  .dev-attr { text-align: center; font-size: 10px; color: var(--muted); margin-top: 8px; }
-</style>
+    /* Modals */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(10px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+    .modal-box {
+      background: #1b1e24;
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 380px;
+      max-height: 90vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-card);
+      font-weight: 700;
+    }
+    .modal-body {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Live Stream Viewer Modal */
+    .stream-modal-box {
+      max-width: 680px;
+      background: #101216;
+    }
+    .stream-canvas-wrap {
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      min-height: 320px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .stream-img {
+      width: 100%;
+      height: auto;
+      max-height: 500px;
+      object-fit: contain;
+      display: block;
+    }
+    .stream-loader {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-sub);
+      font-size: 12px;
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      border-top-color: var(--accent-blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Remote Write Dock */
+    .remote-write-dock {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .dock-input-row {
+      display: flex;
+      gap: 6px;
+    }
+    .text-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      outline: none;
+    }
+    .text-input:focus { border-color: var(--accent-blue); }
+    .dock-keys-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .key-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-card);
+      color: var(--text-main);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .key-btn:hover { background: rgba(255, 255, 255, 0.12); }
+
+    /* Form Controls */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .form-group label {
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .toggle-row:last-child { border-bottom: none; }
+  </style>
 </head>
 <body>
-
-  <!-- Top Header Navigation -->
-  <div class="header">
-    <div class="brand">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-      <h1>DexoLink</h1>
-      <span class="badge">v4.0.1 (Windows App)</span>
-    </div>
-    <div class="header-actions">
-      <div class="status-pill">
-        <div class="status-dot"></div>
-        <span id="devName">Windows PC (Ready)</span>
+  <div class="mac-window">
+    <!-- MARK: Header -->
+    <header class="mac-header">
+      <div class="mac-header-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" color="#32ade6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+        <span>DexoLink</span>
       </div>
-      <button class="icon-btn" onclick="openDirectIPModal()" title="Direct IP Connection">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-        <span>Direct IP</span>
-      </button>
-      <button class="icon-btn" onclick="openHistoryModal()" title="Transfer & Clipboard History">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        <span>History</span>
-      </button>
-      <button class="icon-btn" onclick="openSettingsModal()" title="Settings & All Feature Controls">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-        <span>Settings</span>
-      </button>
-    </div>
-  </div>
+      <div class="mac-header-tools">
+        <button class="mac-tool-btn" onclick="openModal('settingsModal')" title="Settings & All Feature Controls">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+        <button class="mac-tool-btn" onclick="openModal('historyModal')" title="Transfer & Clipboard History">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        </button>
+        <button class="mac-tool-btn" onclick="openModal('directIPModal')" title="Direct IP Connection (Optional Fallback)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+        </button>
+        <button class="mac-tool-btn" onclick="quitApp()" title="Quit DexoLink">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+        </button>
+      </div>
+    </header>
 
-  <!-- Master Quick Settings ON/OFF Card (Matching MacBook MenuBar) -->
-  <div class="master-card">
-    <div class="master-info">
+    <!-- MARK: Master Quick Settings ON/OFF Card -->
+    <div class="master-card">
       <div class="master-icon-wrap" id="masterIconWrap">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 1 14.14 0"></path><path d="M7.76 7.76a6 6 0 0 1 8.48 0"></path><circle cx="12" cy="12" r="2"></circle><path d="M12 14v8"></path></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.93 4.93a10 10 0 0 1 14.14 0"></path><path d="M7.76 7.76a6 6 0 0 1 8.48 0"></path><circle cx="12" cy="12" r="2"></circle><line x1="12" y1="14" x2="12" y2="22"></line></svg>
       </div>
-      <div>
+      <div class="master-info">
         <div class="master-title-row">
           <span class="master-title">DexoLink</span>
-          <span class="master-state-pill" id="masterStatePill">ON</span>
+          <span class="pill-badge pill-blue" id="masterPill">ON</span>
         </div>
-        <div class="master-sub" id="masterSubtitle">Active • Ready to connect on local Wi-Fi</div>
+        <div class="master-subtitle" id="masterSubtitle">Active • Ready to connect on local Wi-Fi</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="masterSwitch" checked onchange="toggleMaster(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- MARK: Body -->
+    <div class="mac-body">
+      <!-- Turned Off State Banner -->
+      <div class="turned-off-banner" id="turnedOffBanner" style="display: none;">
+        <div class="turned-off-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.56 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+        </div>
+        <div class="turned-off-title">DexoLink is Turned Off</div>
+        <div class="turned-off-desc">All background listeners, discovery broadcasts, and socket connections are stopped to ensure 0% CPU and battery usage.</div>
+        <button class="btn btn-prominent" onclick="toggleMaster(true)">Turn On DexoLink</button>
+      </div>
+
+      <!-- Main Active Container -->
+      <div id="activeDashboard" style="display: flex; flex-direction: column; gap: 10px;">
+        
+        <!-- MARK: Paired Devices Card -->
+        <div class="mac-card" id="pairedSection">
+          <div class="mac-card-header">
+            <span class="mac-card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" color="#34c759"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              <span>Paired Devices</span>
+            </span>
+            <span class="pill-badge pill-grey" id="pairedModeBadge">Strict 1-Device Policy</span>
+          </div>
+          <div class="device-list" id="pairedList">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- MARK: Quick File Sharing Card -->
+        <div class="mac-card">
+          <div class="mac-card-header">
+            <span class="mac-card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" color="#ff9f0a"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <span>Quick File Sharing</span>
+            </span>
+            <button class="btn btn-bordered btn-sm" onclick="openDownloadsFolder()" title="Open DexoLink Downloads folder in Explorer">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Downloads</span>
+            </button>
+          </div>
+
+          <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <input type="file" id="fileInput" style="display:none;" onchange="handleFileSelect(this)">
+            <svg class="drop-zone-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"></circle><polyline points="16 12 12 8 8 12"></polyline><line x1="12" y1="16" x2="12" y2="8"></line></svg>
+            <div class="drop-zone-text" id="dropZoneText">Drop files here or click to send</div>
+            <div class="drop-zone-sub">Photos • PDFs • Documents • Downloads • Any file</div>
+            <div style="display: flex; gap: 6px; margin-top: 4px;">
+              <button class="btn btn-prominent btn-sm" id="btnSendFiles" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">Send Files</button>
+              <button class="btn btn-bordered btn-sm" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">All Share Options...</button>
+            </div>
+          </div>
+
+          <!-- Active Transfer Banner -->
+          <div id="activeTransferBox" style="display: none; padding: 8px 10px; background: rgba(0, 113, 227, 0.12); border-radius: 6px; border: 1px solid rgba(0, 113, 227, 0.25);">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600;">
+              <span id="transferFileName">Sending file...</span>
+              <span id="transferPercent" style="color: var(--accent-blue);">100%</span>
+            </div>
+            <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 4px; overflow: hidden;">
+              <div id="transferBar" style="width: 100%; height: 100%; background: var(--accent-blue);"></div>
+            </div>
+          </div>
+
+          <!-- Recent Transfers -->
+          <div id="recentTransfersSection" style="display: flex; flex-direction: column; gap: 4px; margin-top: 2px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 10px; color: var(--text-sub); font-weight: 600;">Recent Transfers</span>
+              <button class="btn btn-bordered btn-sm" onclick="openModal('historyModal')" style="font-size: 9px; padding: 1px 5px;">Manage</button>
+            </div>
+            <div id="recentTransfersList" style="display: flex; flex-direction: column; gap: 3px;">
+              <!-- Populated via loadStatus -->
+            </div>
+          </div>
+        </div>
+
+        <!-- MARK: Feature Controls Card -->
+        <div class="mac-card" style="flex-direction: row; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(0, 113, 227, 0.15); display: flex; align-items: center; justify-content: center; color: var(--accent-blue);">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 13px; font-weight: 700;">Feature Controls</span>
+              <span class="pill-badge pill-green" id="featCountBadge">3 ACTIVE</span>
+            </div>
+          </div>
+          <button class="btn btn-prominent btn-sm" onclick="openModal('settingsModal')">Configure</button>
+        </div>
+
+        <!-- MARK: Nearby Discovered Devices -->
+        <div class="mac-card">
+          <div class="mac-card-header">
+            <span class="mac-card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" color="#32ade6"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+              <span>Nearby Devices (Wi-Fi)</span>
+            </span>
+            <div style="display: flex; gap: 4px;">
+              <button class="btn btn-bordered btn-sm" onclick="toggleDiscovery()" id="btnDiscToggle">
+                <span style="display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-green); margin-right: 3px;"></span>
+                <span>Stop</span>
+              </button>
+              <button class="btn btn-bordered btn-sm" onclick="loadStatus()" title="Rescan nearby devices now">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+              </button>
+            </div>
+          </div>
+          <div class="device-list" id="discoveredList">
+            <!-- Populated via loadStatus -->
+          </div>
+        </div>
+
       </div>
     </div>
-    <label class="switch">
-      <input type="checkbox" id="masterSwitch" checked onchange="toggleMaster(this.checked)">
-      <span class="slider"></span>
-    </label>
+
+    <!-- MARK: Footer -->
+    <footer class="mac-footer">
+      <div class="footer-status">
+        <div class="status-dot" id="footerDot"></div>
+        <span id="footerStatusText">Ready to connect • Wi-Fi Auto-Discovery</span>
+      </div>
+      <button class="btn btn-bordered btn-sm" onclick="loadStatus()">Refresh</button>
+    </footer>
+
+    <!-- MARK: Developer Attribution -->
+    <div class="mac-attr">Developed by Rahul Mahaseth | DexoLink v4.0.1</div>
   </div>
 
-  <!-- Turned Off State Banner (When Master Switch is OFF) -->
-  <div id="turnedOffBanner" class="turned-off-banner" style="display:none;">
-    <div style="width:60px; height:60px; border-radius:50%; background:rgba(148,163,184,0.12); display:flex; align-items:center; justify-content:center; margin:0 auto 16px auto; color:var(--muted);">
-      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+  <!-- MARK: Live Media Stream Viewer Modal -->
+  <div class="modal-backdrop" id="streamModal">
+    <div class="modal-box stream-modal-box">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" color="#32ade6"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+          <span id="streamModalTitle">Live Media Feed</span>
+          <span class="pill-badge pill-green" id="streamLiveBadge">LIVE</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="btn btn-bordered btn-sm" id="btnFlipCam" onclick="flipCameraLens()">Flip Camera</button>
+          <button class="btn btn-danger btn-sm" onclick="closeStreamViewer()">Close</button>
+        </div>
+      </div>
+      <div class="modal-body" style="padding: 10px;">
+        <div class="stream-canvas-wrap">
+          <div class="stream-loader" id="streamLoader">
+            <div class="spinner"></div>
+            <span id="streamLoadingText">Connecting to live feed from connected device...</span>
+          </div>
+          <img id="streamVideoImage" class="stream-img" style="display: none;" alt="Live Stream">
+        </div>
+
+        <!-- Remote Desktop Write & Control Dock -->
+        <div class="remote-write-dock" id="remoteWriteDock">
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-sub);">Remote Write & Input Control</div>
+          <div class="dock-input-row">
+            <input type="text" id="remoteTextInput" class="text-input" placeholder="Type text to send to remote device..." onkeydown="if(event.key==='Enter') sendWriteText()">
+            <button class="btn btn-prominent btn-sm" onclick="sendWriteText()">Send</button>
+          </div>
+          <div class="dock-keys-row">
+            <button class="key-btn" onclick="sendKey('enter')">Enter</button>
+            <button class="key-btn" onclick="sendKey('backspace')">Backspace</button>
+            <button class="key-btn" onclick="sendKey('space')">Space</button>
+            <button class="key-btn" onclick="sendKey('tab')">Tab</button>
+            <button class="key-btn" onclick="sendMouseClick(0)">Left Click</button>
+            <button class="key-btn" onclick="sendMouseClick(1)">Right Click</button>
+          </div>
+        </div>
+      </div>
     </div>
-    <h2 style="font-size:18px; font-weight:800; margin-bottom:6px;">DexoLink is Turned Off</h2>
-    <p class="muted" style="max-width:440px; margin:0 auto 18px auto;">All background listeners, discovery broadcasts, and socket connections are stopped to ensure 0% CPU and battery usage.</p>
-    <button class="btn" onclick="toggleMaster(true)" style="padding:10px 22px; font-size:13px;">Turn On DexoLink</button>
   </div>
 
-  <!-- Active Dashboard Container -->
-  <div id="activeDashboard">
-    <div class="grid">
-
-      <!-- Card 1: Quick File Sharing (Matching MacBook MenuBar Quick File Sharing) -->
-      <div class="card">
-        <h2>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-          <span>Quick File Sharing</span>
-          <button class="btn btn-bordered btn-sm" style="margin-left:auto;" onclick="openDownloadsFolder()" title="Open Downloads Folder">Downloads</button>
-        </h2>
-        
-        <!-- Drag & Drop Box -->
-        <div class="drop-zone" id="dropZone" onclick="document.getElementById('hiddenFileInput').click()">
-          <div class="drop-zone-icon">
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="16 12 12 8 8 12"></polyline><line x1="12" y1="16" x2="12" y2="8"></line></svg>
-          </div>
-          <div style="font-weight:700; font-size:13px; color:var(--text);">Drop files here or click to send</div>
-          <div class="muted" style="font-size:11px; margin-top:3px;">Photos, PDFs, Documents, Downloads, any file</div>
-          <input type="file" id="hiddenFileInput" style="display:none;" onchange="handleFileSelect(this)">
-        </div>
-
-        <div style="display:flex; gap:8px;">
-          <button class="btn" style="flex:1;" onclick="document.getElementById('hiddenFileInput').click()">Select Files to Send</button>
-        </div>
-
-        <h3>Recent Transfers</h3>
-        <ul class="list" id="transfersList">
-          <li class="muted">No transfers yet today.</li>
-        </ul>
+  <!-- MARK: Settings Sheet Modal -->
+  <div class="modal-backdrop" id="settingsModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>Settings & Features</span>
+        <button class="btn btn-bordered btn-sm" onclick="closeModal('settingsModal')">Done</button>
       </div>
-
-      <!-- Card 2: Universal Clipboard -->
-      <div class="card">
-        <h2>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
-          <span>Universal Clipboard</span>
-          <span class="badge badge-green" style="margin-left:auto;">AUTO SYNC</span>
-        </h2>
-        <p class="muted" style="margin-bottom:10px;">Instant real-time text sync across Windows, Mac, Android, and iPhone.</p>
-        <textarea id="clipText" class="input" style="height:70px; resize:none;" placeholder="Type or paste text to sync across paired devices..."></textarea>
-        <button class="btn" style="width:100%;" onclick="pushClip()">Push Text to Devices</button>
-        
-        <h3>Clipboard History</h3>
-        <ul class="list" id="clipList">
-          <li class="muted">No clipboard items yet.</li>
-        </ul>
-      </div>
-
-      <!-- Card 3: Continuity & Handoff -->
-      <div class="card">
-        <h2>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
-          <span>Continuity & Handoff</span>
-        </h2>
-        <p class="muted" style="margin-bottom:12px;">Seamlessly open links and web activities across your iPhone, Mac, or Android.</p>
-        <input type="url" id="contUrl" class="input" value="https://">
-        <button class="btn" style="width:100%; background:var(--purple);" onclick="sendCont()">Launch on Connected Devices</button>
-      </div>
-
-      <!-- Card 4: Media Streaming & Remote Control (v4.0.1) -->
-      <div class="card">
-        <h2>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-          <span>Media Streaming & Remote Control</span>
-          <span class="badge badge-green" style="margin-left:auto;">v4.0.1</span>
-        </h2>
-        
-        <!-- Camera Sub-section -->
-        <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"></path><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
-              <span>Camera Sharing</span>
-            </div>
-            <span class="badge" id="cameraStatusBadge">INACTIVE</span>
-          </div>
-          <div style="display:flex; gap:6px;">
-            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="requestCameraStream('camera', 'request_stream')">Request Camera Feed</button>
-            <button class="btn btn-sm btn-bordered" onclick="requestCameraStream('camera', 'switch_camera')">Flip Camera</button>
-          </div>
-        </div>
-
-        <!-- Screen Mirroring Sub-section -->
-        <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-              <span>Screen Sharing</span>
-            </div>
-            <span class="badge" id="screenStatusBadge">INACTIVE</span>
-          </div>
-          <div style="display:flex; gap:6px;">
-            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="requestCameraStream('screen', 'request_stream')">Request Remote Screen</button>
-          </div>
-        </div>
-
-        <!-- Desktop Mode & Remote Write -->
-        <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="font-weight:700; font-size:12px; display:flex; align-items:center; gap:6px;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>
-              <span>Remote Write & Control</span>
-            </div>
-            <span class="badge badge-purple">BETA</span>
-          </div>
-          <input type="text" id="remoteWriteInput" class="input" style="margin-bottom:6px;" placeholder="Type text to send to remote screen...">
-          <div style="display:flex; gap:6px; margin-bottom:8px;">
-            <button class="btn btn-sm" style="flex:1;" onclick="sendRemoteWriteText()">Send Text</button>
-            <button class="btn btn-sm btn-bordered" onclick="sendRemoteKey('enter')">Enter</button>
-            <button class="btn btn-sm btn-bordered" onclick="sendRemoteKey('backspace')">Backspace</button>
-          </div>
-          <div style="display:flex; gap:6px;">
-            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteKey('space')">Space</button>
-            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteKey('tab')">Tab</button>
-            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteClick('left')">Left Click</button>
-            <button class="btn btn-sm btn-bordered" style="flex:1;" onclick="sendRemoteClick('right')">Right Click</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Card 5: Paired Devices & Security -->
-      <div class="card">
-        <h2>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0066ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-          <span>Paired Devices & Security</span>
-        </h2>
+      <div class="modal-body">
         <div class="toggle-row">
           <div>
-            <div style="font-weight:600; font-size:12px;">Multiple Paired Devices</div>
-            <div class="muted">OFF by default (Single-device strict security)</div>
+            <div style="font-weight: 600;">Continuity & Handoff</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Open links and activities across devices</div>
           </div>
-          <input type="checkbox" id="multiToggle" onchange="toggleMulti(this.checked)">
+          <label class="switch">
+            <input type="checkbox" id="settContinuity" onchange="toggleFeature('continuity', this.checked)">
+            <span class="slider"></span>
+          </label>
         </div>
-
-        <h3>Paired Trusted Devices</h3>
-        <ul class="list" id="pairedList">
-          <li class="muted">No paired devices yet.</li>
-        </ul>
-      </div>
-
-      <!-- Card 6: Nearby Devices (Wi-Fi) (Matching MacBook MenuBar Nearby Devices) -->
-      <div class="card">
-        <h2>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path></svg>
-          <span>Nearby Devices (Wi-Fi)</span>
-          <div style="margin-left:auto; display:flex; gap:6px;">
-            <button class="btn btn-bordered btn-sm" onclick="rescanDiscovery()" title="Rescan Local Wi-Fi">Rescan</button>
-          </div>
-        </h2>
-        <p class="muted" style="margin-bottom:8px;">Available devices discovered automatically on your local Wi-Fi or Ethernet.</p>
-        <ul class="list" id="discoveredList">
-          <li class="muted">Searching for nearby devices on local Wi-Fi...</li>
-        </ul>
-      </div>
-
-      <!-- Card 7: Feature Controls Summary Card (Matching MacBook Reference Design) -->
-      <div class="card" style="display:flex; align-items:center; justify-content:space-between;">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div style="width:38px; height:38px; border-radius:10px; background:rgba(30,58,138,0.45); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-          </div>
+        <div class="toggle-row">
           <div>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <span style="font-weight:700; font-size:14px; color:var(--text);">Feature Controls</span>
-              <span id="featCountBadge" style="background:#14532d; color:#4ade80; font-size:10px; font-weight:800; padding:2px 8px; border-radius:999px;">4 ACTIVE</span>
-            </div>
-            <div class="muted" style="margin-top:2px;">Dedicated controls for all synchronization & streaming modules</div>
+            <div style="font-weight: 600;">Universal Clipboard</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Sync copied text between devices</div>
           </div>
+          <label class="switch">
+            <input type="checkbox" id="settClipboard" onchange="toggleFeature('clipboard', this.checked)">
+            <span class="slider"></span>
+          </label>
         </div>
-        <button class="btn" onclick="openSettingsModal()" style="background:#2563eb; padding:8px 18px; border-radius:8px;">Configure All</button>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight: 600;">Multiple Paired Devices</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Allow pairing more than 1 phone/PC</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settMulti" onchange="toggleMultiPaired(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight: 600;">Camera Sharing</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Stream live mobile camera video to PC</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settCamera" onchange="toggleFeature('camera', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight: 600;">Screen Sharing</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Mirror phone or PC display live</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settScreen" onchange="toggleFeature('screen', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight: 600;">Desktop Mode & Control</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Send remote mouse and keyboard inputs</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settDesktop" onchange="toggleFeature('desktop', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight: 600;">Wi-Fi Auto-Discovery</div>
+            <div style="font-size: 10px; color: var(--text-sub);">Advertise and discover nearby peers</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settDiscovery" onchange="toggleFeature('discovery', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
       </div>
-
     </div>
   </div>
 
-  <!-- Dedicated Settings Modal (Matching MacBook Settings View) -->
-  <div id="settingsModal" class="modal-overlay">
+  <!-- MARK: Transfer & Clipboard History Modal -->
+  <div class="modal-backdrop" id="historyModal">
     <div class="modal-box">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:16px;">
-        <div>
-          <h2 style="font-size:18px; font-weight:800; color:var(--text);">DexoLink Settings</h2>
-          <p class="muted" style="margin-top:2px;">All feature controls, security rules, and device preferences</p>
-        </div>
-        <button class="btn btn-bordered btn-sm" onclick="closeSettingsModal()">&times;</button>
+      <div class="modal-header">
+        <span>Activity History</span>
+        <button class="btn btn-bordered btn-sm" onclick="closeModal('historyModal')">Done</button>
       </div>
-
-      <!-- Core Features Section -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">Core Feature Controls</div>
-      
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Continuity / Handoff</div>
-          <div class="muted">Seamlessly open web pages and links across paired devices</div>
+      <div class="modal-body">
+        <div style="display: flex; gap: 4px; border-bottom: 1px solid var(--border-card); padding-bottom: 8px;">
+          <button class="btn btn-prominent btn-sm" id="tabBtnTransfers" onclick="switchHistTab('transfers')">Transfers</button>
+          <button class="btn btn-bordered btn-sm" id="tabBtnClipboard" onclick="switchHistTab('clipboard')">Clipboard</button>
         </div>
-        <input type="checkbox" id="modalContinuityToggle" onchange="toggleFeature('continuity', this.checked)">
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Auto Clipboard Sync</div>
-          <div class="muted">Mirror copied text instantly over secure local Wi-Fi</div>
+        <div id="histTransfersTab" class="device-list">
+          <!-- Populated dynamically -->
         </div>
-        <input type="checkbox" id="modalClipToggle" onchange="toggleFeature('clipboard', this.checked)">
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Enhanced Clipboard (BETA)</div>
-          <div class="muted">Support rich formatted text, HTML, and image synchronization</div>
+        <div id="histClipboardTab" class="device-list" style="display: none;">
+          <!-- Populated dynamically -->
         </div>
-        <input type="checkbox" id="modalEnhancedToggle" onchange="toggleFeature('enhanced_clip', this.checked)">
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Multiple Paired Devices</div>
-          <div class="muted">OFF by default (Single-device mode). Allows multi-peer connectivity when ON.</div>
-        </div>
-        <input type="checkbox" id="modalMultiToggle" onchange="toggleMulti(this.checked)">
-      </div>
-
-      <!-- Media Streaming & Remote Control Section (v4.0.1) -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:18px; margin-bottom:6px; letter-spacing:0.5px;">Media Streaming & Remote Control</div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Camera Sharing</div>
-          <div class="muted">Stream camera between this device and mobile devices (OFF by default)</div>
-        </div>
-        <input type="checkbox" id="modalCameraToggle" onchange="toggleFeature('camera_sharing', this.checked)">
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Screen Sharing</div>
-          <div class="muted">Mirror this device screen or view remote displays (OFF by default)</div>
-        </div>
-        <input type="checkbox" id="modalScreenToggle" onchange="toggleFeature('screen_sharing', this.checked)">
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Desktop Mode (BETA)</div>
-          <div class="muted">Remote desktop viewing and keyboard/mouse input control (OFF by default)</div>
-        </div>
-        <input type="checkbox" id="modalDesktopToggle" onchange="toggleFeature('desktop_mode', this.checked)">
-      </div>
-
-      <!-- Discovery & Network Section -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:18px; margin-bottom:6px; letter-spacing:0.5px;">Discovery & Network</div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Auto Wi-Fi Discovery</div>
-          <div class="muted">UDP broadcast & listen on port 52841 for zero-config pairing</div>
-        </div>
-        <input type="checkbox" id="modalDiscoveryToggle" onchange="toggleFeature('auto_discovery', this.checked)">
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div style="font-weight:600; font-size:12px;">Auto-Accept Paired Transfers</div>
-          <div class="muted">Automatically accept file transfers from trusted paired devices</div>
-        </div>
-        <input type="checkbox" id="modalAcceptToggle" onchange="toggleFeature('auto_accept', this.checked)">
-      </div>
-
-      <!-- Storage Section -->
-      <div style="font-size:11px; font-weight:800; color:var(--cyan); text-transform:uppercase; margin-top:18px; margin-bottom:6px; letter-spacing:0.5px;">Storage & Received Files</div>
-      <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:6px; display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div class="muted" style="font-size:11px;">Downloads Folder:</div>
-          <div id="modalDownPath" style="font-size:12px; font-family:monospace; color:var(--cyan); word-break:break-all;">~/Downloads/DexoLink</div>
-        </div>
-        <button class="btn btn-bordered btn-sm" onclick="openDownloadsFolder()">Open Folder</button>
-      </div>
-
-      <!-- Modal Footer -->
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:22px; padding-top:14px; border-top:1px solid var(--border);">
-        <span class="muted">DexoLink v4.0.1 • Port 52840</span>
-        <button class="btn" onclick="closeSettingsModal()" style="padding:8px 24px;">Done</button>
       </div>
     </div>
   </div>
 
-  <!-- History Modal (Transfers & Clipboard Tabs) -->
-  <div id="historyModal" class="modal-overlay">
+  <!-- MARK: Direct IP Connection Modal -->
+  <div class="modal-backdrop" id="directIPModal">
     <div class="modal-box">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:16px;">
-        <h2 style="font-size:18px; font-weight:800;">Activity History</h2>
-        <button class="btn btn-bordered btn-sm" onclick="closeHistoryModal()">&times;</button>
+      <div class="modal-header">
+        <span>Direct IP Connection</span>
+        <button class="btn btn-bordered btn-sm" onclick="closeModal('directIPModal')">Cancel</button>
       </div>
-
-      <div style="display:flex; gap:8px; margin-bottom:14px;">
-        <button class="btn btn-sm" id="tabTransfersBtn" onclick="switchHistoryTab('transfers')">Transfers History</button>
-        <button class="btn btn-bordered btn-sm" id="tabClipboardBtn" onclick="switchHistoryTab('clipboard')">Clipboard History</button>
-      </div>
-
-      <div id="historyTransfersTab">
-        <ul class="list" id="modalTransfersList" style="max-height:360px;">
-          <li class="muted">No transfers in history.</li>
-        </ul>
-      </div>
-
-      <div id="historyClipboardTab" style="display:none;">
-        <ul class="list" id="modalClipboardList" style="max-height:360px;">
-          <li class="muted">No clipboard items in history.</li>
-        </ul>
-      </div>
-
-      <div style="text-align:right; margin-top:18px; padding-top:12px; border-top:1px solid var(--border);">
-        <button class="btn" onclick="closeHistoryModal()">Close</button>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Target IP Address</label>
+          <input type="text" id="manualIPInput" class="text-input" placeholder="e.g. 192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="text" id="manualPortInput" class="text-input" value="52840">
+        </div>
+        <button class="btn btn-prominent" onclick="submitDirectIP()">Connect to Device</button>
       </div>
     </div>
   </div>
-
-  <!-- Direct IP Connection Modal (Matching MacBook ManualIPSheet) -->
-  <div id="directIPModal" class="modal-overlay">
-    <div class="modal-box" style="max-width:440px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
-        <h2 style="font-size:16px; font-weight:800;">Direct IP Connection</h2>
-        <button class="btn btn-bordered btn-sm" onclick="closeDirectIPModal()">&times;</button>
-      </div>
-      <p class="muted" style="margin-bottom:12px;">Connect to an iPhone, iPad, Android phone, or Mac by entering its local or remote IP coordinates.</p>
-      
-      <label class="muted" style="font-size:11px; font-weight:700;">HOST / IP ADDRESS</label>
-      <input type="text" id="manualHostInput" class="input" placeholder="e.g. 192.168.1.100 or domain">
-      
-      <label class="muted" style="font-size:11px; font-weight:700;">PORT (DEFAULT 52840)</label>
-      <input type="text" id="manualPortInput" class="input" value="52840">
-
-      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
-        <button class="btn btn-bordered" onclick="closeDirectIPModal()">Cancel</button>
-        <button class="btn" onclick="connectDirectSubmit()">Connect Peer</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Footer Information -->
-  <div class="footer">
-    <div style="display:flex; align-items:center; gap:8px;">
-      <div class="status-dot"></div>
-      <span id="footerStatusText">Ready to connect • Wi-Fi Auto-Discovery</span>
-    </div>
-    <button class="btn btn-bordered btn-sm" onclick="rescanDiscovery()">Refresh Discovery</button>
-  </div>
-  <div class="dev-attr">Developed by Rahul Mahaseth | DexoLink v4.0.1 (Universal)</div>
 
   <script>
     let currentData = null;
+    let sseSource = null;
+    let streamPollTimer = null;
 
-    // Modals
-    function openSettingsModal() { document.getElementById('settingsModal').style.display = 'flex'; }
-    function closeSettingsModal() { document.getElementById('settingsModal').style.display = 'none'; }
-    function openHistoryModal() { document.getElementById('historyModal').style.display = 'flex'; switchHistoryTab('transfers'); }
-    function closeHistoryModal() { document.getElementById('historyModal').style.display = 'none'; }
-    function openDirectIPModal() { document.getElementById('directIPModal').style.display = 'flex'; }
-    function closeDirectIPModal() { document.getElementById('directIPModal').style.display = 'none'; }
+    function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
-    function switchHistoryTab(tab) {
-      if (tab === 'transfers') {
-        document.getElementById('historyTransfersTab').style.display = 'block';
-        document.getElementById('historyClipboardTab').style.display = 'none';
-        document.getElementById('tabTransfersBtn').className = 'btn btn-sm';
-        document.getElementById('tabClipboardBtn').className = 'btn btn-bordered btn-sm';
-      } else {
-        document.getElementById('historyTransfersTab').style.display = 'none';
-        document.getElementById('historyClipboardTab').style.display = 'block';
-        document.getElementById('tabTransfersBtn').className = 'btn btn-bordered btn-sm';
-        document.getElementById('tabClipboardBtn').className = 'btn btn-sm';
+    async function quitApp() {
+      if (confirm('Are you sure you want to quit DexoLink?')) {
+        await fetch('/api/quit');
+        window.close();
       }
     }
 
-    // Master Switch Toggle
     async function toggleMaster(val) {
       await fetch('/api/toggle-master?enabled=' + val);
       loadStatus();
     }
 
-    // Feature Toggles
     async function toggleFeature(feat, val) {
       await fetch('/api/toggle-feature?feature=' + feat + '&enabled=' + val);
       loadStatus();
     }
 
-    async function toggleMulti(val) {
+    async function toggleMultiPaired(val) {
       await fetch('/api/toggle-multi-paired?enabled=' + val);
       loadStatus();
     }
 
-    // Direct IP Submit
-    async function connectDirectSubmit() {
-      const host = document.getElementById('manualHostInput').value.trim();
-      const port = document.getElementById('manualPortInput').value.trim() || '52840';
-      if (!host) return;
-      await fetch('/api/connect-direct?ip=' + encodeURIComponent(host) + '&port=' + encodeURIComponent(port));
-      closeDirectIPModal();
+    async function openDownloadsFolder() {
+      await fetch('/api/open-downloads');
+    }
+
+    async function connectToDevice(id, ip, port, name) {
+      await fetch('/api/connect?id=' + encodeURIComponent(id) + '&ip=' + encodeURIComponent(ip || '') + '&port=' + (port || 52840) + '&name=' + encodeURIComponent(name || ''));
       loadStatus();
     }
 
-    // Disconnect & Unpair
+    async function pairDevice(id, name, ip, port) {
+      await fetch('/api/pair-device?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&ip=' + encodeURIComponent(ip) + '&port=' + (port || 52840));
+      loadStatus();
+    }
+
     async function disconnectDevice(id) {
       await fetch('/api/disconnect?id=' + encodeURIComponent(id || ''));
       loadStatus();
     }
 
     async function unpairDevice(id) {
-      await fetch('/api/unpair?id=' + encodeURIComponent(id));
+      await fetch('/api/unpair?id=' + encodeURIComponent(id || ''));
       loadStatus();
     }
 
-    async function pairDevice(id, name, ip, port) {
-      await fetch('/api/pair-device?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&ip=' + encodeURIComponent(ip) + '&port=' + port);
+    async function submitDirectIP() {
+      const ip = document.getElementById('manualIPInput').value.trim();
+      const port = document.getElementById('manualPortInput').value.trim() || '52840';
+      if (!ip) return;
+      await fetch('/api/connect-direct?ip=' + encodeURIComponent(ip) + '&port=' + encodeURIComponent(port));
+      closeModal('directIPModal');
       loadStatus();
     }
 
-    // Clipboard Push
-    async function pushClip() {
-      const val = document.getElementById('clipText').value.trim();
-      if (!val) return;
-      await fetch('/api/push-clipboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: val })
-      });
-      document.getElementById('clipText').value = '';
-      loadStatus();
-    }
-
-    async function deleteClip(idx) {
-      await fetch('/api/delete-clip?index=' + idx);
-      loadStatus();
-    }
-
-    // Continuity Send
-    async function sendCont() {
-      const val = document.getElementById('contUrl').value.trim();
-      if (!val || val === 'https://') return;
-      await fetch('/api/send-continuity', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: val })
-      });
-      alert('Sent web page to connected devices: ' + val);
-    }
-
-    // Stream Requests
-    async function requestCameraStream(sType, action) {
-      await fetch('/api/stream-request?streamType=' + sType + '&action=' + action);
-      alert('Sent ' + sType + ' stream request (' + action + ') to connected peer');
-    }
-
-    // Remote Write & Desktop Control
-    async function sendRemoteWriteText() {
-      const val = document.getElementById('remoteWriteInput').value;
-      if (!val) return;
-      await fetch('/api/send-desktop-input', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventType: 'write', key: val })
-      });
-      document.getElementById('remoteWriteInput').value = '';
-    }
-
-    async function sendRemoteKey(k) {
-      await fetch('/api/send-desktop-input', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventType: 'key_press', key: k })
-      });
-    }
-
-    async function sendRemoteClick(btn) {
-      await fetch('/api/send-desktop-input', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventType: 'click', x: 0.5, y: 0.5, button: btn === 'right' ? 1 : 0 })
-      });
-    }
-
-    // Downloads
-    async function openDownloadsFolder() {
-      await fetch('/api/open-downloads');
-    }
-
-    // File Drop & Select
+    // Drag & Drop and File Selection
     function handleFileSelect(input) {
       if (input.files && input.files[0]) {
         uploadFile(input.files[0]);
@@ -1816,11 +2516,26 @@ const webUIHTML = `<!DOCTYPE html>
     async function uploadFile(file) {
       const formData = new FormData();
       formData.append('file', file);
+
+      const box = document.getElementById('activeTransferBox');
+      const nameEl = document.getElementById('transferFileName');
+      const bar = document.getElementById('transferBar');
+      const pct = document.getElementById('transferPercent');
+      box.style.display = 'block';
+      nameEl.innerText = 'Sending ' + file.name + '...';
+      bar.style.width = '60%';
+      pct.innerText = 'Streaming...';
+
       try {
-        await fetch('/api/upload-file', { method: 'POST', body: formData });
+        const res = await fetch('/api/upload-file', { method: 'POST', body: formData });
+        const data = await res.json();
+        bar.style.width = '100%';
+        pct.innerText = 'Completed';
+        setTimeout(() => { box.style.display = 'none'; }, 2500);
         loadStatus();
       } catch (e) {
-        alert('File transfer error: ' + e);
+        alert('File upload error: ' + e);
+        box.style.display = 'none';
       }
     }
 
@@ -1835,8 +2550,107 @@ const webUIHTML = `<!DOCTYPE html>
       }
     });
 
-    async function rescanDiscovery() {
-      loadStatus();
+    // Live Media Stream Viewer
+    async function startStreamViewer(sType) {
+      const modal = document.getElementById('streamModal');
+      const title = document.getElementById('streamModalTitle');
+      const flipBtn = document.getElementById('btnFlipCam');
+      const loader = document.getElementById('streamLoader');
+      const img = document.getElementById('streamVideoImage');
+      const writeDock = document.getElementById('remoteWriteDock');
+
+      title.innerText = (sType === 'camera' ? 'Live Camera Feed' : 'Live Screen Mirror');
+      flipBtn.style.display = (sType === 'camera' ? 'inline-flex' : 'none');
+      writeDock.style.display = (sType === 'screen' ? 'flex' : 'none');
+      loader.style.display = 'flex';
+      img.style.display = 'none';
+      img.src = '';
+      modal.style.display = 'flex';
+
+      await fetch('/api/stream-request?streamType=' + sType + '&action=request_stream');
+
+      // Start SSE for zero-latency frame streaming
+      if (sseSource) sseSource.close();
+      sseSource = new EventSource('/api/stream-sse');
+      sseSource.onmessage = function(e) {
+        if (e.data) {
+          loader.style.display = 'none';
+          img.style.display = 'block';
+          img.src = 'data:image/jpeg;base64,' + e.data;
+        }
+      };
+
+      // Fallback fast polling in case SSE is blocked
+      if (streamPollTimer) clearInterval(streamPollTimer);
+      streamPollTimer = setInterval(async () => {
+        try {
+          const r = await fetch('/api/stream-latest');
+          const d = await r.json();
+          if (d.hasFrame && d.frame) {
+            loader.style.display = 'none';
+            img.style.display = 'block';
+            img.src = 'data:image/jpeg;base64,' + d.frame;
+          }
+        } catch (_) {}
+      }, 200);
+    }
+
+    async function closeStreamViewer() {
+      if (sseSource) { sseSource.close(); sseSource = null; }
+      if (streamPollTimer) { clearInterval(streamPollTimer); streamPollTimer = null; }
+      document.getElementById('streamModal').style.display = 'none';
+      await fetch('/api/stream-stop');
+    }
+
+    async function flipCameraLens() {
+      await fetch('/api/stream-request?streamType=camera&action=switch_camera');
+    }
+
+    // Remote Write & Desktop Control
+    async function sendWriteText() {
+      const input = document.getElementById('remoteTextInput');
+      const val = input.value;
+      if (!val) return;
+      await fetch('/api/send-desktop-input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'write', key: val })
+      });
+      input.value = '';
+    }
+
+    async function sendKey(k) {
+      await fetch('/api/send-desktop-input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'key_press', key: k })
+      });
+    }
+
+    async function sendMouseClick(btn) {
+      await fetch('/api/send-desktop-input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'click', x: 0.5, y: 0.5, button: btn })
+      });
+    }
+
+    function switchHistTab(tab) {
+      const tTab = document.getElementById('histTransfersTab');
+      const cTab = document.getElementById('histClipboardTab');
+      const tBtn = document.getElementById('tabBtnTransfers');
+      const cBtn = document.getElementById('tabBtnClipboard');
+      if (tab === 'transfers') {
+        tTab.style.display = 'flex';
+        cTab.style.display = 'none';
+        tBtn.className = 'btn btn-prominent btn-sm';
+        cBtn.className = 'btn btn-bordered btn-sm';
+      } else {
+        tTab.style.display = 'none';
+        cTab.style.display = 'flex';
+        tBtn.className = 'btn btn-bordered btn-sm';
+        cBtn.className = 'btn btn-prominent btn-sm';
+      }
     }
 
     // Periodic Status Loader
@@ -1846,27 +2660,45 @@ const webUIHTML = `<!DOCTYPE html>
         const data = await res.json();
         currentData = data;
 
-        // Device name in header
-        document.getElementById('devName').innerText = data.deviceName + ' (Port ' + data.port + ')';
-
-        // Master switch and state banner
         const isMasterOn = (data.is_enabled !== false);
         document.getElementById('masterSwitch').checked = isMasterOn;
-        document.getElementById('masterStatePill').innerText = isMasterOn ? 'ON' : 'OFF';
-        document.getElementById('masterStatePill').className = isMasterOn ? 'master-state-pill' : 'master-state-pill badge-orange';
-        document.getElementById('activeDashboard').style.display = isMasterOn ? 'block' : 'none';
-        document.getElementById('turnedOffBanner').style.display = isMasterOn ? 'none' : 'block';
+        document.getElementById('masterPill').innerText = isMasterOn ? 'ON' : 'OFF';
+        document.getElementById('masterPill').className = isMasterOn ? 'pill-badge pill-blue' : 'pill-badge pill-grey';
+        document.getElementById('masterIconWrap').className = isMasterOn ? 'master-icon-wrap' : 'master-icon-wrap off';
+        document.getElementById('activeDashboard').style.display = isMasterOn ? 'flex' : 'none';
+        document.getElementById('turnedOffBanner').style.display = isMasterOn ? 'none' : 'flex';
 
-        const connCount = data.connected_count || (data.paired_devices ? data.paired_devices.length : 0);
+        // Master Subtitle & Status Footer
+        const isConn = data.is_connected && data.connected_count > 0;
+        const peerName = data.connected_device_name || (data.paired_devices && data.paired_devices[0] ? data.paired_devices[0].device_name : '');
+        
         if (!isMasterOn) {
           document.getElementById('masterSubtitle').innerText = 'Turned Off • 0% CPU & Battery';
           document.getElementById('footerStatusText').innerText = 'DexoLink is Turned Off';
-        } else if (connCount > 0) {
-          document.getElementById('masterSubtitle').innerText = 'Connected to ' + (data.paired_devices && data.paired_devices[0] ? data.paired_devices[0].device_name : 'Device');
+          document.getElementById('footerDot').style.background = '#86868b';
+        } else if (isConn) {
+          document.getElementById('masterSubtitle').innerText = 'Connected to ' + (peerName || 'Device');
           document.getElementById('footerStatusText').innerText = 'Connected • Real-time synchronization active';
+          document.getElementById('footerDot').style.background = 'var(--accent-green)';
+        } else if (data.paired_devices && data.paired_devices.length > 0) {
+          document.getElementById('masterSubtitle').innerText = 'Paired: ' + data.paired_devices[0].device_name + ' • Ready to connect';
+          document.getElementById('footerStatusText').innerText = 'Ready to connect • Wi-Fi Auto-Discovery';
+          document.getElementById('footerDot').style.background = 'var(--accent-cyan)';
         } else {
           document.getElementById('masterSubtitle').innerText = 'Active • Ready to connect on local Wi-Fi';
           document.getElementById('footerStatusText').innerText = 'Ready to connect • Wi-Fi Auto-Discovery';
+          document.getElementById('footerDot').style.background = 'var(--accent-cyan)';
+        }
+
+        // Drop zone send button text
+        const btnSend = document.getElementById('btnSendFiles');
+        const dropText = document.getElementById('dropZoneText');
+        if (isConn && peerName) {
+          btnSend.innerText = 'Send to ' + peerName;
+          dropText.innerText = 'Drop files here or click to send';
+        } else {
+          btnSend.innerText = 'Select Files to Send';
+          dropText.innerText = 'Drop files here or click to send';
         }
 
         // Active Features Count
@@ -1879,120 +2711,136 @@ const webUIHTML = `<!DOCTYPE html>
         if (data.screen_sharing_enabled) activeCount++;
         if (data.desktop_mode_enabled) activeCount++;
         document.getElementById('featCountBadge').innerText = activeCount + ' ACTIVE';
+        document.getElementById('pairedModeBadge').innerText = data.multiple_paired ? 'Multi-Device Mode' : 'Strict 1-Device Policy';
 
-        // Streaming badges
-        document.getElementById('cameraStatusBadge').innerText = data.camera_sharing_enabled ? 'ENABLED' : 'INACTIVE';
-        document.getElementById('cameraStatusBadge').className = data.camera_sharing_enabled ? 'badge badge-green' : 'badge';
-        document.getElementById('screenStatusBadge').innerText = data.screen_sharing_enabled ? 'ENABLED' : 'INACTIVE';
-        document.getElementById('screenStatusBadge').className = data.screen_sharing_enabled ? 'badge badge-orange' : 'badge';
+        // Settings toggles sync
+        document.getElementById('settContinuity').checked = data.continuity_enabled;
+        document.getElementById('settClipboard').checked = data.auto_clipboard_sync;
+        document.getElementById('settMulti').checked = data.multiple_paired;
+        document.getElementById('settCamera').checked = data.camera_sharing_enabled;
+        document.getElementById('settScreen').checked = data.screen_sharing_enabled;
+        document.getElementById('settDesktop').checked = data.desktop_mode_enabled;
+        document.getElementById('settDiscovery').checked = data.auto_discovery;
 
-        // Multi-Paired toggle
-        document.getElementById('multiToggle').checked = data.multiple_paired;
-
-        // Settings modal sync
-        if (document.getElementById('modalContinuityToggle')) {
-          document.getElementById('modalContinuityToggle').checked = data.continuity_enabled;
-          document.getElementById('modalClipToggle').checked = data.auto_clipboard_sync;
-          document.getElementById('modalEnhancedToggle').checked = data.enhanced_clipboard;
-          document.getElementById('modalMultiToggle').checked = data.multiple_paired;
-          document.getElementById('modalCameraToggle').checked = data.camera_sharing_enabled;
-          document.getElementById('modalScreenToggle').checked = data.screen_sharing_enabled;
-          document.getElementById('modalDesktopToggle').checked = data.desktop_mode_enabled;
-          document.getElementById('modalDiscoveryToggle').checked = data.auto_discovery;
-          document.getElementById('modalAcceptToggle').checked = data.auto_accept_paired;
-          document.getElementById('modalDownPath').innerText = data.download_dir;
-        }
-
-        // Paired devices list
+        // Paired Devices List
         const pList = document.getElementById('pairedList');
+        const pSec = document.getElementById('pairedSection');
         if (data.paired_devices && data.paired_devices.length > 0) {
-          pList.innerHTML = data.paired_devices.map(d => 
-            '<li class="list-item">' +
-              '<div class="list-item-left">' +
-                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>' +
-                '<div>' +
-                  '<div class="list-item-title">' + d.device_name + '</div>' +
-                  '<div class="list-item-sub">' + (data.multiple_paired ? 'Multi-Device Mode' : 'Strict 1-Device Policy') + '</div>' +
+          pSec.style.display = 'flex';
+          pList.innerHTML = data.paired_devices.map(d => {
+            const isThisConn = isConn && (data.connected_device_id === d.device_id || data.connected_device_name === d.device_name);
+            return '<div class="device-row">' +
+              '<div class="device-left">' +
+                '<div class="device-icon-box">' +
+                  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" color="' + (isThisConn ? '#34c759' : '#0071e3') + '"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>' +
+                '</div>' +
+                '<div class="device-details">' +
+                  '<div class="device-name-row">' +
+                    '<span class="device-name">' + d.device_name + '</span>' +
+                    '<span class="pill-badge ' + (isThisConn ? 'pill-green' : 'pill-cyan') + '">' + (isThisConn ? 'Connected' : 'Paired') + '</span>' +
+                  '</div>' +
+                  '<span class="device-sub">' + (data.multiple_paired ? 'Multi-Device Mode • Keychain Protected' : 'Strict 1-Device Policy • Keychain Protected') + '</span>' +
                 '</div>' +
               '</div>' +
-              '<div style="display:flex; gap:6px;">' +
-                '<button class="btn btn-bordered btn-sm" onclick="disconnectDevice(\'' + d.device_id + '\')">Disconnect</button>' +
+              '<div class="device-actions">' +
+                (isThisConn ? '<button class="btn btn-bordered btn-sm" onclick="disconnectDevice(\'' + d.device_id + '\')">Disconnect</button>' : '<button class="btn btn-prominent btn-sm" onclick="connectToDevice(\'' + d.device_id + '\',\'' + (d.ip||'') + '\',' + (d.port||52840) + ',\'' + d.device_name.replace(/'/g, "\\'") + '\')">Connect</button>') +
                 '<button class="btn btn-danger btn-sm" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button>' +
               '</div>' +
-            '</li>'
-          ).join('');
+            '</div>';
+          }).join('');
         } else {
-          pList.innerHTML = '<li class="muted">No paired devices yet. Discover nearby devices below.</li>';
+          pSec.style.display = 'none';
         }
 
-        // Nearby Discovered devices list
+        // Nearby Discovered Devices List
         const dList = document.getElementById('discoveredList');
         if (data.discovered_devices && data.discovered_devices.length > 0) {
           dList.innerHTML = data.discovered_devices.map(d => {
             const isPaired = data.paired_devices && data.paired_devices.some(p => p.device_id === d.device_id);
-            return '<li class="list-item">' +
-              '<div class="list-item-left">' +
-                '<div style="width:7px; height:7px; border-radius:50%; background:#22c55e;"></div>' +
-                '<div>' +
-                  '<div class="list-item-title">' + d.device_name + '</div>' +
-                  '<div class="list-item-sub">' + d.ip + ':' + d.port + '</div>' +
+            const isCurrentConn = isConn && (data.connected_device_id === d.device_id || data.connected_device_name === d.device_name);
+            return '<div class="device-row">' +
+              '<div class="device-left">' +
+                '<div class="device-icon-box">' +
+                  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>' +
+                  '<div class="online-dot"></div>' +
+                '</div>' +
+                '<div class="device-details">' +
+                  '<div class="device-name-row">' +
+                    '<span class="device-name">' + d.device_name + '</span>' +
+                    (isCurrentConn ? '<span class="pill-badge pill-green">Connected</span>' : (isPaired ? '<span class="pill-badge pill-cyan">Paired</span>' : '<span class="pill-badge pill-blue">Available</span>')) +
+                  '</div>' +
+                  '<span class="device-sub">' + d.ip + ':' + d.port + '</span>' +
                 '</div>' +
               '</div>' +
-              '<div style="display:flex; gap:6px;">' +
-                (isPaired ? 
-                  '<button class="btn btn-bordered btn-sm" onclick="requestCameraStream(\'camera\', \'request_stream\')">Camera</button>' +
-                  '<button class="btn btn-bordered btn-sm" onclick="requestCameraStream(\'screen\', \'request_stream\')">Screen</button>' +
-                  '<button class="btn btn-danger btn-sm" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button>' : 
-                  '<button class="btn btn-success btn-sm" onclick="pairDevice(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Pair Device</button>'
+              '<div class="device-actions">' +
+                (isCurrentConn ? 
+                  '<button class="btn btn-teal btn-sm" onclick="startStreamViewer(\'camera\')">Camera</button>' +
+                  '<button class="btn btn-orange btn-sm" onclick="startStreamViewer(\'screen\')">Screen</button>' +
+                  '<button class="btn btn-danger btn-sm" onclick="disconnectDevice(\'' + d.device_id + '\')">Disconnect</button>' : 
+                  (isPaired ? 
+                    '<button class="btn btn-prominent btn-sm" onclick="connectToDevice(\'' + d.device_id + '\',\'' + d.ip + '\',' + d.port + ',\'' + d.device_name.replace(/'/g, "\\'") + '\')">Connect</button>' : 
+                    '<button class="btn btn-bordered btn-sm" style="color:var(--accent-purple); border-color:rgba(175,82,222,0.3);" onclick="pairDevice(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Pair Device</button>'
+                  )
                 ) +
               '</div>' +
-            '</li>';
+            '</div>';
           }).join('');
         } else {
-          dList.innerHTML = '<li class="muted">Searching for nearby devices on local Wi-Fi...</li>';
+          dList.innerHTML = '<div style="text-align:center; padding:12px; font-size:11px; color:var(--text-sub);">' +
+            (data.auto_discovery ? 'Searching on local Wi-Fi... Open DexoLink on your iPhone or Android.' : 'Discovery paused.') +
+          '</div>';
         }
 
-        // Recent Transfers list
-        const tList = document.getElementById('transfersList');
-        const modalTList = document.getElementById('modalTransfersList');
-        if (data.transfer_history && data.transfer_history.length > 0) {
-          const tHtml = data.transfer_history.slice(0, 10).map(t => 
-            '<li class="list-item">' +
-              '<div class="list-item-left">' +
-                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
-                '<div>' +
-                  '<div class="list-item-title">' + t.file_name + '</div>' +
-                  '<div class="list-item-sub">' + (t.size ? (t.size / 1024).toFixed(1) + ' KB' : 'Completed') + '</div>' +
-                '</div>' +
+        // Recent Transfers in card
+        const recList = document.getElementById('recentTransfersList');
+        if (data.recent_transfers && data.recent_transfers.length > 0) {
+          recList.innerHTML = data.recent_transfers.slice(0, 3).map(t => 
+            '<div style="display:flex; align-items:center; justify-content:space-between; font-size:10px; padding:3px 6px; background:rgba(255,255,255,0.02); border-radius:4px;">' +
+              '<div style="display:flex; align-items:center; gap:5px; min-width:0;">' +
+                '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="' + (t.success ? '#34c759' : '#ff3b30') + '" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
+                '<span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;">' + t.file_name + '</span>' +
               '</div>' +
-              '<button class="btn btn-bordered btn-sm" onclick="deleteTransfer(\'' + t.id + '\')">Delete</button>' +
-            '</li>'
+              '<div style="display:flex; align-items:center; gap:6px;">' +
+                '<span style="color:var(--text-sub);">' + (t.size > 1048576 ? (t.size/1048576).toFixed(1) + ' MB' : (t.size/1024).toFixed(1) + ' KB') + '</span>' +
+                '<button class="btn btn-bordered btn-sm" style="padding:0 4px; font-size:9px;" onclick="openDownloadsFolder()">Show</button>' +
+              '</div>' +
+            '</div>'
           ).join('');
-          tList.innerHTML = tHtml;
-          if (modalTList) modalTList.innerHTML = tHtml;
         } else {
-          tList.innerHTML = '<li class="muted">No transfers yet today.</li>';
-          if (modalTList) modalTList.innerHTML = '<li class="muted">No transfers in history.</li>';
+          recList.innerHTML = '<div style="font-size:10px; color:var(--text-sub);">No transfers yet today.</div>';
         }
 
-        // Clipboard history list
-        const cList = document.getElementById('clipList');
-        const modalCList = document.getElementById('modalClipboardList');
+        // History Modal sync
+        const histTList = document.getElementById('histTransfersTab');
+        if (data.recent_transfers && data.recent_transfers.length > 0) {
+          histTList.innerHTML = data.recent_transfers.map(t =>
+            '<div class="device-row">' +
+              '<div class="device-details">' +
+                '<div style="font-weight:600; font-size:11px;">' + t.file_name + '</div>' +
+                '<div class="device-sub">' + (t.is_incoming ? 'From ' : 'To ') + t.peer_name + ' • ' + (t.size > 1048576 ? (t.size/1048576).toFixed(1) + ' MB' : (t.size/1024).toFixed(1) + ' KB') + '</div>' +
+              '</div>' +
+              '<button class="btn btn-danger btn-sm" onclick="deleteTransfer(\'' + t.id + '\')">Delete</button>' +
+            '</div>'
+          ).join('');
+        } else {
+          histTList.innerHTML = '<div style="padding:10px; text-align:center; color:var(--text-sub); font-size:11px;">No transfer history.</div>';
+        }
+
+        const histCList = document.getElementById('histClipboardTab');
         if (data.clipboard_history && data.clipboard_history.length > 0) {
-          const cHtml = data.clipboard_history.slice(0, 10).map((t, idx) => 
-            '<li class="list-item">' +
-              '<div class="list-item-title">' + t.substring(0, 36) + (t.length > 36 ? '...' : '') + '</div>' +
-              '<div style="display:flex; gap:4px;">' +
-                '<button class="btn btn-bordered btn-sm" onclick="navigator.clipboard.writeText(\'' + t.replace(/'/g, "\\'") + '\')">Copy</button>' +
-                '<button class="btn btn-danger btn-sm" onclick="deleteClip(' + idx + ')">&times;</button>' +
+          histCList.innerHTML = data.clipboard_history.map((c, idx) =>
+            '<div class="device-row">' +
+              '<div class="device-details" style="flex:1; min-width:0;">' +
+                '<div style="font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + c + '</div>' +
               '</div>' +
-            '</li>'
+              '<div style="display:flex; gap:4px;">' +
+                '<button class="btn btn-bordered btn-sm" onclick="navigator.clipboard.writeText(\'' + c.replace(/'/g, "\\'") + '\')">Copy</button>' +
+                '<button class="btn btn-danger btn-sm" onclick="deleteClip(' + idx + ')">Delete</button>' +
+              '</div>' +
+            '</div>'
           ).join('');
-          cList.innerHTML = cHtml;
-          if (modalCList) modalCList.innerHTML = cHtml;
         } else {
-          cList.innerHTML = '<li class="muted">No clipboard items yet.</li>';
-          if (modalCList) modalCList.innerHTML = '<li class="muted">No clipboard items in history.</li>';
+          histCList.innerHTML = '<div style="padding:10px; text-align:center; color:var(--text-sub); font-size:11px;">No clipboard history.</div>';
         }
 
       } catch (e) {
@@ -2002,6 +2850,11 @@ const webUIHTML = `<!DOCTYPE html>
 
     async function deleteTransfer(id) {
       await fetch('/api/delete-transfer?id=' + encodeURIComponent(id));
+      loadStatus();
+    }
+
+    async function deleteClip(idx) {
+      await fetch('/api/delete-clip?index=' + idx);
       loadStatus();
     }
 
