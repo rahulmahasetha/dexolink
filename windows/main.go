@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -27,31 +28,34 @@ const (
 	BeaconPort      = 52841
 	WebUIPort       = 52842
 	ProtocolVersion = 1
-	ChunkSize       = 64 * 1024 // 64 KB
+	ChunkSize       = 64 * 1024               // 64 KB per chunk (matches DexoLink spec)
+	MaxFileSize     = 10 * 1024 * 1024 * 1024 // 10 GB max file size
+	MaxMessageSize  = 10 * 1024 * 1024        // 10 MB max message size
 )
 
 // TrustStore holds paired trusted devices
 type TrustStore struct {
-	mu                         sync.Mutex
-	MultiplePairedDevices      bool                  `json:"multiple_paired_devices_enabled"`
-	PairedDevices              map[string]DeviceInfo `json:"paired_devices"`
-	filePath                   string
+	mu                    sync.Mutex
+	MultiplePairedDevices bool                  `json:"multiple_paired_devices_enabled"`
+	PairedDevices         map[string]DeviceInfo `json:"paired_devices"`
+	filePath              string
 }
 
 type DeviceInfo struct {
 	DeviceID   string  `json:"device_id"`
 	DeviceName string  `json:"device_name"`
-	PublicKey  string  `json:"public_key"`
+	PublicKey  string  `json:"public_key,omitempty"`
 	IP         string  `json:"ip,omitempty"`
 	Port       int     `json:"port,omitempty"`
-	PairedAt   float64 `json:"paired_at"`
+	DeviceType string  `json:"device_type,omitempty"`
+	PairedAt   float64 `json:"paired_at,omitempty"`
 }
 
 func NewTrustStore() *TrustStore {
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".dexolink_trust.json")
 	ts := &TrustStore{
-		MultiplePairedDevices: false,
+		MultiplePairedDevices: false, // Matches strict single-device security default
 		PairedDevices:         make(map[string]DeviceInfo),
 		filePath:              path,
 	}
@@ -82,7 +86,9 @@ func (ts *TrustStore) AddDevice(dev DeviceInfo) {
 	if !ts.MultiplePairedDevices {
 		ts.PairedDevices = make(map[string]DeviceInfo)
 	}
-	dev.PairedAt = float64(time.Now().Unix())
+	if dev.PairedAt == 0 {
+		dev.PairedAt = float64(time.Now().Unix())
+	}
 	ts.PairedDevices[dev.DeviceID] = dev
 	ts.save()
 }
@@ -114,14 +120,100 @@ func (ts *TrustStore) SetMultiPaired(enabled bool) {
 	ts.save()
 }
 
+func (ts *TrustStore) IsPaired(devID, devName string) bool {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	for pid, pd := range ts.PairedDevices {
+		if pid == devID || (devName != "" && strings.EqualFold(pd.DeviceName, devName)) {
+			return true
+		}
+	}
+	return false
+}
+
+// PeerSession represents an active TCP session to a connected device
+type PeerSession struct {
+	DeviceID    string     `json:"device_id"`
+	DeviceName  string     `json:"device_name"`
+	IP          string     `json:"ip"`
+	Port        int        `json:"port"`
+	DeviceType  string     `json:"device_type"`
+	ConnectedAt time.Time  `json:"connected_at"`
+	State       string     `json:"state"` // "connected", "transferring"
+	Conn        net.Conn   `json:"-"`
+	writeMu     sync.Mutex `json:"-"`
+}
+
+func (s *PeerSession) SendMessage(msg any) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	if _, err := s.Conn.Write(lenBuf[:]); err != nil {
+		return err
+	}
+	_, err = s.Conn.Write(data)
+	return err
+}
+
+// TransferItem tracks an in-flight or completed file transfer
+type TransferItem struct {
+	ID               string        `json:"id"`
+	FileID           string        `json:"file_id"`
+	Name             string        `json:"name"`
+	Size             int64         `json:"size"`
+	BytesTransferred int64         `json:"bytes_transferred"`
+	Progress         float64       `json:"progress"`
+	SpeedBytesPerSec float64       `json:"speed_bytes_sec"`
+	IsIncoming       bool          `json:"is_incoming"`
+	PeerID           string        `json:"peer_id"`
+	PeerName         string        `json:"peer_name"`
+	State            string        `json:"state"` // "pending", "transferring", "completed", "failed", "cancelled"
+	LocalPath        string        `json:"local_path,omitempty"`
+	StartTime        time.Time     `json:"start_time"`
+	Error            string        `json:"error,omitempty"`
+	cancelChan       chan struct{} `json:"-"`
+}
+
+// ReceiverContext holds active receiving file handle and hash state
+type ReceiverContext struct {
+	transferID         string
+	destPath           string
+	file               *os.File
+	hasher             hashInterface
+	expectedSize       int64
+	receivedBytes      int64
+	lastProgressReport int64
+	lastReportTime     time.Time
+}
+
+type hashInterface interface {
+	Write(p []byte) (n int, err error)
+	Sum(b []byte) []byte
+}
+
+type TransferRecord struct {
+	ID         string    `json:"id"`
+	FileName   string    `json:"file_name"`
+	Size       int64     `json:"size"`
+	IsIncoming bool      `json:"is_incoming"`
+	PeerName   string    `json:"peer_name"`
+	Success    bool      `json:"success"`
+	State      string    `json:"state"`
+	Time       time.Time `json:"time"`
+}
+
 // DexoLinkEngine manages connections, transfers, and discovery
 type DexoLinkEngine struct {
 	DeviceID             string
 	DeviceName           string
 	TrustStore           *TrustStore
-	DiscoveredDevices    sync.Map // map[string]DeviceInfo
-	ActiveConnections    sync.Map // map[string]net.Conn
-	ActivePeers          sync.Map // map[string]DeviceInfo
+	DiscoveredDevices    sync.Map // DeviceID -> DeviceInfo
+	ActiveSessions       sync.Map // DeviceID -> *PeerSession
 	DownloadDir          string
 	mu                   sync.Mutex
 	History              []TransferRecord
@@ -132,20 +224,23 @@ type DexoLinkEngine struct {
 	EnhancedClipboard    bool
 	AutoDiscoveryEnabled bool
 	AutoAcceptPaired     bool
-	// v4.0.1: Media Streaming & Remote Control (OFF by default)
 	CameraSharingEnabled bool
 	ScreenSharingEnabled bool
 	DesktopModeEnabled  bool
-}
 
-type TransferRecord struct {
-	ID        string    `json:"id"`
-	FileName  string    `json:"file_name"`
-	Size      int64     `json:"size"`
-	IsIncoming bool     `json:"is_incoming"`
-	PeerName  string    `json:"peer_name"`
-	Success   bool      `json:"success"`
-	Time      time.Time `json:"time"`
+	// Clipboard tracking
+	clipMu           sync.Mutex
+	lastSentHash     string
+	lastReceivedHash string
+	clipSeq          int
+
+	// Transfer manager tracking
+	transfersMu        sync.Mutex
+	ActiveTransfers    map[string]*TransferItem
+	FileIDToTransferID map[string]string
+	ActiveReceivers    map[string]*ReceiverContext
+	pendingResponses   map[string]chan bool // transferId -> chan accepted
+	pendingAcks        map[string]chan bool // fileId -> chan verified
 }
 
 var engine *DexoLinkEngine
@@ -156,7 +251,10 @@ func initEngine() *DexoLinkEngine {
 	downDir := filepath.Join(home, "Downloads", "DexoLink")
 	_ = os.MkdirAll(downDir, 0755)
 
-	devID := fmt.Sprintf("win_%x", time.Now().UnixNano())[:16]
+	devID := fmt.Sprintf("win_%x", time.Now().UnixNano())
+	if len(devID) > 16 {
+		devID = devID[:16]
+	}
 
 	e := &DexoLinkEngine{
 		DeviceID:             devID,
@@ -174,6 +272,11 @@ func initEngine() *DexoLinkEngine {
 		CameraSharingEnabled: false,
 		ScreenSharingEnabled: false,
 		DesktopModeEnabled:  false,
+		ActiveTransfers:      make(map[string]*TransferItem),
+		FileIDToTransferID:   make(map[string]string),
+		ActiveReceivers:      make(map[string]*ReceiverContext),
+		pendingResponses:     make(map[string]chan bool),
+		pendingAcks:          make(map[string]chan bool),
 	}
 	return e
 }
@@ -190,20 +293,134 @@ func encodeMessage(payload any) ([]byte, error) {
 	return buf, nil
 }
 
-func encodeFileChunk(fileID string, offset int64, chunk []byte) ([]byte, error) {
-	meta := map[string]any{
-		"type":   "FILE_CHUNK",
-		"fileId": fileID,
-		"offset": offset,
+// BroadcastMessage sends a message to all active connected peer sessions
+func (e *DexoLinkEngine) BroadcastMessage(msg any) int {
+	sent := 0
+	e.ActiveSessions.Range(func(key, val any) bool {
+		s := val.(*PeerSession)
+		if err := s.SendMessage(msg); err == nil {
+			sent++
+		}
+		return true
+	})
+	return sent
+}
+
+// CRLF Normalization & Hash Calculation
+func normalizeTextForWindows(text string) string {
+	cleaned := strings.ReplaceAll(text, "\u200B", "")
+	cleaned = strings.ReplaceAll(cleaned, "\u200C", "")
+	cleaned = strings.ReplaceAll(cleaned, "\u200D", "")
+	cleaned = strings.ReplaceAll(cleaned, "\uFEFF", "")
+	normalized := strings.ReplaceAll(cleaned, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	return strings.ReplaceAll(normalized, "\n", "\r\n")
+}
+
+func normalizeTextForWire(text string) string {
+	cleaned := strings.ReplaceAll(text, "\u200B", "")
+	cleaned = strings.ReplaceAll(cleaned, "\u200C", "")
+	cleaned = strings.ReplaceAll(cleaned, "\u200D", "")
+	cleaned = strings.ReplaceAll(cleaned, "\uFEFF", "")
+	normalized := strings.ReplaceAll(cleaned, "\r\n", "\n")
+	return strings.ReplaceAll(normalized, "\r", "\n")
+}
+
+func computeTextHash(text string) string {
+	norm := normalizeTextForWire(text)
+	sum := sha256.Sum256([]byte(norm))
+	return hex.EncodeToString(sum[:])
+}
+
+// Clipboard Background Monitor
+func (e *DexoLinkEngine) startClipboardMonitor() {
+	ticker := time.NewTicker(600 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		e.mu.Lock()
+		enabled := e.Enabled
+		autoClip := e.AutoClipboardSync
+		e.mu.Unlock()
+
+		if !enabled || !autoClip {
+			continue
+		}
+
+		hasPeers := false
+		e.ActiveSessions.Range(func(k, v any) bool {
+			hasPeers = true
+			return false
+		})
+		if !hasPeers {
+			continue
+		}
+
+		text, err := getSystemClipboard()
+		if err != nil || text == "" {
+			continue
+		}
+
+		h := computeTextHash(text)
+		e.clipMu.Lock()
+		if h == e.lastSentHash || h == e.lastReceivedHash {
+			e.clipMu.Unlock()
+			continue
+		}
+		e.lastSentHash = h
+		e.clipSeq++
+		seq := e.clipSeq
+		e.clipMu.Unlock()
+
+		normWire := normalizeTextForWire(text)
+		e.mu.Lock()
+		e.ClipboardHistory = append([]string{normWire}, e.ClipboardHistory...)
+		if len(e.ClipboardHistory) > 50 {
+			e.ClipboardHistory = e.ClipboardHistory[:50]
+		}
+		e.mu.Unlock()
+
+		msg := map[string]any{
+			"type":           "CLIPBOARD_PUSH",
+			"sequenceNumber": seq,
+			"content":        normWire,
+		}
+		e.BroadcastMessage(msg)
+		fmt.Printf("[DexoLink Windows Clipboard] Synced copy (%d chars) to connected peers\n", len(normWire))
 	}
-	metaBytes, _ := json.Marshal(meta)
-	payloadLen := 2 + len(metaBytes) + len(chunk)
-	buf := make([]byte, 4+payloadLen)
-	binary.BigEndian.PutUint32(buf[:4], uint32(payloadLen))
-	binary.BigEndian.PutUint16(buf[4:6], uint16(len(metaBytes)))
-	copy(buf[6:6+len(metaBytes)], metaBytes)
-	copy(buf[6+len(metaBytes):], chunk)
-	return buf, nil
+}
+
+// Sanitize filename to prevent directory traversal
+func sanitizeFilename(name string) string {
+	clean := strings.ReplaceAll(name, "..", "")
+	clean = strings.ReplaceAll(clean, "/", "_")
+	clean = strings.ReplaceAll(clean, "\\", "_")
+	clean = strings.TrimSpace(clean)
+	if clean == "" {
+		return "unnamed_file"
+	}
+	return clean
+}
+
+// Get safe unique destination path in downloads directory
+func getSafeDestinationPath(baseDir, filename string) string {
+	cleanName := sanitizeFilename(filename)
+	dest := filepath.Join(baseDir, cleanName)
+	if _, err := os.Stat(dest); os.IsNotExist(err) {
+		return dest
+	}
+
+	ext := filepath.Ext(cleanName)
+	nameWithoutExt := strings.TrimSuffix(cleanName, ext)
+	counter := 1
+	for {
+		newName := fmt.Sprintf("%s (%d)%s", nameWithoutExt, counter, ext)
+		dest = filepath.Join(baseDir, newName)
+		if _, err := os.Stat(dest); os.IsNotExist(err) {
+			return dest
+		}
+		counter++
+	}
 }
 
 // TCP Server
@@ -226,17 +443,31 @@ func (e *DexoLinkEngine) startTCPServer(ready chan<- error) {
 		if err != nil {
 			break
 		}
-		go e.handleClient(conn)
+		go e.handleIncomingConnection(conn)
 	}
 }
 
-func (e *DexoLinkEngine) handleClient(conn net.Conn) {
+func (e *DexoLinkEngine) handleIncomingConnection(conn net.Conn) {
+	session := &PeerSession{
+		Conn:        conn,
+		ConnectedAt: time.Now(),
+		State:       "connected",
+	}
+	e.handleClient(conn, session)
+}
+
+func (e *DexoLinkEngine) handleClient(conn net.Conn, session *PeerSession) {
 	defer conn.Close()
+	remoteAddr := conn.RemoteAddr().String()
+	remoteIP := strings.Split(remoteAddr, ":")[0]
 	var peerID string
+	var peerName string
+
 	defer func() {
 		if peerID != "" {
-			e.ActiveConnections.Delete(peerID)
-			e.ActivePeers.Delete(peerID)
+			e.ActiveSessions.Delete(peerID)
+			fmt.Printf("[DexoLink Windows] Device disconnected: %s (%s)\n", peerName, peerID)
+			updateTrayStatus(fmt.Sprintf("DexoLink - %s disconnected", peerName))
 		}
 	}()
 
@@ -245,24 +476,33 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 		if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
 			break
 		}
+		if length > MaxMessageSize {
+			fmt.Printf("[DexoLink Windows Security] Message exceeded max length: %d bytes\n", length)
+			break
+		}
+
 		buf := make([]byte, length)
 		if _, err := io.ReadFull(conn, buf); err != nil {
 			break
 		}
 
-		// Handle FILE_CHUNK
+		// Support Legacy Hybrid FILE_CHUNK: [2-byte jsonLen] [JSON metadata] [Binary bytes]
 		if length > 2 {
-			metaLen := binary.BigEndian.Uint16(buf[:2])
-			if int(2+metaLen) <= len(buf) {
+			metaLen := int(binary.BigEndian.Uint16(buf[:2]))
+			if metaLen > 0 && 2+metaLen <= len(buf) {
 				var meta map[string]any
 				if err := json.Unmarshal(buf[2:2+metaLen], &meta); err == nil && meta["type"] == "FILE_CHUNK" {
-					// Binary chunk
+					fID, _ := meta["fileId"].(string)
+					offFloat, _ := meta["offset"].(float64)
+					offset := int64(offFloat)
+					binaryData := buf[2+metaLen:]
+					e.processFileChunk(fID, offset, binaryData, session)
 					continue
 				}
 			}
 		}
 
-		// Handle Standard JSON Message
+		// Standard JSON Protocol Message
 		var msg map[string]any
 		if err := json.Unmarshal(buf, &msg); err != nil {
 			continue
@@ -273,43 +513,81 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 		case "HELLO":
 			pID, _ := msg["deviceId"].(string)
 			pName, _ := msg["deviceName"].(string)
+			if pID == "" {
+				pID = fmt.Sprintf("peer_%s", remoteIP)
+			}
+			if pName == "" {
+				pName = fmt.Sprintf("Device (%s)", remoteIP)
+			}
 			peerID = pID
-			remoteIP := strings.Split(conn.RemoteAddr().String(), ":")[0]
-			peerInfo := DeviceInfo{
+			peerName = pName
+
+			session.DeviceID = peerID
+			session.DeviceName = peerName
+			session.IP = remoteIP
+			session.Port = DefaultPort
+			session.DeviceType = "device"
+
+			e.ActiveSessions.Store(peerID, session)
+			devInfo := DeviceInfo{
 				DeviceID:   peerID,
-				DeviceName: pName,
+				DeviceName: peerName,
 				IP:         remoteIP,
 				Port:       DefaultPort,
 			}
-			e.ActiveConnections.Store(peerID, conn)
-			e.ActivePeers.Store(peerID, peerInfo)
-			e.DiscoveredDevices.Store(peerID, peerInfo)
+			e.DiscoveredDevices.Store(peerID, devInfo)
 
-			isPaired := false
-			e.TrustStore.mu.Lock()
-			_, isPaired = e.TrustStore.PairedDevices[peerID]
+			isPaired := e.TrustStore.IsPaired(peerID, peerName)
 			if isPaired {
-				paired := e.TrustStore.PairedDevices[peerID]
-				paired.IP = remoteIP
-				e.TrustStore.PairedDevices[peerID] = paired
-				e.TrustStore.save()
+				e.TrustStore.mu.Lock()
+				if p, exists := e.TrustStore.PairedDevices[peerID]; exists {
+					p.IP = remoteIP
+					e.TrustStore.PairedDevices[peerID] = p
+					e.TrustStore.save()
+				}
+				e.TrustStore.mu.Unlock()
 			}
-			e.TrustStore.mu.Unlock()
 
-			resp, _ := encodeMessage(map[string]any{
+			_ = session.SendMessage(map[string]any{
 				"type":       "HELLO_ACK",
 				"version":    ProtocolVersion,
 				"deviceId":   e.DeviceID,
 				"deviceName": e.DeviceName,
 				"paired":     isPaired,
 			})
-			_, _ = conn.Write(resp)
+			fmt.Printf("[DexoLink Windows] Active connection: %s (%s) [paired: %v]\n", peerName, remoteIP, isPaired)
+			updateTrayStatus(fmt.Sprintf("DexoLink - Connected to %s", peerName))
+
+		case "HELLO_ACK":
+			pID, _ := msg["deviceId"].(string)
+			pName, _ := msg["deviceName"].(string)
+			if pID != "" {
+				peerID = pID
+				session.DeviceID = pID
+			}
+			if pName != "" {
+				peerName = pName
+				session.DeviceName = pName
+			}
+			e.ActiveSessions.Store(peerID, session)
+			devInfo := DeviceInfo{
+				DeviceID:   peerID,
+				DeviceName: peerName,
+				IP:         remoteIP,
+				Port:       DefaultPort,
+			}
+			e.DiscoveredDevices.Store(peerID, devInfo)
+			updateTrayStatus(fmt.Sprintf("DexoLink - Connected to %s", peerName))
 
 		case "PAIR_REQUEST":
 			pID, _ := msg["deviceId"].(string)
 			pName, _ := msg["deviceName"].(string)
+			pubKey, _ := msg["publicKey"].(string)
 			if pID == "" {
 				pID = peerID
+			}
+			if pName == "" {
+				pName = peerName
 			}
 			if pName == "" {
 				pName = "Remote Device"
@@ -317,31 +595,55 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			e.TrustStore.AddDevice(DeviceInfo{
 				DeviceID:   pID,
 				DeviceName: pName,
+				PublicKey:  pubKey,
+				IP:         remoteIP,
+				Port:       DefaultPort,
 			})
-			resp, _ := encodeMessage(map[string]any{
+			_ = session.SendMessage(map[string]any{
 				"type":      "PAIR_RESPONSE",
 				"accepted":  true,
 				"publicKey": "windows_public_key",
 			})
-			_, _ = conn.Write(resp)
+			fmt.Printf("[DexoLink Windows] Successfully paired with %s (%s)\n", pName, pID)
+
+		case "UNPAIR":
+			if peerID != "" {
+				e.TrustStore.RemoveDevice(peerID)
+			}
 
 		case "CLIPBOARD_PUSH":
 			content, _ := msg["content"].(string)
 			seq, _ := msg["sequenceNumber"].(float64)
 			if content != "" {
-				e.mu.Lock()
-				e.ClipboardHistory = append([]string{content}, e.ClipboardHistory...)
-				if len(e.ClipboardHistory) > 50 {
-					e.ClipboardHistory = e.ClipboardHistory[:50]
+				h := computeTextHash(content)
+				e.clipMu.Lock()
+				if h != e.lastReceivedHash && h != e.lastSentHash {
+					e.lastReceivedHash = h
+					e.clipMu.Unlock()
+
+					normWin := normalizeTextForWindows(content)
+					setSystemClipboard(normWin)
+
+					normWire := normalizeTextForWire(content)
+					e.mu.Lock()
+					e.ClipboardHistory = append([]string{normWire}, e.ClipboardHistory...)
+					if len(e.ClipboardHistory) > 50 {
+						e.ClipboardHistory = e.ClipboardHistory[:50]
+					}
+					e.mu.Unlock()
+					fmt.Printf("[DexoLink Windows Clipboard] Received and applied clipboard (%d chars) from %s\n", len(content), peerName)
+				} else {
+					e.clipMu.Unlock()
+					fmt.Printf("[DexoLink Windows Clipboard] Ignored duplicate/echo text (hash: %s)\n", h[:8])
 				}
-				e.mu.Unlock()
-				fmt.Printf("[DexoLink Windows] Received clipboard (%d chars)\n", len(content))
 			}
-			ack, _ := encodeMessage(map[string]any{
+			_ = session.SendMessage(map[string]any{
 				"type":           "CLIPBOARD_ACK",
 				"sequenceNumber": int(seq),
 			})
-			_, _ = conn.Write(ack)
+
+		case "CLIPBOARD_ACK":
+			// Acknowledged by peer
 
 		case "CONTINUITY_ACTIVITY":
 			actID, _ := msg["activityId"].(string)
@@ -350,53 +652,227 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 				fmt.Printf("[DexoLink Windows Continuity] Opening URL: %s\n", u)
 				openBrowser(u)
 			}
-			ack, _ := encodeMessage(map[string]any{
+			_ = session.SendMessage(map[string]any{
 				"type":       "CONTINUITY_ACK",
 				"activityId": actID,
 				"status":     "handled",
 			})
-			_, _ = conn.Write(ack)
 
 		case "TRANSFER_REQUEST":
 			tID, _ := msg["transferId"].(string)
-			resp, _ := encodeMessage(map[string]any{
+			totalFiles, _ := msg["totalFiles"].(float64)
+			totalSizeFloat, _ := msg["totalSize"].(float64)
+			totalSize := int64(totalSizeFloat)
+
+			// Security validation
+			if totalSize <= 0 || totalSize > MaxFileSize {
+				_ = session.SendMessage(map[string]any{
+					"type":       "TRANSFER_RESPONSE",
+					"transferId": tID,
+					"accepted":   false,
+					"reason":     "Invalid file size",
+				})
+				continue
+			}
+
+			item := &TransferItem{
+				ID:         tID,
+				Name:       "Incoming file...",
+				Size:       totalSize,
+				IsIncoming: true,
+				PeerID:     session.DeviceID,
+				PeerName:   session.DeviceName,
+				State:      "transferring",
+				StartTime:  time.Now(),
+				cancelChan: make(chan struct{}),
+			}
+			e.transfersMu.Lock()
+			e.ActiveTransfers[tID] = item
+			e.transfersMu.Unlock()
+
+			_ = session.SendMessage(map[string]any{
 				"type":       "TRANSFER_RESPONSE",
 				"transferId": tID,
 				"accepted":   true,
 			})
-			_, _ = conn.Write(resp)
+			fmt.Printf("[DexoLink Windows] Accepted transfer request %s (%d bytes, %d files) from %s\n", tID, totalSize, int(totalFiles), session.DeviceName)
+
+		case "TRANSFER_RESPONSE":
+			tID, _ := msg["transferId"].(string)
+			accepted, _ := msg["accepted"].(bool)
+			e.transfersMu.Lock()
+			ch, ok := e.pendingResponses[tID]
+			e.transfersMu.Unlock()
+			if ok && ch != nil {
+				select {
+				case ch <- accepted:
+				default:
+				}
+			}
+
+		case "FILE_META":
+			tID, _ := msg["transferId"].(string)
+			fID, _ := msg["fileId"].(string)
+			fName, _ := msg["name"].(string)
+			sizeFloat, _ := msg["size"].(float64)
+			size := int64(sizeFloat)
+
+			destPath := getSafeDestinationPath(e.DownloadDir, fName)
+			outF, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			if err != nil {
+				fmt.Printf("[DexoLink Windows] Error creating destination file: %v\n", err)
+				_ = session.SendMessage(map[string]any{
+					"type":       "CANCEL",
+					"transferId": tID,
+				})
+				continue
+			}
+
+			rc := &ReceiverContext{
+				transferID:     tID,
+				destPath:       destPath,
+				file:           outF,
+				hasher:         sha256.New(),
+				expectedSize:   size,
+				receivedBytes:  0,
+				lastReportTime: time.Now(),
+			}
+
+			e.transfersMu.Lock()
+			e.ActiveReceivers[fID] = rc
+			e.FileIDToTransferID[fID] = tID
+			if item, exists := e.ActiveTransfers[tID]; exists {
+				item.FileID = fID
+				item.Name = filepath.Base(destPath)
+				item.LocalPath = destPath
+				item.Size = size
+				item.State = "transferring"
+			}
+			e.transfersMu.Unlock()
+			fmt.Printf("[DexoLink Windows] Receiving file %s (%d bytes) -> %s\n", fName, size, destPath)
+
+		case "FILE_CHUNK":
+			fID, _ := msg["fileId"].(string)
+			offFloat, _ := msg["offset"].(float64)
+			offset := int64(offFloat)
+			dataB64, _ := msg["data"].(string)
+			chunkData, err := base64.StdEncoding.DecodeString(dataB64)
+			if err == nil && len(chunkData) > 0 {
+				e.processFileChunk(fID, offset, chunkData, session)
+			}
+
+		case "PROGRESS":
+			tID, _ := msg["transferId"].(string)
+			bytesReceivedFloat, _ := msg["bytesReceived"].(float64)
+			received := int64(bytesReceivedFloat)
+			e.transfersMu.Lock()
+			if item, exists := e.ActiveTransfers[tID]; exists {
+				item.BytesTransferred = received
+				if item.Size > 0 {
+					item.Progress = float64(received) / float64(item.Size)
+				}
+			}
+			e.transfersMu.Unlock()
+
+		case "FILE_COMPLETE":
+			fID, _ := msg["fileId"].(string)
+			declaredSHA, _ := msg["sha256"].(string)
+
+			e.transfersMu.Lock()
+			rc, exists := e.ActiveReceivers[fID]
+			delete(e.ActiveReceivers, fID)
+			tID := e.FileIDToTransferID[fID]
+			item := e.ActiveTransfers[tID]
+			e.transfersMu.Unlock()
+
+			if exists && rc != nil {
+				_ = rc.file.Close()
+				computedHash := hex.EncodeToString(rc.hasher.Sum(nil))
+				verified := strings.EqualFold(computedHash, declaredSHA)
+
+				if verified {
+					fmt.Printf("[DexoLink Windows] Successfully received and verified %s (SHA-256 match: %s)\n", rc.destPath, computedHash[:8])
+					if item != nil {
+						item.State = "completed"
+						item.Progress = 1.0
+						item.BytesTransferred = item.Size
+					}
+					e.mu.Lock()
+					e.History = append([]TransferRecord{{
+						ID:         tID,
+						FileName:   filepath.Base(rc.destPath),
+						Size:       rc.expectedSize,
+						IsIncoming: true,
+						PeerName:   session.DeviceName,
+						Success:    true,
+						State:      "completed",
+						Time:       time.Now(),
+					}}, e.History...)
+					e.mu.Unlock()
+				} else {
+					fmt.Printf("[DexoLink Windows Security] SHA-256 mismatch for %s! Computed: %s, declared: %s\n", rc.destPath, computedHash, declaredSHA)
+					_ = os.Remove(rc.destPath)
+					if item != nil {
+						item.State = "failed"
+						item.Error = "SHA-256 checksum mismatch"
+					}
+				}
+
+				_ = session.SendMessage(map[string]any{
+					"type":     "FILE_ACK",
+					"fileId":   fID,
+					"verified": verified,
+				})
+			}
+
+		case "FILE_ACK":
+			fID, _ := msg["fileId"].(string)
+			verified, _ := msg["verified"].(bool)
+			e.transfersMu.Lock()
+			ch, ok := e.pendingAcks[fID]
+			tID := e.FileIDToTransferID[fID]
+			item := e.ActiveTransfers[tID]
+			e.transfersMu.Unlock()
+
+			if ok && ch != nil {
+				select {
+				case ch <- verified:
+				default:
+				}
+			}
+			if item != nil {
+				if verified {
+					item.State = "completed"
+					item.Progress = 1.0
+				} else {
+					item.State = "failed"
+					item.Error = "Peer verification failed"
+				}
+			}
+
+		case "CANCEL":
+			tID, _ := msg["transferId"].(string)
+			e.cancelTransferInternal(tID, false)
+
+		case "PING":
+			_ = session.SendMessage(map[string]any{"type": "PONG"})
 
 		case "STREAM_REQUEST":
 			streamID, _ := msg["streamId"].(string)
 			streamType, _ := msg["streamType"].(string)
+			e.mu.Lock()
 			accepted := false
 			reason := ""
-
-			e.mu.Lock()
-			cam := e.CameraSharingEnabled
-			screen := e.ScreenSharingEnabled
-			desk := e.DesktopModeEnabled
-			e.mu.Unlock()
-
-			if streamType == "camera" {
-				if cam {
-					accepted = true
-				} else {
-					reason = "Camera Sharing is turned OFF in Windows Settings."
-				}
-			} else if streamType == "screen" {
-				if screen {
-					accepted = true
-				} else {
-					reason = "Screen Sharing is turned OFF in Windows Settings."
-				}
-			} else if streamType == "desktop" {
-				if desk {
-					accepted = true
-				} else {
-					reason = "Desktop Mode is turned OFF in Windows Settings."
-				}
+			if streamType == "camera" && e.CameraSharingEnabled {
+				accepted = true
+			} else if streamType == "screen" && e.ScreenSharingEnabled {
+				accepted = true
+			} else if streamType == "desktop" && e.DesktopModeEnabled {
+				accepted = true
+			} else {
+				reason = fmt.Sprintf("%s sharing is disabled in Windows Settings", streamType)
 			}
+			e.mu.Unlock()
 
 			respData := map[string]any{
 				"type":       "STREAM_RESPONSE",
@@ -407,23 +883,15 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 			if !accepted {
 				respData["reason"] = reason
 			}
-			resp, _ := encodeMessage(respData)
-			_, _ = conn.Write(resp)
-
-		case "STREAM_STOP":
-			// Acknowledge stream termination
-
-		case "DESKTOP_INPUT_EVENT":
-			// Handled when Desktop Mode is enabled
+			_ = session.SendMessage(respData)
 
 		case "WEBRTC_SIGNAL":
-			// WebRTC signaling message exchange (offer/answer/candidate)
 			streamID, _ := msg["streamId"].(string)
 			streamType, _ := msg["streamType"].(string)
 			sigType, _ := msg["signalType"].(string)
 			if sigType == "offer" {
 				answerSDP := "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=DexoLink Windows " + streamType + " Stream\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\n"
-				respData := map[string]any{
+				_ = session.SendMessage(map[string]any{
 					"type":          "WEBRTC_SIGNAL",
 					"streamId":      streamID,
 					"streamType":    streamType,
@@ -432,133 +900,404 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn) {
 					"sdpMid":        "0",
 					"sdpMLineIndex": 0,
 					"options":       map[string]any{"status": "accepted", "mode": "p2p_with_turn_fallback"},
-				}
-				resp, _ := encodeMessage(respData)
-				_, _ = conn.Write(resp)
+				})
 			}
-
-		case "FILE_ACK":
-			// Handled by sender
-		case "PING":
-			resp, _ := encodeMessage(map[string]any{"type": "PONG"})
-			_, _ = conn.Write(resp)
 		}
 	}
 }
 
-// UDP Discovery
-func (e *DexoLinkEngine) startUDPBeacon() {
-	conn, err := net.DialUDP("udp", nil, &net.UDPAddr{
-		IP:   net.IPv4(255, 255, 255, 255),
-		Port: BeaconPort,
-	})
-	if err != nil {
+// processFileChunk handles writing and hashing a chunk for an active receiver
+func (e *DexoLinkEngine) processFileChunk(fID string, offset int64, chunk []byte, session *PeerSession) {
+	e.transfersMu.Lock()
+	rc, exists := e.ActiveReceivers[fID]
+	tID := e.FileIDToTransferID[fID]
+	item := e.ActiveTransfers[tID]
+	e.transfersMu.Unlock()
+
+	if !exists || rc == nil {
 		return
 	}
-	defer conn.Close()
 
-	beacon, _ := json.Marshal(map[string]any{
-		"type":       "BEACON",
-		"version":    ProtocolVersion,
-		"deviceId":   e.DeviceID,
-		"deviceName": e.DeviceName,
-		"port":       DefaultPort,
-	})
+	// Security: Prevent buffer overflow
+	if rc.receivedBytes+int64(len(chunk)) > rc.expectedSize+ChunkSize {
+		fmt.Printf("[DexoLink Windows Security] Received bytes exceeded declared size. Aborting.\n")
+		_ = rc.file.Close()
+		_ = os.Remove(rc.destPath)
+		_ = session.SendMessage(map[string]any{"type": "CANCEL", "transferId": rc.transferID})
+		return
+	}
 
-	for {
-		e.mu.Lock()
-		disc := e.AutoDiscoveryEnabled
-		e.mu.Unlock()
-		if disc {
-			_, _ = conn.Write(beacon)
+	_, _ = rc.file.WriteAt(chunk, offset)
+	_, _ = rc.hasher.Write(chunk)
+	rc.receivedBytes += int64(len(chunk))
+
+	if item != nil {
+		item.BytesTransferred = rc.receivedBytes
+		if rc.expectedSize > 0 {
+			item.Progress = float64(rc.receivedBytes) / float64(rc.expectedSize)
 		}
-		time.Sleep(3 * time.Second)
+		elapsed := time.Since(item.StartTime).Seconds()
+		if elapsed > 0.1 {
+			item.SpeedBytesPerSec = float64(rc.receivedBytes) / elapsed
+		}
+	}
+
+	// Progress acknowledgement every 2 MB or upon completion
+	if rc.receivedBytes-rc.lastProgressReport >= 2*1024*1024 || rc.receivedBytes >= rc.expectedSize {
+		rc.lastProgressReport = rc.receivedBytes
+		_ = session.SendMessage(map[string]any{
+			"type":          "PROGRESS",
+			"transferId":    rc.transferID,
+			"fileId":        fID,
+			"bytesReceived": rc.receivedBytes,
+		})
 	}
 }
 
-func (e *DexoLinkEngine) startUDPListener() {
-	l, err := net.ListenUDP("udp", &net.UDPAddr{Port: BeaconPort})
-	if err != nil {
-		return
-	}
-	defer l.Close()
-
-	buf := make([]byte, 2048)
-	for {
-		n, addr, err := l.ReadFromUDP(buf)
-		if err != nil {
+// cancelTransferInternal aborts an in-flight transfer
+func (e *DexoLinkEngine) cancelTransferInternal(tID string, notifyPeer bool) {
+	e.transfersMu.Lock()
+	item, hasItem := e.ActiveTransfers[tID]
+	var rcToClean *ReceiverContext
+	for fID, rc := range e.ActiveReceivers {
+		if rc.transferID == tID {
+			rcToClean = rc
+			delete(e.ActiveReceivers, fID)
 			break
 		}
-		e.mu.Lock()
-		disc := e.AutoDiscoveryEnabled
-		enabled := e.Enabled
-		e.mu.Unlock()
-		if !disc || !enabled {
-			continue
+	}
+	e.transfersMu.Unlock()
+
+	if rcToClean != nil {
+		_ = rcToClean.file.Close()
+		_ = os.Remove(rcToClean.destPath)
+	}
+
+	if hasItem && item != nil {
+		item.State = "cancelled"
+		item.Error = "Cancelled"
+		if item.cancelChan != nil {
+			select {
+			case <-item.cancelChan:
+			default:
+				close(item.cancelChan)
+			}
 		}
-		var payload map[string]any
-		if err := json.Unmarshal(buf[:n], &payload); err == nil {
-			devID, _ := payload["deviceId"].(string)
-			devName, _ := payload["deviceName"].(string)
-			port, _ := payload["port"].(float64)
-			if devID != "" && devID != e.DeviceID {
-				if port == 0 {
-					port = DefaultPort
-				}
-				devInfo := DeviceInfo{
-					DeviceID:   devID,
-					DeviceName: devName,
-					IP:         addr.IP.String(),
-					Port:       int(port),
-				}
-				e.DiscoveredDevices.Store(devID, devInfo)
+		e.mu.Lock()
+		e.History = append([]TransferRecord{{
+			ID:         tID,
+			FileName:   item.Name,
+			Size:       item.Size,
+			IsIncoming: item.IsIncoming,
+			PeerName:   item.PeerName,
+			Success:    false,
+			State:      "cancelled",
+			Time:       time.Now(),
+		}}, e.History...)
+		e.mu.Unlock()
 
-				// Auto-connect to paired device if not already connected (Matching macOS line 1170)
-				e.TrustStore.mu.Lock()
-				isPaired := false
-				for pid, pd := range e.TrustStore.PairedDevices {
-					if pid == devID || (devName != "" && strings.EqualFold(pd.DeviceName, devName)) {
-						isPaired = true
-						break
-					}
-				}
-				e.TrustStore.mu.Unlock()
-
-				if isPaired {
-					if _, connected := e.ActiveConnections.Load(devID); !connected {
-						go func(ip string, p int, id string, name string) {
-							_, _ = e.connectToPeer(ip, p, id, name)
-						}(addr.IP.String(), int(port), devID, devName)
-					}
-				}
+		if notifyPeer && item.PeerID != "" {
+			if val, ok := e.ActiveSessions.Load(item.PeerID); ok {
+				s := val.(*PeerSession)
+				_ = s.SendMessage(map[string]any{"type": "CANCEL", "transferId": tID})
 			}
 		}
 	}
 }
 
-// connectToPeer establishes a persistent TCP connection to a peer, completes the HELLO handshake,
-// registers the connection in ActiveConnections/ActivePeers, and spawns the message reader loop.
-func (e *DexoLinkEngine) connectToPeer(ip string, port int, devID string, devName string) (net.Conn, error) {
+// Outgoing File Transfer via active session
+func (e *DexoLinkEngine) SendFile(targetPeerID string, filePath string) (bool, error) {
+	// Find target session
+	var session *PeerSession
+	if targetPeerID != "" {
+		if val, ok := e.ActiveSessions.Load(targetPeerID); ok {
+			session = val.(*PeerSession)
+		}
+	}
+	if session == nil {
+		// Take first active session
+		e.ActiveSessions.Range(func(k, v any) bool {
+			session = v.(*PeerSession)
+			return false
+		})
+	}
+
+	if session == nil {
+		// Attempt to auto-connect to a discovered / paired device
+		var targetInfo DeviceInfo
+		found := false
+		e.TrustStore.mu.Lock()
+		for _, pd := range e.TrustStore.PairedDevices {
+			if pd.IP != "" {
+				targetInfo = pd
+				found = true
+				break
+			}
+		}
+		e.TrustStore.mu.Unlock()
+
+		if !found {
+			e.DiscoveredDevices.Range(func(k, v any) bool {
+				targetInfo = v.(DeviceInfo)
+				found = true
+				return false
+			})
+		}
+
+		if found && targetInfo.IP != "" {
+			p := targetInfo.Port
+			if p <= 0 {
+				p = DefaultPort
+			}
+			newSess, err := e.connectToPeer(targetInfo.IP, p, targetInfo.DeviceID, targetInfo.DeviceName)
+			if err == nil {
+				session = newSess
+			}
+		}
+	}
+
+	if session == nil {
+		return false, fmt.Errorf("no connected device available. Please connect to a device on Wi-Fi")
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	fileSize := stat.Size()
+	fileName := filepath.Base(filePath)
+
+	transferID := fmt.Sprintf("tr_%d", time.Now().UnixNano())
+	fileID := fmt.Sprintf("fl_%d", time.Now().UnixNano())
+
+	item := &TransferItem{
+		ID:         transferID,
+		FileID:     fileID,
+		Name:       fileName,
+		Size:       fileSize,
+		IsIncoming: false,
+		PeerID:     session.DeviceID,
+		PeerName:   session.DeviceName,
+		State:      "pending",
+		LocalPath:  filePath,
+		StartTime:  time.Now(),
+		cancelChan: make(chan struct{}),
+	}
+
+	respChan := make(chan bool, 1)
+	ackChan := make(chan bool, 1)
+
+	e.transfersMu.Lock()
+	e.ActiveTransfers[transferID] = item
+	e.FileIDToTransferID[fileID] = transferID
+	e.pendingResponses[transferID] = respChan
+	e.pendingAcks[fileID] = ackChan
+	e.transfersMu.Unlock()
+
+	defer func() {
+		e.transfersMu.Lock()
+		delete(e.pendingResponses, transferID)
+		delete(e.pendingAcks, fileID)
+		e.transfersMu.Unlock()
+	}()
+
+	// 1. Propose transfer
+	err = session.SendMessage(map[string]any{
+		"type":       "TRANSFER_REQUEST",
+		"transferId": transferID,
+		"totalFiles": 1,
+		"totalSize":  fileSize,
+	})
+	if err != nil {
+		item.State = "failed"
+		item.Error = err.Error()
+		return false, err
+	}
+
+	// 2. Wait for TRANSFER_RESPONSE
+	select {
+	case accepted := <-respChan:
+		if !accepted {
+			item.State = "failed"
+			item.Error = "Transfer declined by peer"
+			e.recordCompletedTransfer(item, false)
+			return false, fmt.Errorf("transfer rejected by peer")
+		}
+	case <-time.After(12 * time.Second):
+		item.State = "failed"
+		item.Error = "Transfer request timed out"
+		e.recordCompletedTransfer(item, false)
+		return false, fmt.Errorf("transfer request timed out")
+	case <-item.cancelChan:
+		item.State = "cancelled"
+		e.recordCompletedTransfer(item, false)
+		return false, fmt.Errorf("transfer cancelled")
+	}
+
+	item.State = "transferring"
+
+	// 3. Send FILE_META
+	err = session.SendMessage(map[string]any{
+		"type":       "FILE_META",
+		"transferId": transferID,
+		"fileId":     fileID,
+		"name":       fileName,
+		"size":       fileSize,
+		"mimeType":   "application/octet-stream",
+	})
+	if err != nil {
+		item.State = "failed"
+		return false, err
+	}
+
+	// 4. Stream Chunks with Base64 encoding
+	hasher := sha256.New()
+	chunk := make([]byte, ChunkSize)
+	var offset int64 = 0
+
+	for {
+		select {
+		case <-item.cancelChan:
+			_ = session.SendMessage(map[string]any{"type": "CANCEL", "transferId": transferID})
+			item.State = "cancelled"
+			e.recordCompletedTransfer(item, false)
+			return false, fmt.Errorf("transfer cancelled")
+		default:
+		}
+
+		n, rErr := f.Read(chunk)
+		if n > 0 {
+			_, _ = hasher.Write(chunk[:n])
+			b64 := base64.StdEncoding.EncodeToString(chunk[:n])
+			cErr := session.SendMessage(map[string]any{
+				"type":   "FILE_CHUNK",
+				"fileId": fileID,
+				"offset": offset,
+				"data":   b64,
+			})
+			if cErr != nil {
+				item.State = "failed"
+				item.Error = cErr.Error()
+				e.recordCompletedTransfer(item, false)
+				return false, cErr
+			}
+
+			offset += int64(n)
+			item.BytesTransferred = offset
+			if fileSize > 0 {
+				item.Progress = float64(offset) / float64(fileSize)
+			}
+			elapsed := time.Since(item.StartTime).Seconds()
+			if elapsed > 0.1 {
+				item.SpeedBytesPerSec = float64(offset) / elapsed
+			}
+		}
+		if rErr != nil {
+			break
+		}
+	}
+
+	// 5. Send FILE_COMPLETE
+	shaHex := hex.EncodeToString(hasher.Sum(nil))
+	err = session.SendMessage(map[string]any{
+		"type":   "FILE_COMPLETE",
+		"fileId": fileID,
+		"sha256": shaHex,
+	})
+	if err != nil {
+		item.State = "failed"
+		return false, err
+	}
+
+	// 6. Wait for FILE_ACK
+	verified := false
+	select {
+	case v := <-ackChan:
+		verified = v
+	case <-time.After(20 * time.Second):
+		item.State = "failed"
+		item.Error = "Timeout waiting for peer file verification"
+	case <-item.cancelChan:
+		item.State = "cancelled"
+	}
+
+	if verified {
+		item.State = "completed"
+		item.Progress = 1.0
+		item.BytesTransferred = fileSize
+	} else if item.State != "cancelled" {
+		item.State = "failed"
+		if item.Error == "" {
+			item.Error = "Peer file integrity verification failed"
+		}
+	}
+
+	e.recordCompletedTransfer(item, verified)
+	return verified, nil
+}
+
+func (e *DexoLinkEngine) recordCompletedTransfer(item *TransferItem, success bool) {
+	e.mu.Lock()
+	e.History = append([]TransferRecord{{
+		ID:         item.ID,
+		FileName:   item.Name,
+		Size:       item.Size,
+		IsIncoming: false,
+		PeerName:   item.PeerName,
+		Success:    success,
+		State:      item.State,
+		Time:       time.Now(),
+	}}, e.History...)
+	e.mu.Unlock()
+}
+
+// connectToPeer initiates a TCP connection to a peer, completes handshake, and maintains session
+func (e *DexoLinkEngine) connectToPeer(ip string, port int, devID string, devName string) (*PeerSession, error) {
 	if !e.Enabled {
 		return nil, fmt.Errorf("DexoLink is turned off")
 	}
 	if port <= 0 {
 		port = DefaultPort
 	}
+
+	// Check if already active
+	if devID != "" {
+		if val, ok := e.ActiveSessions.Load(devID); ok {
+			s := val.(*PeerSession)
+			return s, nil
+		}
+	}
+
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	conn, err := net.DialTimeout("tcp", addr, 4*time.Second)
 	if err != nil {
 		return nil, err
 	}
 
+	session := &PeerSession{
+		DeviceID:    devID,
+		DeviceName:  devName,
+		IP:          ip,
+		Port:        port,
+		ConnectedAt: time.Now(),
+		State:       "connected",
+		Conn:        conn,
+	}
+
 	// 1. Send HELLO
-	hello, _ := encodeMessage(map[string]any{
+	hello := map[string]any{
 		"type":       "HELLO",
 		"version":    ProtocolVersion,
 		"deviceId":   e.DeviceID,
 		"deviceName": e.DeviceName,
-	})
-	if _, err := conn.Write(hello); err != nil {
+	}
+	if err := session.SendMessage(hello); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -594,211 +1333,249 @@ func (e *DexoLinkEngine) connectToPeer(ip string, port int, devID string, devNam
 		peerName = fmt.Sprintf("Device (%s)", ip)
 	}
 
+	session.DeviceID = peerID
+	session.DeviceName = peerName
+
+	e.ActiveSessions.Store(peerID, session)
 	peerInfo := DeviceInfo{
 		DeviceID:   peerID,
 		DeviceName: peerName,
 		IP:         ip,
 		Port:       port,
 	}
-
-	e.ActiveConnections.Store(peerID, conn)
-	e.ActivePeers.Store(peerID, peerInfo)
 	e.DiscoveredDevices.Store(peerID, peerInfo)
 
-	// Update paired device IP if previously registered
+	// Update TrustStore if device was previously paired
 	e.TrustStore.mu.Lock()
-	if paired, exists := e.TrustStore.PairedDevices[peerID]; exists {
-		paired.IP = ip
-		paired.Port = port
-		e.TrustStore.PairedDevices[peerID] = paired
+	if pd, exists := e.TrustStore.PairedDevices[peerID]; exists {
+		pd.IP = ip
+		pd.Port = port
+		e.TrustStore.PairedDevices[peerID] = pd
 		e.TrustStore.save()
 	}
 	e.TrustStore.mu.Unlock()
 
-	// 3. Spawn reader loop to receive clipboard sync, continuity activities, stream responses, and files
-	go e.handleClient(conn)
+	// Spawn message reader loop
+	go e.handleClient(conn, session)
 
 	fmt.Printf("[DexoLink Windows] Active connection established with %s (%s:%d)\n", peerName, ip, port)
-	return conn, nil
+	updateTrayStatus(fmt.Sprintf("DexoLink - Connected to %s", peerName))
+	return session, nil
 }
 
-// getOrConnectActivePeer returns an existing active connection, or automatically connects to a paired peer.
-func (e *DexoLinkEngine) getOrConnectActivePeer() (net.Conn, DeviceInfo, error) {
-	var activeConn net.Conn
-	var activeInfo DeviceInfo
-	found := false
-
-	e.ActiveConnections.Range(func(k, v any) bool {
-		activeConn = v.(net.Conn)
-		if info, ok := e.ActivePeers.Load(k); ok {
-			activeInfo = info.(DeviceInfo)
-		} else {
-			activeInfo = DeviceInfo{DeviceID: fmt.Sprintf("%v", k), DeviceName: "Paired Device"}
+// UDP Discovery helpers
+func getLocalIPs() []string {
+	var ips []string
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ips
+	}
+	for _, i := range ifaces {
+		if (i.Flags&net.FlagUp) == 0 || (i.Flags&net.FlagLoopback) != 0 {
+			continue
 		}
-		found = true
-		return false
-	})
-
-	if found && activeConn != nil {
-		return activeConn, activeInfo, nil
-	}
-
-	e.TrustStore.mu.Lock()
-	pairedMap := make(map[string]DeviceInfo)
-	for k, v := range e.TrustStore.PairedDevices {
-		pairedMap[k] = v
-	}
-	e.TrustStore.mu.Unlock()
-
-	var targetInfo DeviceInfo
-	canConnect := false
-
-	e.DiscoveredDevices.Range(func(k, v any) bool {
-		d := v.(DeviceInfo)
-		for pid, pd := range pairedMap {
-			if pid == d.DeviceID || (d.DeviceName != "" && strings.EqualFold(pd.DeviceName, d.DeviceName)) {
-				targetInfo = d
-				canConnect = true
-				return false
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
 			}
-		}
-		return true
-	})
-
-	if !canConnect {
-		for _, pd := range pairedMap {
-			if pd.IP != "" {
-				targetInfo = pd
-				canConnect = true
-				break
+			if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+				ips = append(ips, ip.String())
 			}
 		}
 	}
-
-	if canConnect && targetInfo.IP != "" {
-		p := targetInfo.Port
-		if p <= 0 {
-			p = DefaultPort
-		}
-		conn, err := e.connectToPeer(targetInfo.IP, p, targetInfo.DeviceID, targetInfo.DeviceName)
-		if err == nil && conn != nil {
-			return conn, targetInfo, nil
-		}
-	}
-
-	return nil, DeviceInfo{}, fmt.Errorf("no connected device found. Please connect to a device on local Wi-Fi")
+	return ips
 }
 
-// Outgoing File Transfer Helper
-func (e *DexoLinkEngine) SendFile(peerIP string, peerPort int, filePath string) (bool, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", peerIP, peerPort), 10*time.Second)
+func getSubnetBroadcastAddresses() []string {
+	var bcasts []string
+	ifaces, err := net.Interfaces()
 	if err != nil {
-		return false, err
+		return bcasts
 	}
-	defer conn.Close()
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return false, err
+	for _, i := range ifaces {
+		if (i.Flags&net.FlagUp) == 0 || (i.Flags&net.FlagLoopback) != 0 || (i.Flags&net.FlagBroadcast) == 0 {
+			continue
+		}
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.To4() == nil {
+				continue
+			}
+			ip4 := ipNet.IP.To4()
+			mask := ipNet.Mask
+			if len(mask) == 4 {
+				bcast := net.IPv4(
+					ip4[0]|^mask[0],
+					ip4[1]|^mask[1],
+					ip4[2]|^mask[2],
+					ip4[3]|^mask[3],
+				)
+				bcasts = append(bcasts, bcast.String())
+			}
+		}
 	}
-	defer f.Close()
+	return bcasts
+}
 
-	stat, _ := f.Stat()
-	fileSize := stat.Size()
-	fileName := filepath.Base(filePath)
+// broadcastUDPBeacon broadcasts the discovery beacon across all network subnets
+func (e *DexoLinkEngine) broadcastUDPBeacon() {
+	localIPs := getLocalIPs()
+	primaryIP := ""
+	if len(localIPs) > 0 {
+		primaryIP = localIPs[0]
+	}
 
-	// 1. Hello
-	hello, _ := encodeMessage(map[string]any{
-		"type":       "HELLO",
+	// Payload with "dexolink": 1 to match macOS and Android filters
+	payload, err := json.Marshal(map[string]any{
+		"dexolink":   1,
+		"type":       "BEACON",
 		"version":    ProtocolVersion,
 		"deviceId":   e.DeviceID,
 		"deviceName": e.DeviceName,
+		"deviceType": "windows",
+		"ip":         primaryIP,
+		"port":       DefaultPort,
 	})
-	_, _ = conn.Write(hello)
-
-	var lenBuf uint32
-	_ = binary.Read(conn, binary.BigEndian, &lenBuf)
-	respBuf := make([]byte, lenBuf)
-	_, _ = io.ReadFull(conn, respBuf)
-
-	// 2. Transfer Request
-	transferID := fmt.Sprintf("tr_%d", time.Now().UnixNano())
-	fileID := fmt.Sprintf("fl_%d", time.Now().UnixNano())
-	trReq, _ := encodeMessage(map[string]any{
-		"type":       "TRANSFER_REQUEST",
-		"transferId": transferID,
-		"totalFiles": 1,
-		"totalSize":  fileSize,
-	})
-	_, _ = conn.Write(trReq)
-
-	_ = binary.Read(conn, binary.BigEndian, &lenBuf)
-	respBuf = make([]byte, lenBuf)
-	_, _ = io.ReadFull(conn, respBuf)
-
-	// 3. File Meta
-	meta, _ := encodeMessage(map[string]any{
-		"type":       "FILE_META",
-		"transferId": transferID,
-		"fileId":     fileID,
-		"name":       fileName,
-		"size":       fileSize,
-		"mimeType":   "application/octet-stream",
-	})
-	_, _ = conn.Write(meta)
-
-	// 4. Stream 64KB Chunks
-	hasher := sha256.New()
-	chunk := make([]byte, ChunkSize)
-	var offset int64 = 0
-
-	for {
-		n, rErr := f.Read(chunk)
-		if n > 0 {
-			hasher.Write(chunk[:n])
-			cFrame, _ := encodeFileChunk(fileID, offset, chunk[:n])
-			_, _ = conn.Write(cFrame)
-			offset += int64(n)
-		}
-		if rErr != nil {
-			break
-		}
+	if err != nil {
+		return
 	}
 
-	// 5. File Complete
-	shaHex := hex.EncodeToString(hasher.Sum(nil))
-	comp, _ := encodeMessage(map[string]any{
-		"type":   "FILE_COMPLETE",
-		"fileId": fileID,
-		"sha256": shaHex,
+	// 1. General 255.255.255.255 broadcast
+	conn, err := net.DialUDP("udp", nil, &net.UDPAddr{
+		IP:   net.IPv4(255, 255, 255, 255),
+		Port: BeaconPort,
 	})
-	_, _ = conn.Write(comp)
+	if err == nil {
+		_, _ = conn.Write(payload)
+		conn.Close()
+	}
 
-	// 6. File Ack
-	_ = binary.Read(conn, binary.BigEndian, &lenBuf)
-	respBuf = make([]byte, lenBuf)
-	_, _ = io.ReadFull(conn, respBuf)
-
-	var ack map[string]any
-	_ = json.Unmarshal(respBuf, &ack)
-	verified, _ := ack["verified"].(bool)
-
-	e.mu.Lock()
-	e.History = append([]TransferRecord{{
-		ID:        transferID,
-		FileName:  fileName,
-		Size:      fileSize,
-		IsIncoming: false,
-		PeerName:  peerIP,
-		Success:   verified,
-		Time:      time.Now(),
-	}}, e.History...)
-	e.mu.Unlock()
-
-	return verified, nil
+	// 2. Subnet-directed broadcasts for every interface
+	for _, bcastIP := range getSubnetBroadcastAddresses() {
+		subConn, err := net.DialUDP("udp", nil, &net.UDPAddr{
+			IP:   net.ParseIP(bcastIP),
+			Port: BeaconPort,
+		})
+		if err == nil {
+			_, _ = subConn.Write(payload)
+			subConn.Close()
+		}
+	}
 }
 
-// Helper to verify if path exists and is a regular file
+func (e *DexoLinkEngine) startUDPBeacon() {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		e.mu.Lock()
+		enabled := e.Enabled
+		autoDisc := e.AutoDiscoveryEnabled
+		e.mu.Unlock()
+
+		if enabled && autoDisc {
+			e.broadcastUDPBeacon()
+		}
+	}
+}
+
+func (e *DexoLinkEngine) reconnectPairedDevices() {
+	e.TrustStore.mu.Lock()
+	paired := make([]DeviceInfo, 0, len(e.TrustStore.PairedDevices))
+	for _, pd := range e.TrustStore.PairedDevices {
+		paired = append(paired, pd)
+	}
+	e.TrustStore.mu.Unlock()
+
+	for _, pd := range paired {
+		if pd.IP == "" {
+			continue
+		}
+		if _, active := e.ActiveSessions.Load(pd.DeviceID); !active {
+			p := pd.Port
+			if p <= 0 {
+				p = DefaultPort
+			}
+			go func(ip string, port int, id, name string) {
+				_, _ = e.connectToPeer(ip, port, id, name)
+			}(pd.IP, p, pd.DeviceID, pd.DeviceName)
+		}
+	}
+}
+
+func (e *DexoLinkEngine) startUDPListener() {
+	l, err := net.ListenUDP("udp", &net.UDPAddr{Port: BeaconPort})
+	if err != nil {
+		return
+	}
+	defer l.Close()
+
+	buf := make([]byte, 4096)
+	for {
+		n, addr, err := l.ReadFromUDP(buf)
+		if err != nil {
+			break
+		}
+		e.mu.Lock()
+		disc := e.AutoDiscoveryEnabled
+		enabled := e.Enabled
+		e.mu.Unlock()
+		if !disc || !enabled {
+			continue
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal(buf[:n], &payload); err == nil {
+			devID, _ := payload["deviceId"].(string)
+			devName, _ := payload["deviceName"].(string)
+			devType, _ := payload["deviceType"].(string)
+			portFloat, _ := payload["port"].(float64)
+			port := int(portFloat)
+			if port <= 0 {
+				port = DefaultPort
+			}
+
+			ipFromPacket, _ := payload["ip"].(string)
+			resolvedIP := addr.IP.String()
+			if ipFromPacket != "" && ipFromPacket != "0.0.0.0" && ipFromPacket != "127.0.0.1" {
+				resolvedIP = ipFromPacket
+			}
+
+			if devID != "" && devID != e.DeviceID {
+				devInfo := DeviceInfo{
+					DeviceID:   devID,
+					DeviceName: devName,
+					IP:         resolvedIP,
+					Port:       port,
+					DeviceType: devType,
+				}
+				e.DiscoveredDevices.Store(devID, devInfo)
+
+				// Auto-connect to paired device if not already connected
+				if e.TrustStore.IsPaired(devID, devName) {
+					if _, connected := e.ActiveSessions.Load(devID); !connected {
+						go func(ip string, p int, id, name string) {
+							_, _ = e.connectToPeer(ip, p, id, name)
+						}(resolvedIP, port, devID, devName)
+					}
+				}
+			}
+		}
+	}
+}
+
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -807,14 +1584,9 @@ func fileExists(path string) bool {
 	return !info.IsDir()
 }
 
-// openGUIWindow opens the DexoLink user interface window.
-// On Windows, it attempts Microsoft Edge standalone App Mode, then Chrome App Mode,
-// then falls back to Windows Shell (cmd /c start), PowerShell, and Explorer.
-// On Darwin, it uses 'open', on Linux 'xdg-open'.
 func openGUIWindow(url string) bool {
 	switch runtime.GOOS {
 	case "windows":
-		// Tier 1: Microsoft Edge App Mode (Standalone borderless application window on Windows 10/11)
 		edgeCandidates := []string{
 			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
 			filepath.Join(os.Getenv("ProgramFiles"), "Microsoft", "Edge", "Application", "msedge.exe"),
@@ -824,7 +1596,6 @@ func openGUIWindow(url string) bool {
 			if p != "" && fileExists(p) {
 				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
 				if err := cmd.Start(); err == nil {
-					fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Microsoft Edge App Mode.")
 					return true
 				}
 			}
@@ -832,12 +1603,9 @@ func openGUIWindow(url string) bool {
 		if p, err := exec.LookPath("msedge.exe"); err == nil {
 			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
 			if err := cmd.Start(); err == nil {
-				fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Microsoft Edge App Mode.")
 				return true
 			}
 		}
-
-		// Tier 2: Google Chrome App Mode
 		chromeCandidates := []string{
 			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
 			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
@@ -847,57 +1615,28 @@ func openGUIWindow(url string) bool {
 			if p != "" && fileExists(p) {
 				cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
 				if err := cmd.Start(); err == nil {
-					fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Google Chrome App Mode.")
 					return true
 				}
 			}
 		}
-		if p, err := exec.LookPath("chrome.exe"); err == nil {
-			cmd := exec.Command(p, fmt.Sprintf("--app=%s", url), "--window-size=1120,780")
-			if err := cmd.Start(); err == nil {
-				fmt.Println("[DexoLink Windows] DexoLink GUI window opened via Google Chrome App Mode.")
-				return true
-			}
-		}
-
-		// Tier 3: Windows Shell Execution via cmd.exe
 		cmd := exec.Command("cmd.exe", "/c", "start", "", url)
 		if err := cmd.Start(); err == nil {
-			fmt.Println("[DexoLink Windows] DexoLink GUI opened in default browser via Windows Shell.")
 			return true
 		}
-
-		// Tier 4: PowerShell Start-Process
-		psCmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", fmt.Sprintf("Start-Process '%s'", url))
-		if err := psCmd.Start(); err == nil {
-			fmt.Println("[DexoLink Windows] DexoLink GUI opened in default browser via PowerShell.")
-			return true
-		}
-
-		// Tier 5: Windows Explorer Shell
-		expCmd := exec.Command("explorer.exe", url)
-		if err := expCmd.Start(); err == nil {
-			fmt.Println("[DexoLink Windows] DexoLink GUI opened via Windows Explorer.")
-			return true
-		}
-
 	case "darwin":
 		cmd := exec.Command("open", url)
 		if err := cmd.Start(); err == nil {
 			return true
 		}
-
 	default:
 		cmd := exec.Command("xdg-open", url)
 		if err := cmd.Start(); err == nil {
 			return true
 		}
 	}
-
 	return false
 }
 
-// openBrowser is used for Continuity links and general URL opening
 func openBrowser(url string) {
 	if openGUIWindow(url) {
 		return
@@ -905,7 +1644,6 @@ func openBrowser(url string) {
 	fmt.Printf("[DexoLink Windows] Notice: Could not open URL automatically: %s\n", url)
 }
 
-// checkIfInstanceRunning probes if another DexoLink process is currently active on WebUIPort
 func checkIfInstanceRunning() bool {
 	client := http.Client{Timeout: 350 * time.Millisecond}
 	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/status", WebUIPort))
@@ -916,7 +1654,6 @@ func checkIfInstanceRunning() bool {
 	return false
 }
 
-// checkPortAvailable tests whether a TCP port can be bound
 func checkPortAvailable(port int) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -926,19 +1663,48 @@ func checkPortAvailable(port int) error {
 	return nil
 }
 
-// Web UI Dashboard Server (runs on 127.0.0.1:52842)
+// Web UI Dashboard Server
 func startWebDashboard(ready chan<- error) {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, webUIHTML)
 	})
 
-	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/popup", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, popupUIHTML)
+	})
+
+	mux.HandleFunc("/api/reconnect", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		
-		connectedList := make([]DeviceInfo, 0)
-		engine.ActivePeers.Range(func(key, value any) bool {
-			connectedList = append(connectedList, value.(DeviceInfo))
+		go func() {
+			if engine != nil {
+				engine.broadcastUDPBeacon()
+				engine.reconnectPairedDevices()
+			}
+		}()
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Rescan and reconnect triggered"})
+	})
+
+	mux.HandleFunc("/api/exit", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Exiting DexoLink"})
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			removeTrayIcon()
+			os.Exit(0)
+		}()
+	})
+
+	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		connectedList := make([]PeerSession, 0)
+		engine.ActiveSessions.Range(func(key, value any) bool {
+			s := value.(*PeerSession)
+			connectedList = append(connectedList, *s)
 			return true
 		})
 
@@ -956,6 +1722,13 @@ func startWebDashboard(ready chan<- error) {
 		}
 		multiPaired := engine.TrustStore.MultiplePairedDevices
 		engine.TrustStore.mu.Unlock()
+
+		engine.transfersMu.Lock()
+		activeTransfers := make([]TransferItem, 0, len(engine.ActiveTransfers))
+		for _, item := range engine.ActiveTransfers {
+			activeTransfers = append(activeTransfers, *item)
+		}
+		engine.transfersMu.Unlock()
 
 		engine.mu.Lock()
 		history := engine.History
@@ -985,6 +1758,7 @@ func startWebDashboard(ready chan<- error) {
 			"multiple_paired":        multiPaired,
 			"paired_devices":         paired,
 			"discovered_devices":     discovered,
+			"active_transfers":       activeTransfers,
 			"transfer_history":       history,
 			"clipboard_history":      clipHistory,
 			"download_dir":           engine.DownloadDir,
@@ -999,17 +1773,16 @@ func startWebDashboard(ready chan<- error) {
 		})
 	})
 
-	http.HandleFunc("/api/toggle-master", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/toggle-master", func(w http.ResponseWriter, r *http.Request) {
 		enable := r.URL.Query().Get("enabled") == "true"
 		engine.mu.Lock()
 		engine.Enabled = enable
 		engine.mu.Unlock()
 		if !enable {
-			engine.ActiveConnections.Range(func(key, val any) bool {
-				conn := val.(net.Conn)
-				_ = conn.Close()
-				engine.ActiveConnections.Delete(key)
-				engine.ActivePeers.Delete(key)
+			engine.ActiveSessions.Range(func(key, val any) bool {
+				s := val.(*PeerSession)
+				_ = s.Conn.Close()
+				engine.ActiveSessions.Delete(key)
 				return true
 			})
 		}
@@ -1017,7 +1790,7 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true, "enabled": enable})
 	})
 
-	http.HandleFunc("/api/connect-peer", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/connect-peer", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		id := r.URL.Query().Get("id")
 		name := r.URL.Query().Get("name")
@@ -1045,18 +1818,23 @@ func startWebDashboard(ready chan<- error) {
 			return
 		}
 
-		conn, err := engine.connectToPeer(ip, port, id, name)
+		session, err := engine.connectToPeer(ip, port, id, name)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": err.Error()})
 			return
 		}
-		_ = conn
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"success": true, "ip": ip, "port": port})
+		json.NewEncoder(w).Encode(map[string]any{
+			"success":     true,
+			"device_id":   session.DeviceID,
+			"device_name": session.DeviceName,
+			"ip":          ip,
+			"port":        port,
+		})
 	})
 
-	http.HandleFunc("/api/connect-direct", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/connect-direct", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		ip := r.URL.Query().Get("ip")
 		portStr := r.URL.Query().Get("port")
@@ -1076,7 +1854,7 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 
-	http.HandleFunc("/api/pair-device", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pair-device", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		id := r.URL.Query().Get("id")
 		name := r.URL.Query().Get("name")
@@ -1105,21 +1883,20 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 
-	http.HandleFunc("/api/disconnect", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/disconnect", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		id := r.URL.Query().Get("id")
 		if id != "" {
-			if val, ok := engine.ActiveConnections.Load(id); ok {
-				conn := val.(net.Conn)
-				_ = conn.Close()
-				engine.ActiveConnections.Delete(id)
-				engine.ActivePeers.Delete(id)
+			if val, ok := engine.ActiveSessions.Load(id); ok {
+				s := val.(*PeerSession)
+				_ = s.Conn.Close()
+				engine.ActiveSessions.Delete(id)
 			}
 		} else {
-			engine.ActiveConnections.Range(func(key, val any) bool {
-				conn := val.(net.Conn)
-				_ = conn.Close()
-				engine.ActiveConnections.Delete(key)
-				engine.ActivePeers.Delete(key)
+			engine.ActiveSessions.Range(func(key, val any) bool {
+				s := val.(*PeerSession)
+				_ = s.Conn.Close()
+				engine.ActiveSessions.Delete(key)
 				return true
 			})
 		}
@@ -1127,14 +1904,29 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 
-	http.HandleFunc("/api/upload-file", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/unpair", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		id := r.URL.Query().Get("id")
+		engine.TrustStore.RemoveDevice(id)
+		if id != "" {
+			if val, ok := engine.ActiveSessions.Load(id); ok {
+				s := val.(*PeerSession)
+				_ = s.Conn.Close()
+				engine.ActiveSessions.Delete(id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
+	})
+
+	mux.HandleFunc("/api/upload-file", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		err := r.ParseMultipartForm(200 << 20)
+		err := r.ParseMultipartForm(500 << 20) // 500 MB upload limit
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "Upload parse error: " + err.Error()})
@@ -1151,7 +1943,7 @@ func startWebDashboard(ready chan<- error) {
 
 		tempDir := filepath.Join(engine.DownloadDir, ".outgoing_temp")
 		_ = os.MkdirAll(tempDir, 0755)
-		tempPath := filepath.Join(tempDir, fmt.Sprintf("%d_%s", time.Now().UnixNano(), header.Filename))
+		tempPath := filepath.Join(tempDir, fmt.Sprintf("%d_%s", time.Now().UnixNano(), sanitizeFilename(header.Filename)))
 		outF, err := os.Create(tempPath)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -1167,142 +1959,116 @@ func startWebDashboard(ready chan<- error) {
 			return
 		}
 
-		// Find target peer IP & port
-		targetIP := r.URL.Query().Get("ip")
-		targetPort, _ := strconv.Atoi(r.URL.Query().Get("port"))
-		if targetIP == "" {
-			_, peerInfo, err := engine.getOrConnectActivePeer()
-			if err == nil && peerInfo.IP != "" {
-				targetIP = peerInfo.IP
-				targetPort = peerInfo.Port
-			}
-		}
-		if targetPort <= 0 {
-			targetPort = DefaultPort
-		}
+		targetPeerID := r.URL.Query().Get("id")
 
-		if targetIP == "" {
-			_ = os.Remove(tempPath)
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "No reachable peer found. Please connect to a device on Wi-Fi."})
-			return
-		}
-
-		go func(fPath string, ip string, port int, fName string, fSize int64) {
+		go func(fPath string, tID string, fName string, fSize int64) {
 			defer os.Remove(fPath)
-			ok, sErr := engine.SendFile(ip, port, fPath)
+			ok, sErr := engine.SendFile(tID, fPath)
 			if !ok || sErr != nil {
-				fmt.Printf("[DexoLink Windows] Failed sending %s to %s:%d: %v\n", fName, ip, port, sErr)
+				fmt.Printf("[DexoLink Windows] Failed sending %s: %v\n", fName, sErr)
 			} else {
-				fmt.Printf("[DexoLink Windows] Successfully sent %s (%d bytes) to %s:%d\n", fName, fSize, ip, port)
+				fmt.Printf("[DexoLink Windows] Successfully sent %s (%d bytes)\n", fName, fSize)
 			}
-		}(tempPath, targetIP, targetPort, header.Filename, written)
+		}(tempPath, targetPeerID, header.Filename, written)
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
 			"success":  true,
 			"fileName": header.Filename,
 			"size":     written,
-			"target":   targetIP,
 		})
 	})
 
-	http.HandleFunc("/api/stream-request", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/cancel-transfer", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		sType := r.URL.Query().Get("streamType")
-		action := r.URL.Query().Get("action")
-		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
-		msg, _ := encodeMessage(map[string]any{
-			"type":       "STREAM_REQUEST",
-			"streamId":   streamID,
-			"streamType": sType,
-			"options": map[string]any{
-				"direction":  "outgoing",
-				"sender":     "windows",
-				"action":     action,
-				"senderName": engine.DeviceName,
-			},
-		})
-
-		sent := false
-		engine.ActiveConnections.Range(func(key, val any) bool {
-			conn := val.(net.Conn)
-			_, err := conn.Write(msg)
-			if err == nil {
-				sent = true
-			}
-			return true
-		})
-
-		if !sent {
-			if conn, _, err := engine.getOrConnectActivePeer(); err == nil && conn != nil {
-				_, errW := conn.Write(msg)
-				if errW == nil {
-					sent = true
-				}
-			}
+		tID := r.URL.Query().Get("id")
+		if tID != "" {
+			engine.cancelTransferInternal(tID, true)
 		}
-
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
-			"success":  sent,
-			"streamId": streamID,
-			"type":     sType,
-			"action":   action,
-		})
-	})
-
-	http.HandleFunc("/api/send-desktop-input", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			EventType string  `json:"eventType"`
-			X         float64 `json:"x"`
-			Y         float64 `json:"y"`
-			Button    int     `json:"button"`
-			Key       string  `json:"key"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
-		msg, _ := encodeMessage(map[string]any{
-			"type":      "DESKTOP_INPUT_EVENT",
-			"streamId":  streamID,
-			"eventType": body.EventType,
-			"x":         body.X,
-			"y":         body.Y,
-			"button":    body.Button,
-			"key":       body.Key,
-		})
-
-		sent := false
-		engine.ActiveConnections.Range(func(key, val any) bool {
-			conn := val.(net.Conn)
-			_, err := conn.Write(msg)
-			if err == nil {
-				sent = true
-			}
-			return true
-		})
-
-		if !sent {
-			if conn, _, err := engine.getOrConnectActivePeer(); err == nil && conn != nil {
-				_, errW := conn.Write(msg)
-				if errW == nil {
-					sent = true
-				}
-			}
-		}
-
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"success": sent})
-	})
-
-	http.HandleFunc("/api/open-downloads", func(w http.ResponseWriter, r *http.Request) {
-		openBrowser(engine.DownloadDir)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 
-	http.HandleFunc("/api/delete-transfer", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/push-clipboard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Text == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "Invalid clipboard text"})
+			return
+		}
+
+		normWin := normalizeTextForWindows(body.Text)
+		setSystemClipboard(normWin)
+
+		normWire := normalizeTextForWire(body.Text)
+		h := computeTextHash(normWire)
+		engine.clipMu.Lock()
+		engine.lastSentHash = h
+		engine.clipSeq++
+		seq := engine.clipSeq
+		engine.clipMu.Unlock()
+
+		engine.mu.Lock()
+		engine.ClipboardHistory = append([]string{normWire}, engine.ClipboardHistory...)
+		if len(engine.ClipboardHistory) > 50 {
+			engine.ClipboardHistory = engine.ClipboardHistory[:50]
+		}
+		engine.mu.Unlock()
+
+		msg := map[string]any{
+			"type":           "CLIPBOARD_PUSH",
+			"sequenceNumber": seq,
+			"content":        normWire,
+		}
+		sentPeers := engine.BroadcastMessage(msg)
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"success":    true,
+			"sent_peers": sentPeers,
+			"length":     len(normWire),
+		})
+	})
+
+	mux.HandleFunc("/api/send-continuity", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			URL string `json:"url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "Invalid URL"})
+			return
+		}
+
+		actID := fmt.Sprintf("cont_%d", time.Now().UnixNano())
+		msg := map[string]any{
+			"type":           "CONTINUITY_ACTIVITY",
+			"activityId":     actID,
+			"activityType":   "web_browsing",
+			"title":          "Web Link from Windows",
+			"subtitle":       engine.DeviceName,
+			"url":            body.URL,
+			"contentPayload": "",
+			"position":       0,
+			"progress":       1.0,
+			"timestamp":      time.Now().UnixMilli(),
+			"sourceDevice":   engine.DeviceID,
+		}
+		sentPeers := engine.BroadcastMessage(msg)
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"success":    sentPeers > 0,
+			"activityId": actID,
+			"sent_peers": sentPeers,
+		})
+	})
+
+	mux.HandleFunc("/api/delete-transfer", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		engine.mu.Lock()
 		newHist := make([]TransferRecord, 0, len(engine.History))
@@ -1317,7 +2083,7 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 
-	http.HandleFunc("/api/delete-clip", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/delete-clip", func(w http.ResponseWriter, r *http.Request) {
 		idxStr := r.URL.Query().Get("index")
 		idx, err := strconv.Atoi(idxStr)
 		engine.mu.Lock()
@@ -1329,7 +2095,7 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
 
-	http.HandleFunc("/api/toggle-feature", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/toggle-feature", func(w http.ResponseWriter, r *http.Request) {
 		feature := r.URL.Query().Get("feature")
 		enabled := r.URL.Query().Get("enabled") == "true"
 		engine.mu.Lock()
@@ -1356,24 +2122,66 @@ func startWebDashboard(ready chan<- error) {
 		json.NewEncoder(w).Encode(map[string]any{"success": true, "feature": feature, "enabled": enabled})
 	})
 
-	http.HandleFunc("/api/toggle-multi-paired", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/toggle-multi-paired", func(w http.ResponseWriter, r *http.Request) {
 		enable := r.URL.Query().Get("enabled") == "true"
 		engine.TrustStore.SetMultiPaired(enable)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{"success": true, "enabled": enable})
 	})
 
-	http.HandleFunc("/api/unpair", func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		engine.TrustStore.RemoveDevice(id)
-		if id != "" {
-			if val, ok := engine.ActiveConnections.Load(id); ok {
-				conn := val.(net.Conn)
-				_ = conn.Close()
-				engine.ActiveConnections.Delete(id)
-				engine.ActivePeers.Delete(id)
-			}
+	mux.HandleFunc("/api/stream-request", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		sType := r.URL.Query().Get("streamType")
+		action := r.URL.Query().Get("action")
+		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		msg := map[string]any{
+			"type":       "STREAM_REQUEST",
+			"streamId":   streamID,
+			"streamType": sType,
+			"options": map[string]any{
+				"direction":  "outgoing",
+				"sender":     "windows",
+				"action":     action,
+				"senderName": engine.DeviceName,
+			},
 		}
+		sentPeers := engine.BroadcastMessage(msg)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"success":  sentPeers > 0,
+			"streamId": streamID,
+			"type":     sType,
+			"action":   action,
+		})
+	})
+
+	mux.HandleFunc("/api/send-desktop-input", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			EventType string  `json:"eventType"`
+			X         float64 `json:"x"`
+			Y         float64 `json:"y"`
+			Button    int     `json:"button"`
+			Key       string  `json:"key"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+		msg := map[string]any{
+			"type":      "DESKTOP_INPUT_EVENT",
+			"streamId":  streamID,
+			"eventType": body.EventType,
+			"x":         body.X,
+			"y":         body.Y,
+			"button":    body.Button,
+			"key":       body.Key,
+		}
+		sentPeers := engine.BroadcastMessage(msg)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"success": sentPeers > 0})
+	})
+
+	mux.HandleFunc("/api/open-downloads", func(w http.ResponseWriter, r *http.Request) {
+		openBrowser(engine.DownloadDir)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{"success": true})
 	})
@@ -1390,13 +2198,13 @@ func startWebDashboard(ready chan<- error) {
 	if ready != nil {
 		ready <- nil
 	}
-	_ = http.Serve(ln, nil)
+	_ = http.Serve(ln, mux)
 }
 
 func main() {
 	fmt.Println("======================================================")
 	fmt.Printf("  DexoLink for Windows v4.0.1 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Println("  Universal Cross-Platform Synchronization")
+	fmt.Println("  Universal Cross-Platform Synchronization & System Tray")
 	fmt.Println("======================================================")
 
 	// Step 1: Detect whether DexoLink is already running to avoid duplicate server instances
@@ -1409,17 +2217,15 @@ func main() {
 
 	// Step 2: Validate that required ports are available before starting
 	if err := checkPortAvailable(DefaultPort); err != nil {
-		fmt.Printf("[DexoLink Windows] Fatal Startup Error: TCP port %d is already occupied (%v).\n", DefaultPort, err)
-		fmt.Println("[DexoLink Windows] Please terminate conflicting processes and restart DexoLink.")
+		fmt.Printf("[DexoLink Windows] Fatal Startup Error: TCP port %d is occupied (%v).\n", DefaultPort, err)
 		os.Exit(1)
 	}
 	if err := checkPortAvailable(WebUIPort); err != nil {
-		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI port %d is already occupied (%v).\n", WebUIPort, err)
-		fmt.Println("[DexoLink Windows] Please terminate conflicting processes and restart DexoLink.")
+		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI port %d is occupied (%v).\n", WebUIPort, err)
 		os.Exit(1)
 	}
 
-	// Step 3: Initialize engine and synchronize startup
+	// Step 3: Initialize engine and start background services
 	engine = initEngine()
 	fmt.Printf("[DexoLink Windows] Initialized DexoLink engine for %s\n", engine.DeviceName)
 
@@ -1429,9 +2235,12 @@ func main() {
 	go engine.startTCPServer(tcpReady)
 	go engine.startUDPBeacon()
 	go engine.startUDPListener()
+	go engine.startClipboardMonitor()
 	go startWebDashboard(webReady)
 
-	// Verify servers initialized without error
+	// Step 4: Initialize native Windows 11 system tray icon
+	initSystemTray()
+
 	if err := <-webReady; err != nil {
 		fmt.Printf("[DexoLink Windows] Fatal Startup Error: Web UI server could not start: %v\n", err)
 		os.Exit(1)
@@ -1441,22 +2250,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Step 4: Automatically open DexoLink GUI window
+	// Step 5: Automatically open DexoLink GUI window
 	guiURL := fmt.Sprintf("http://localhost:%d", WebUIPort)
 	fmt.Println("[DexoLink Windows] Opening DexoLink GUI application window...")
-	if openGUIWindow(guiURL) {
-		fmt.Println("[DexoLink Windows] DexoLink GUI window opened successfully.")
-	} else {
-		fmt.Printf("[DexoLink Windows] Notice: Automatic window launch was blocked or unavailable.\n")
-	}
+	openGUIWindow(guiURL)
 	fmt.Printf("[DexoLink Windows] Local Web UI dashboard is accessible at: %s\n", guiURL)
-	fmt.Println("[DexoLink Windows] DexoLink is ready. Press Ctrl+C to stop.")
+	fmt.Println("[DexoLink Windows] DexoLink is active in background and system tray. Press Ctrl+C to stop.")
 
-	// Step 5: Graceful termination on OS interrupt
+	// Step 6: Graceful termination on OS interrupt
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 	fmt.Println("\n[DexoLink Windows] Shutting down DexoLink servers gracefully...")
+	removeTrayIcon()
 	os.Exit(0)
 }
 
@@ -1501,7 +2307,7 @@ const webUIHTML = `<!DOCTYPE html>
   .icon-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.15s; }
   .icon-btn:hover { background: var(--card-hover); border-color: var(--cyan); color: #fff; }
 
-  /* Master Quick Settings ON/OFF Card (Matching MacBook MenuBar) */
+  /* Master Quick Settings ON/OFF Card */
   .master-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
   .master-info { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
   .master-icon-wrap { width: 38px; height: 38px; border-radius: 50%; background: rgba(0,102,255,0.15); display: flex; align-items: center; justify-content: center; color: var(--accent); flex-shrink: 0; }
@@ -1546,14 +2352,14 @@ const webUIHTML = `<!DOCTYPE html>
   .drop-zone-icon { color: var(--cyan); margin-bottom: 4px; }
 
   /* Lists */
-  .list { list-style: none; margin-top: 6px; max-height: 180px; overflow-y: auto; }
+  .list { list-style: none; margin-top: 6px; max-height: 200px; overflow-y: auto; }
   .list-item { background: var(--bg); border: 1px solid var(--border); padding: 8px 10px; border-radius: 8px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
   .list-item-left { display: flex; align-items: center; gap: 8px; overflow: hidden; min-width: 0; }
-  .list-item-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .list-item-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
   .list-item-sub { font-size: 10px; color: var(--muted); }
 
   /* Progress Bar */
-  .progress-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+  .progress-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
   .progress-bar-bg { width: 100%; height: 6px; background: #23334d; border-radius: 3px; overflow: hidden; margin-top: 6px; }
   .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--cyan)); width: 0%; transition: width 0.2s; }
 
@@ -1596,7 +2402,7 @@ const webUIHTML = `<!DOCTYPE html>
         <span class="badge">v4.0.1</span>
       </div>
       <div class="header-actions">
-        <button class="icon-btn" onclick="openSettingsModal()" title="Settings & All Feature Controls">
+        <button class="icon-btn" onclick="openSettingsModal()" title="Settings & Feature Controls">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
         <button class="icon-btn" onclick="openHistoryModal()" title="Activity History">
@@ -1611,7 +2417,7 @@ const webUIHTML = `<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Master Quick Settings ON/OFF Card (Matching MacBook MenuBar) -->
+    <!-- Master Quick Settings ON/OFF Card -->
     <div class="master-card">
       <div class="master-info">
         <div class="master-icon-wrap" id="masterIconWrap">
@@ -1645,14 +2451,28 @@ const webUIHTML = `<!DOCTYPE html>
       <button class="btn" onclick="toggleMaster(true)">Turn On DexoLink</button>
     </div>
 
-    <!-- Active Components Stack (Matching MacBook MenuBar View) -->
+    <!-- Active Components Stack -->
     <div id="activeDashboard" style="display:flex; flex-direction:column; gap:12px;">
+
+      <!-- Card: Connected Devices (Multi-Device Support) -->
+      <div class="card" id="connectedDevicesCard">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+            <span>Connected Devices</span>
+          </div>
+          <span class="badge badge-green" id="connectedCountBadge">0 CONNECTED</span>
+        </div>
+        <ul class="list" id="connectedList">
+          <li class="muted">No devices currently connected. Connect a paired or nearby device below.</li>
+        </ul>
+      </div>
 
       <!-- Card: Paired Trusted Devices Status -->
       <div class="card" id="pairedDevicesCard">
         <div class="card-header">
           <div class="card-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
             <span>Paired Devices</span>
           </div>
           <span class="badge" id="pairedCountBadge">0 PAIRED</span>
@@ -1662,7 +2482,7 @@ const webUIHTML = `<!DOCTYPE html>
         </ul>
       </div>
 
-      <!-- Card: Quick File Sharing (Drag & Drop + Send Files) -->
+      <!-- Card: Quick File Sharing (Drag & Drop + Send Files + Active Progress) -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
@@ -1684,16 +2504,8 @@ const webUIHTML = `<!DOCTYPE html>
 
         <button class="btn" style="width:100%; margin-bottom:8px;" id="sendFilesBtn" onclick="triggerFileSelect()">Select Files to Send</button>
 
-        <!-- Live Upload Progress -->
-        <div id="uploadProgressContainer" class="progress-wrap" style="display:none;">
-          <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:600;">
-            <span id="uploadProgressName">Streaming file...</span>
-            <span id="uploadProgressPercent">0%</span>
-          </div>
-          <div class="progress-bar-bg">
-            <div id="uploadProgressBar" class="progress-bar-fill"></div>
-          </div>
-        </div>
+        <!-- Live Active Transfer Progress Container -->
+        <div id="activeTransfersContainer" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;"></div>
 
         <div class="section-label">Recent Completed Transfers</div>
         <ul class="list" id="transfersList">
@@ -1769,7 +2581,7 @@ const webUIHTML = `<!DOCTYPE html>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
             <span>Universal Clipboard</span>
           </div>
-          <span class="badge badge-green">AUTO SYNC</span>
+          <span class="badge badge-green" id="clipAutoBadge">AUTO SYNC</span>
         </div>
         <textarea id="clipText" class="input" style="height:60px; resize:none; margin-bottom:8px;" placeholder="Type or paste text to sync across paired devices..."></textarea>
         <button class="btn" style="width:100%;" onclick="pushClip()">Push Text to Devices</button>
@@ -1809,16 +2621,16 @@ const webUIHTML = `<!DOCTYPE html>
         </ul>
       </div>
 
-      <!-- Card: Feature Controls Summary (Matching MacBook Reference Design) -->
+      <!-- Card: Feature Controls Summary -->
       <div class="card" style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div style="width:34px; height:34px; border-radius:8px; background:rgba(30,58,138,0.4); border:1px solid rgba(59,130,246,0.3); display:flex; align-items:center; justify-content:center; color:#60a5fa;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
           </div>
           <div>
             <div style="display:flex; align-items:center; gap:6px;">
               <span style="font-weight:700; font-size:13px; color:var(--text);">Feature Controls</span>
-              <span id="featCountBadge" class="badge badge-green">4 ACTIVE</span>
+              <span id="featCountBadge" class="badge badge-green">5 ACTIVE</span>
             </div>
             <div style="font-size:11px; color:var(--muted);">All synchronization & streaming modules</div>
           </div>
@@ -1872,7 +2684,7 @@ const webUIHTML = `<!DOCTYPE html>
       <div class="toggle-row">
         <div>
           <div style="font-weight:600; font-size:12px;">Multiple Paired Devices</div>
-          <div class="muted" style="font-size:11px;">OFF by default (Single-device strict security)</div>
+          <div class="muted" style="font-size:11px;">Allow pairing and connecting multiple devices simultaneously</div>
         </div>
         <input type="checkbox" id="modalMultiToggle" onchange="toggleMulti(this.checked)">
       </div>
@@ -1973,6 +2785,7 @@ const webUIHTML = `<!DOCTYPE html>
 
   <script>
     let currentData = null;
+    let selectedUploadPeerId = '';
 
     // Toast Notification System
     function showToast(message, type = 'info') {
@@ -2130,10 +2943,10 @@ const webUIHTML = `<!DOCTYPE html>
         });
         const data = await res.json();
         if (data.success) {
-          showToast('Pushed text to connected devices!', 'success');
+          showToast('Copied to clipboard and synced to ' + (data.sent_peers || 0) + ' devices!', 'success');
           document.getElementById('clipText').value = '';
         } else {
-          showToast('Clipboard push queued (no active device)', 'info');
+          showToast('Clipboard error: ' + (data.error || 'Failed'), 'error');
         }
         loadStatus();
       } catch (e) {
@@ -2234,48 +3047,46 @@ const webUIHTML = `<!DOCTYPE html>
     }
 
     // File Selection & Upload
-    function triggerFileSelect() {
+    function triggerFileSelect(peerId = '') {
+      selectedUploadPeerId = peerId;
       document.getElementById('hiddenFileInput').click();
     }
 
     function handleFileSelect(input) {
       if (input.files && input.files[0]) {
-        uploadFile(input.files[0]);
+        uploadFile(input.files[0], selectedUploadPeerId);
       }
     }
 
-    async function uploadFile(file) {
-      const pWrap = document.getElementById('uploadProgressContainer');
-      const pName = document.getElementById('uploadProgressName');
-      const pBar = document.getElementById('uploadProgressBar');
-      const pPct = document.getElementById('uploadProgressPercent');
-
-      pWrap.style.display = 'block';
-      pName.innerText = 'Sending ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)...';
-      pBar.style.width = '30%';
-      pPct.innerText = '30%';
-
+    async function uploadFile(file, peerId = '') {
+      showToast('Starting file transfer: ' + file.name + '...', 'info');
       const formData = new FormData();
       formData.append('file', file);
 
       try {
-        pBar.style.width = '70%';
-        pPct.innerText = '70%';
-        const res = await fetch('/api/upload-file', { method: 'POST', body: formData });
+        const res = await fetch('/api/upload-file' + (peerId ? '?id=' + encodeURIComponent(peerId) : ''), {
+          method: 'POST',
+          body: formData
+        });
         const data = await res.json();
-        pBar.style.width = '100%';
-        pPct.innerText = '100%';
-        setTimeout(() => { pWrap.style.display = 'none'; }, 600);
-
         if (data.success) {
-          showToast('Sent ' + file.name + ' successfully!', 'success');
+          showToast('Transfer initiated for ' + file.name + '!', 'success');
         } else {
           showToast('Send failed: ' + (data.error || 'Check connection'), 'error');
         }
         loadStatus();
       } catch (e) {
-        pWrap.style.display = 'none';
         showToast('Upload error: ' + e, 'error');
+      }
+    }
+
+    async function cancelTransfer(transferId) {
+      try {
+        await fetch('/api/cancel-transfer?id=' + encodeURIComponent(transferId));
+        showToast('Transfer cancelled', 'info');
+        loadStatus();
+      } catch (e) {
+        showToast('Cancel error: ' + e, 'error');
       }
     }
 
@@ -2316,25 +3127,34 @@ const webUIHTML = `<!DOCTYPE html>
         const fDot = document.getElementById('footerDot');
         const fText = document.getElementById('footerText');
 
+        const connDevices = data.connected_devices || [];
+        const connCount = connDevices.length;
+        document.getElementById('connectedCountBadge').innerText = connCount + ' CONNECTED';
+
         if (!isMasterOn) {
           dot.className = 'status-dot offline';
           text.innerText = 'Turned Off • 0% CPU & Battery';
           action.innerHTML = '';
           fDot.className = 'status-dot offline';
           fText.innerText = 'DexoLink is Turned Off';
-        } else if (data.is_connected && data.connected_devices && data.connected_devices.length > 0) {
-          const first = data.connected_devices[0];
+        } else if (connCount > 0) {
           dot.className = 'status-dot';
-          text.innerText = 'Connected to ' + first.device_name + ' (' + first.ip + ')';
+          if (connCount === 1) {
+            text.innerText = 'Connected to ' + connDevices[0].device_name + ' (' + connDevices[0].ip + ')';
+            fText.innerText = 'Connected to ' + connDevices[0].device_name + ' • Sync active';
+            document.getElementById('sendFilesBtn').innerText = 'Send Files to ' + connDevices[0].device_name;
+          } else {
+            text.innerText = 'Connected to ' + connCount + ' Devices • Multi-Device Active';
+            fText.innerText = connCount + ' Devices connected • Sync active';
+            document.getElementById('sendFilesBtn').innerText = 'Send Files to Connected Devices';
+          }
           action.innerHTML = '';
           fDot.className = 'status-dot';
-          fText.innerText = 'Connected to ' + first.device_name + ' • Sync active';
-          document.getElementById('sendFilesBtn').innerText = 'Send Files to ' + first.device_name;
         } else if (data.paired_devices && data.paired_devices.length > 0) {
           const first = data.paired_devices[0];
           dot.className = 'status-dot offline';
           text.innerText = first.device_name + ' (Disconnected)';
-          action.innerHTML = '<button class="btn btn-sm btn-success" style="padding:2px 8px; font-size:10px;" onclick="connectPeer('' + first.device_id + '','' + first.device_name.replace(/'/g, "\'") + '','' + (first.ip || '') + '',' + (first.port || 52840) + ')">Connect Now</button>';
+          action.innerHTML = '<button class="btn btn-sm btn-success" style="padding:2px 8px; font-size:10px;" onclick="connectPeer(\'' + first.device_id + '\',\'' + first.device_name.replace(/'/g, "\\'") + '\',\'' + (first.ip || '') + '\',' + (first.port || 52840) + ')">Connect Now</button>';
           fDot.className = 'status-dot offline';
           fText.innerText = 'Paired with ' + first.device_name + ' • Ready to connect';
           document.getElementById('sendFilesBtn').innerText = 'Select Files to Send';
@@ -2374,28 +3194,50 @@ const webUIHTML = `<!DOCTYPE html>
           document.getElementById('modalDownPath').innerText = data.download_dir;
         }
 
-        // Paired devices list
+        // 1. Connected Devices List (Dedicated independent list)
+        const cList = document.getElementById('connectedList');
+        if (connDevices.length > 0) {
+          cList.innerHTML = connDevices.map(d => {
+            return '<li class="list-item">' +
+              '<div class="list-item-left">' +
+                '<span class="status-dot"></span>' +
+                '<div>' +
+                  '<div class="list-item-title">' + d.device_name + '</div>' +
+                  '<div class="list-item-sub">' + d.ip + ':' + d.port + ' • Connected</div>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex; gap:5px;">' +
+                '<button class="btn btn-sm btn-bordered" onclick="triggerFileSelect(\'' + d.device_id + '\')">Send File</button>' +
+                '<button class="btn btn-sm btn-bordered" onclick="disconnectDevice(\'' + d.device_id + '\')">Disconnect</button>' +
+              '</div>' +
+            '</li>';
+          }).join('');
+        } else {
+          cList.innerHTML = '<li class="muted">No devices currently connected. Connect a paired or nearby device below.</li>';
+        }
+
+        // 2. Paired Devices List (Maintains independent status per device)
         const pList = document.getElementById('pairedList');
         const pCountBadge = document.getElementById('pairedCountBadge');
         if (data.paired_devices && data.paired_devices.length > 0) {
           pCountBadge.innerText = data.paired_devices.length + ' PAIRED';
           pList.innerHTML = data.paired_devices.map(d => {
-            const isConn = data.connected_devices && data.connected_devices.some(c => c.device_id === d.device_id || c.ip === d.ip);
+            const isConn = connDevices.some(c => c.device_id === d.device_id || c.ip === d.ip);
             return '<li class="list-item">' +
               '<div class="list-item-left">' +
                 '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="' + (isConn ? '#22c55e' : '#38bdf8') + '" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>' +
                 '<div>' +
                   '<div class="list-item-title">' + d.device_name + '</div>' +
-                  '<div class="list-item-sub">' + (isConn ? '<span style="color:var(--success); font-weight:700;">Connected</span>' : 'Paired') + ' • ' + (data.multiple_paired ? 'Multi-Device' : 'Strict 1-Device Policy') + '</div>' +
+                  '<div class="list-item-sub">' + (isConn ? '<span style="color:var(--success); font-weight:700;">Connected</span>' : 'Paired (Saved)') + ' • ' + (d.ip ? d.ip : 'Local Wi-Fi') + '</div>' +
                 '</div>' +
               '</div>' +
               '<div style="display:flex; gap:5px;">' +
                 (isConn ?
-                  '<button class="btn btn-sm btn-bordered" onclick="triggerFileSelect()">Send Files</button>' +
-                  '<button class="btn btn-sm btn-bordered" onclick="disconnectDevice('' + d.device_id + '')">Disconnect</button>' :
-                  '<button class="btn btn-sm btn-success" onclick="connectPeer('' + d.device_id + '','' + d.device_name.replace(/'/g, "\'") + '','' + (d.ip || '') + '',' + (d.port || 52840) + ')">Connect</button>'
+                  '<button class="btn btn-sm btn-bordered" onclick="triggerFileSelect(\'' + d.device_id + '\')">Send File</button>' +
+                  '<button class="btn btn-sm btn-bordered" onclick="disconnectDevice(\'' + d.device_id + '\')">Disconnect</button>' :
+                  '<button class="btn btn-sm btn-success" onclick="connectPeer(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + (d.ip || '') + '\',' + (d.port || 52840) + ')">Connect</button>'
                 ) +
-                '<button class="btn btn-danger btn-sm" onclick="unpairDevice('' + d.device_id + '')">Unpair</button>' +
+                '<button class="btn btn-danger btn-sm" onclick="unpairDevice(\'' + d.device_id + '\')">Unpair</button>' +
               '</div>' +
             '</li>';
           }).join('');
@@ -2404,26 +3246,51 @@ const webUIHTML = `<!DOCTYPE html>
           pList.innerHTML = '<li class="muted">No paired devices yet. Discover nearby devices below.</li>';
         }
 
-        // Nearby Discovered devices list
+        // 3. Active Transfers in Progress Container
+        const atCont = document.getElementById('activeTransfersContainer');
+        const activeT = data.active_transfers || [];
+        if (activeT.length > 0) {
+          atCont.innerHTML = activeT.map(t => {
+            const pct = Math.round((t.progress || 0) * 100);
+            const speed = t.speed_bytes_sec ? (t.speed_bytes_sec / (1024 * 1024)).toFixed(2) + ' MB/s' : '';
+            return '<div class="progress-wrap">' +
+              '<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; font-weight:600; margin-bottom:4px;">' +
+                '<span>' + (t.is_incoming ? 'Receiving: ' : 'Sending: ') + t.name + ' (' + (t.size ? (t.size / 1024).toFixed(1) + ' KB' : '') + ')</span>' +
+                '<span style="color:var(--cyan);">' + pct + '% ' + (speed ? '• ' + speed : '') + '</span>' +
+              '</div>' +
+              '<div class="progress-bar-bg">' +
+                '<div class="progress-bar-fill" style="width:' + pct + '%;"></div>' +
+              '</div>' +
+              '<div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">' +
+                '<span style="font-size:10px; color:var(--muted);">' + (t.peer_name ? t.peer_name : 'Peer') + ' • ' + t.state + '</span>' +
+                '<button class="btn btn-danger btn-sm" style="padding:2px 8px; font-size:10px;" onclick="cancelTransfer(\'' + t.id + '\')">Cancel Transfer</button>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        } else {
+          atCont.innerHTML = '';
+        }
+
+        // 4. Nearby Discovered devices list
         const dList = document.getElementById('discoveredList');
         if (data.discovered_devices && data.discovered_devices.length > 0) {
           dList.innerHTML = data.discovered_devices.map(d => {
             const isPaired = data.paired_devices && data.paired_devices.some(p => p.device_id === d.device_id || p.device_name === d.device_name);
-            const isConn = data.connected_devices && data.connected_devices.some(c => c.device_id === d.device_id || c.ip === d.ip);
+            const isConn = connDevices.some(c => c.device_id === d.device_id || c.ip === d.ip);
             return '<li class="list-item">' +
               '<div class="list-item-left">' +
                 '<div style="width:7px; height:7px; border-radius:50%; background:' + (isConn ? '#22c55e' : '#38bdf8') + ';"></div>' +
                 '<div>' +
                   '<div class="list-item-title">' + d.device_name + '</div>' +
-                  '<div class="list-item-sub">' + d.ip + ':' + d.port + '</div>' +
+                  '<div class="list-item-sub">' + d.ip + ':' + d.port + ' • ' + (d.device_type ? d.device_type : 'device') + '</div>' +
                 '</div>' +
               '</div>' +
               '<div style="display:flex; gap:5px;">' +
                 (isConn ?
                   '<span class="badge badge-green" style="display:flex; align-items:center;">Connected</span>' :
                   (isPaired ?
-                    '<button class="btn btn-sm btn-success" onclick="connectPeer('' + d.device_id + '','' + d.device_name.replace(/'/g, "\'") + '','' + d.ip + '',' + d.port + ')">Connect</button>' :
-                    '<button class="btn btn-sm btn-bordered" onclick="pairDevice('' + d.device_id + '','' + d.device_name.replace(/'/g, "\'") + '','' + d.ip + '',' + d.port + ')">Pair Device</button>'
+                    '<button class="btn btn-sm btn-success" onclick="connectPeer(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Connect</button>' :
+                    '<button class="btn btn-sm btn-bordered" onclick="pairDevice(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Pair Device</button>'
                   )
                 ) +
               '</div>' +
@@ -2433,7 +3300,7 @@ const webUIHTML = `<!DOCTYPE html>
           dList.innerHTML = '<li class="muted">Searching for nearby devices on local Wi-Fi...</li>';
         }
 
-        // Recent Transfers list
+        // 5. Recent Transfers list
         const tList = document.getElementById('transfersList');
         const modalTList = document.getElementById('modalTransfersList');
         if (data.transfer_history && data.transfer_history.length > 0) {
@@ -2443,10 +3310,10 @@ const webUIHTML = `<!DOCTYPE html>
                 '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.success ? '#22c55e' : '#ef4444') + '" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>' +
                 '<div>' +
                   '<div class="list-item-title">' + t.file_name + '</div>' +
-                  '<div class="list-item-sub">' + (t.size ? (t.size / 1024).toFixed(1) + ' KB' : 'Completed') + ' • ' + (t.is_incoming ? 'Received' : 'Sent') + '</div>' +
+                  '<div class="list-item-sub">' + (t.size ? (t.size / 1024).toFixed(1) + ' KB' : 'Completed') + ' • ' + (t.is_incoming ? 'Received' : 'Sent') + ' (' + (t.state ? t.state : (t.success ? 'Success' : 'Failed')) + ')</div>' +
                 '</div>' +
               '</div>' +
-              '<button class="btn btn-bordered btn-sm" onclick="deleteTransfer('' + t.id + '')">Delete</button>' +
+              '<button class="btn btn-bordered btn-sm" onclick="deleteTransfer(\'' + t.id + '\')">Delete</button>' +
             '</li>'
           ).join('');
           tList.innerHTML = tHtml;
@@ -2456,23 +3323,23 @@ const webUIHTML = `<!DOCTYPE html>
           if (modalTList) modalTList.innerHTML = '<li class="muted">No transfers in history.</li>';
         }
 
-        // Clipboard history list
-        const cList = document.getElementById('clipList');
+        // 6. Clipboard history list
+        const clipListEl = document.getElementById('clipList');
         const modalCList = document.getElementById('modalClipboardList');
         if (data.clipboard_history && data.clipboard_history.length > 0) {
           const cHtml = data.clipboard_history.slice(0, 10).map((t, idx) => 
             '<li class="list-item">' +
               '<div class="list-item-title">' + t.substring(0, 32) + (t.length > 32 ? '...' : '') + '</div>' +
               '<div style="display:flex; gap:4px;">' +
-                '<button class="btn btn-bordered btn-sm" onclick="copyClipText('' + encodeURIComponent(t) + '')">Copy</button>' +
+                '<button class="btn btn-bordered btn-sm" onclick="copyClipText(\'' + encodeURIComponent(t) + '\')">Copy</button>' +
                 '<button class="btn btn-danger btn-sm" onclick="deleteClip(' + idx + ')">&times;</button>' +
               '</div>' +
             '</li>'
           ).join('');
-          cList.innerHTML = cHtml;
+          clipListEl.innerHTML = cHtml;
           if (modalCList) modalCList.innerHTML = cHtml;
         } else {
-          cList.innerHTML = '<li class="muted">No clipboard items yet.</li>';
+          clipListEl.innerHTML = '<li class="muted">No clipboard items yet.</li>';
           if (modalCList) modalCList.innerHTML = '<li class="muted">No clipboard items in history.</li>';
         }
 
@@ -2492,8 +3359,388 @@ const webUIHTML = `<!DOCTYPE html>
       loadStatus();
     }
 
-    setInterval(loadStatus, 2000);
+    setInterval(loadStatus, 1500);
     loadStatus();
+  </script>
+</body>
+</html>
+`
+
+
+const popupUIHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DexoLink System Tray</title>
+<style>
+  :root {
+    --bg: #18181b;
+    --card: #27272a;
+    --card-border: rgba(255, 255, 255, 0.08);
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --success: #10b981;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 16px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--card-border);
+    margin-bottom: 12px;
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .logo-icon {
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #3b82f6, #06b6d4);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+  }
+  .version {
+    font-size: 11px;
+    color: var(--muted);
+    background: rgba(255,255,255,0.06);
+    padding: 2px 6px;
+    border-radius: 10px;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .status-badge.idle {
+    background: rgba(161, 161, 170, 0.15);
+    color: var(--muted);
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin: 12px 0 8px 0;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+
+  .device-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+  }
+  .device-item:not(:last-child) {
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .device-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .device-name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .device-meta {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .btn-disconnect {
+    background: transparent;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--danger);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-disconnect:hover {
+    background: rgba(239, 68, 68, 0.15);
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+  }
+  .toggle-row:not(:last-child) {
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .toggle-label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .toggle-sub {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* Switch */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #3f3f46;
+    transition: .25s;
+    border-radius: 20px;
+  }
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .25s;
+    border-radius: 50%;
+  }
+  input:checked + .slider {
+    background-color: var(--accent);
+  }
+  input:checked + .slider:before {
+    transform: translateX(16px);
+  }
+
+  .btn-block {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--card-border);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.2s;
+    margin-top: 8px;
+  }
+  .btn-block:hover {
+    background: rgba(255,255,255,0.12);
+  }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+  .btn-danger-outline {
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.25);
+  }
+  .btn-danger-outline:hover {
+    background: rgba(239, 68, 68, 0.15);
+  }
+
+  .empty-state {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding: 12px 0;
+  }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="logo-icon">&#8734;</div>
+      <div class="title">DexoLink</div>
+      <span class="version">v4.0.1</span>
+    </div>
+    <div id="statusBadge" class="status-badge idle">
+      <div class="status-dot"></div>
+      <span id="statusText">Ready</span>
+    </div>
+  </div>
+
+  <div class="section-label">Connected Devices</div>
+  <div class="card" id="devicesCard">
+    <div class="empty-state" id="devicesEmpty">No devices connected</div>
+    <div id="devicesList"></div>
+  </div>
+
+  <div class="section-label">Quick Settings & Controls</div>
+  <div class="card">
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Clipboard Sync</div>
+        <div class="toggle-sub">Auto copy / paste between peers</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="clipToggle" onchange="toggleClip(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">File Sharing</div>
+        <div class="toggle-sub">Allow sending & receiving files</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="shareToggle" onchange="toggleShare(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <button class="btn-block" onclick="quickReconnect()">
+      &#9889; Rescan Wi-Fi & Quick Reconnect
+    </button>
+  </div>
+
+  <div style="display: flex; gap: 8px; margin-top: 12px;">
+    <button class="btn-block btn-primary" style="margin-top:0;" onclick="openDashboard()">
+      Open Dashboard
+    </button>
+    <button class="btn-block btn-danger-outline" style="margin-top:0;" onclick="exitCompletely()">
+      Exit Completely
+    </button>
+  </div>
+
+  <script>
+    async function updatePopupStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. Update status badge
+        const badge = document.getElementById('statusBadge');
+        const statusText = document.getElementById('statusText');
+        const connCount = (data.connected_devices || []).length;
+        if (connCount > 0) {
+          badge.className = 'status-badge';
+          statusText.textContent = connCount + ' Connected';
+        } else {
+          badge.className = 'status-badge idle';
+          statusText.textContent = 'Ready (0)';
+        }
+
+        // 2. Update connected devices
+        const listEl = document.getElementById('devicesList');
+        const emptyEl = document.getElementById('devicesEmpty');
+        if (connCount > 0) {
+          emptyEl.style.display = 'none';
+          listEl.innerHTML = data.connected_devices.map(function(d) {
+            var name = d.device_name || 'Device';
+            var type = d.device_type || 'Peer';
+            var ip = d.ip || '';
+            var id = d.device_id || '';
+            return '<div class="device-item">' +
+              '<div class="device-info">' +
+                '<div class="device-name">&#9679; ' + name + '</div>' +
+                '<div class="device-meta">' + type + ' &bull; ' + ip + '</div>' +
+              '</div>' +
+              '<button class="btn-disconnect" onclick="disconnectDevice(\'' + id + '\')">Disconnect</button>' +
+            '</div>';
+          }).join('');
+        } else {
+          emptyEl.style.display = 'block';
+          listEl.innerHTML = '';
+        }
+
+        // 3. Update toggles
+        document.getElementById('clipToggle').checked = !!data.auto_clipboard_sync;
+        document.getElementById('shareToggle').checked = !!data.enabled;
+      } catch (e) {
+        console.error('updatePopupStatus error:', e);
+      }
+    }
+
+    async function toggleClip(val) {
+      await fetch('/api/toggle-feature?feature=clipboard&enabled=' + val);
+      updatePopupStatus();
+    }
+
+    async function toggleShare(val) {
+      await fetch('/api/toggle-master?enabled=' + val);
+      updatePopupStatus();
+    }
+
+    async function quickReconnect() {
+      await fetch('/api/reconnect');
+      setTimeout(updatePopupStatus, 600);
+    }
+
+    async function disconnectDevice(id) {
+      await fetch('/api/disconnect?id=' + encodeURIComponent(id));
+      updatePopupStatus();
+    }
+
+    function openDashboard() {
+      window.open('/', '_blank');
+    }
+
+    async function exitCompletely() {
+      if (confirm('Are you sure you want to exit DexoLink completely?')) {
+        await fetch('/api/exit');
+        window.close();
+      }
+    }
+
+    setInterval(updatePopupStatus, 1500);
+    updatePopupStatus();
   </script>
 </body>
 </html>
