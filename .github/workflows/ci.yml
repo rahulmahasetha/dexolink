@@ -132,7 +132,7 @@ jobs:
       - name: Build Windows Executable
         run: |
           cd windows
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o DexoLink.exe main.go
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o DexoLink.exe .
           mkdir -p ../windows_artifacts
           cp DexoLink.exe ../windows_artifacts/DexoLink.exe
           cp DexoLink.exe ../windows_artifacts/DexoLink-v4.0.1.exe
