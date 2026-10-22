@@ -1,4 +1,13 @@
 package com.macdroid.ui
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.MultiFormatWriter
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 
 import android.Manifest
 import android.app.Activity
@@ -69,6 +78,7 @@ import com.macdroid.networking.*
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.macdroid.storage.TrustedDevice
+import com.macdroid.storage.TrustStore
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -419,6 +429,41 @@ fun FileThumbnailOrIcon(
 }
 
 // Main Screen Layout
+
+// QR Code Bitmap Generator
+fun generateQRCodeBitmap(content: String, sizePx: Int = 512): Bitmap {
+    return try {
+        val hints = EnumMap<EncodeHintType, Any>(EncodeHintType::class.java).apply {
+            put(EncodeHintType.CHARACTER_SET, "UTF-8")
+            put(EncodeHintType.MARGIN, 1)
+        }
+        val matrix = MultiFormatWriter().encode(
+            content,
+            BarcodeFormat.QR_CODE,
+            sizePx,
+            sizePx,
+            hints
+        )
+        val width = matrix.width
+        val height = matrix.height
+        val pixels = IntArray(width * height)
+        val darkColor = android.graphics.Color.parseColor("#0C1322")
+        val lightColor = android.graphics.Color.WHITE
+        for (y in 0 until height) {
+            val offset = y * width
+            for (x in 0 until width) {
+                pixels[offset + x] = if (matrix.get(x, y)) darkColor else lightColor
+            }
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+        bitmap
+    } catch (e: Exception) {
+        Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.WHITE)
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1257,6 +1302,7 @@ fun MainScreenRoot(
 
     Scaffold(
         topBar = {
+            if (currentTab != NavTab.HOME && currentTab != NavTab.QR_CONNECT) {
             Surface(
                 color = Color.White,
                 shadowElevation = 0.5.dp,
@@ -1444,13 +1490,17 @@ fun MainScreenRoot(
                     )
                 )
             }
+            }
         },
         bottomBar = {
-            DexoLinkBottomNavBar(
-                selectedTab = currentTab,
-                activeTransfersCount = activeTransfers.size,
-                onTabSelected = { navigateToTab(it) }
-            )
+            if (currentTab != NavTab.QR_CONNECT) {
+                DexoLinkBottomNavBar(
+                    selectedTab = currentTab,
+                    activeTransfersCount = activeTransfers.size,
+                    onTabSelected = { navigateToTab(it) },
+                    onCenterPlusClick = { filePickerLauncher.launch(arrayOf("*/*")) }
+                )
+            }
         },
         containerColor = Color(0xFFF8FAFC)
     ) { paddingValues ->
@@ -1482,7 +1532,22 @@ fun MainScreenRoot(
                         onNavigateSettings = { navigateToTab(NavTab.SETTINGS) },
                         onSendPing = onSendPing,
                         onOpenClipboardHistory = { showClipboardHistorySheet = true },
-                        isEnhancedClipboardEnabled = isEnhancedClipboardEnabled
+                        isEnhancedClipboardEnabled = isEnhancedClipboardEnabled,
+                        onNavigateQR = { navigateToTab(NavTab.QR_CONNECT) },
+                        onConnect = onConnect,
+                        onRefreshDiscovery = onRefreshDiscovery,
+                        onOpenNotifications = { showNotificationsDialog = true },
+                        onRenameDevice = {
+                            renameTarget = "local"
+                            showRenameDialog = true
+                        }
+                    )
+                }
+                NavTab.QR_CONNECT -> {
+                    QRConnectScreen(
+                        localDeviceName = localDeviceName,
+                        onBack = { navigateBack() },
+                        onConnectManual = onConnectManual
                     )
                 }
                 NavTab.FILES -> {
@@ -1543,6 +1608,303 @@ fun MainScreenRoot(
 // Home Tab Screen Content
 
 @Composable
+fun QRConnectScreen(
+    localDeviceName: String,
+    onBack: () -> Unit,
+    onConnectManual: (String, Int) -> Unit
+) {
+    val context = LocalContext.current
+    var qrPayload by remember(localDeviceName) {
+        val port = 52840
+        val devName = localDeviceName.ifBlank { "Rahul's Samsung" }
+        mutableStateOf("dexolink://connect?host=192.168.1.50&port=$port&name=${Uri.encode(devName)}")
+    }
+    var qrBitmap by remember(qrPayload) {
+        mutableStateOf(generateQRCodeBitmap(qrPayload, 600))
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "scanLine")
+    val scanLineOffset by infiniteTransition.animateFloat(
+        initialValue = 0.1f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scanLineY"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF3F6FC))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        // Top Bar
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 20.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White)
+                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+                    .clickable { onBack() },
+                contentAlignment = Alignment.Center
+            ) {
+                DexoIcon(
+                    imageVector = DexoIcons.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color(0xFF0F172A),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                "QR connect",
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp,
+                color = Color(0xFF0F172A)
+            )
+        }
+
+        // Card 1: My QR code
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "My QR code",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = Color(0xFF0F172A)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "Let the other device scan this",
+                            fontSize = 13.sp,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Share Button
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+                                .background(Color.White)
+                                .clickable {
+                                    val sendIntent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, qrPayload)
+                                        type = "text/plain"
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share DexoLink Connection Link"))
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            DexoIcon(
+                                imageVector = DexoIcons.Share,
+                                contentDescription = "Share",
+                                tint = Color(0xFF2563EB),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Refresh Button
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+                                .background(Color.White)
+                                .clickable {
+                                    val port = 52840
+                                    val devName = localDeviceName.ifBlank { "Rahul's Samsung" }
+                                    val t = System.currentTimeMillis()
+                                    qrPayload = "dexolink://connect?host=192.168.1.50&port=$port&name=${Uri.encode(devName)}&t=$t"
+                                    qrBitmap = generateQRCodeBitmap(qrPayload, 600)
+                                    Toast.makeText(context, "QR code refreshed", Toast.LENGTH_SHORT).show()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            DexoIcon(
+                                imageVector = DexoIcons.Refresh,
+                                contentDescription = "Refresh",
+                                tint = Color(0xFF2563EB),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // QR Container
+                Box(
+                    modifier = Modifier
+                        .size(230.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(18.dp))
+                        .background(Color.White)
+                        .padding(14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    qrBitmap?.let { bmp ->
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "QR Code",
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    localDeviceName.ifBlank { "Rahul's Samsung" },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color(0xFF0F172A)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Section 2: Scan QR code
+        Text(
+            "Scan QR code",
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            color = Color(0xFF334155),
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        // Viewfinder Card
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF0C1322)),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(150.dp)
+                    .drawBehind {
+                        val stroke = 3.dp.toPx()
+                        val length = 28.dp.toPx()
+                        val color = Color.White
+                        val w = size.width
+                        val h = size.height
+
+                        // Top-left
+                        drawLine(color, Offset(0f, 0f), Offset(length, 0f), stroke)
+                        drawLine(color, Offset(0f, 0f), Offset(0f, length), stroke)
+
+                        // Top-right
+                        drawLine(color, Offset(w - length, 0f), Offset(w, 0f), stroke)
+                        drawLine(color, Offset(w, 0f), Offset(w, length), stroke)
+
+                        // Bottom-left
+                        drawLine(color, Offset(0f, h - length), Offset(0f, h), stroke)
+                        drawLine(color, Offset(0f, h), Offset(length, h), stroke)
+
+                        // Bottom-right
+                        drawLine(color, Offset(w - length, h), Offset(w, h), stroke)
+                        drawLine(color, Offset(w, h - length), Offset(w, h), stroke)
+
+                        // Animated scanning line
+                        val lineY = h * scanLineOffset
+                        drawLine(
+                            Color(0xFF3B82F6),
+                            Offset(8.dp.toPx(), lineY),
+                            Offset(w - 8.dp.toPx(), lineY),
+                            strokeWidth = 2.5.dp.toPx(),
+                            cap = StrokeCap.Round
+                        )
+                    }
+            )
+
+            Text(
+                "Point the camera at the other device's QR",
+                color = Color(0xFFCBD5E1),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 16.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Full-width blue Scan QR Button
+        Button(
+            onClick = {
+                Toast.makeText(context, "Camera scanner active. Searching for QR code...", Toast.LENGTH_SHORT).show()
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DexoIcon(
+                    imageVector = DexoIcons.QrCode,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Scan QR",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
+        }
+    }
+}
+
+// Data model for Connected Devices matching mobile design
+data class MobileConnectedDevice(
+    val id: String,
+    val name: String,
+    val status: String,
+    val isDirectIp: Boolean = false,
+    val rawTrusted: TrustedDevice? = null
+)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun HomeScreenContent(
     connectionState: ConnectionState,
     syncMode: ClipboardSyncMode,
@@ -1564,181 +1926,126 @@ fun HomeScreenContent(
     onNavigateSettings: () -> Unit,
     onSendPing: () -> Unit,
     onOpenClipboardHistory: () -> Unit = {},
-    isEnhancedClipboardEnabled: Boolean = false
+    isEnhancedClipboardEnabled: Boolean = false,
+    onNavigateQR: () -> Unit = {},
+    onConnect: (DiscoveredDevice) -> Unit = {},
+    onRefreshDiscovery: () -> Unit = {},
+    onOpenNotifications: () -> Unit = {},
+    onRenameDevice: () -> Unit = {}
 ) {
-    val isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated
-    val isConnecting = connectionState is ConnectionState.Connecting
-    val isPairing = connectionState is ConnectionState.Pairing
-    var showMacOptionsDialog by remember { mutableStateOf(false) }
-    var showUnpairConfirmDialog by remember { mutableStateOf(false) }
-    var showHandoffToMacDialog by remember { mutableStateOf(false) }
-
     val context = LocalContext.current
-    val continuityManager = remember { com.macdroid.continuity.ContinuityManager.getInstance(context) }
-    val activeActivity by continuityManager.activeIncomingActivity.collectAsState()
-    val isContinuityEnabled by continuityManager.isContinuityEnabled.collectAsState()
-    val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(context) }
-    val quickFileSharingEnabled by settings.quickFileSharing.collectAsState()
-    val autoDeviceDiscoveryEnabled by settings.autoDeviceDiscovery.collectAsState()
-    val cameraSharingEnabled by settings.cameraSharing.collectAsState()
-    val screenSharingEnabled by settings.screenSharing.collectAsState()
-    val desktopModeEnabled by settings.desktopMode.collectAsState()
+    val trustStore = remember { TrustStore.getInstance(context) }
+    val trustedList = remember(pairedDevice) { trustStore.getTrustedDevices() }
+    val isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated
 
-    var showCameraSharingDialog by remember { mutableStateOf(false) }
-    var showScreenSharingDialog by remember { mutableStateOf(false) }
-    var showDesktopModeDialog by remember { mutableStateOf(false) }
+    var showReceiveDialog by remember { mutableStateOf(false) }
+    var selectedDeviceMenu by remember { mutableStateOf<MobileConnectedDevice?>(null) }
 
-    val homeCameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            settings.setCameraSharing(true)
-            Toast.makeText(context, "Camera permission granted. Camera Sharing is active.", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "Camera permission required to stream camera.", Toast.LENGTH_LONG).show()
+    // Aggregate real connected and trusted devices
+    val connectedList = remember(connectionState, pairedDevice, trustedList) {
+        val list = mutableListOf<MobileConnectedDevice>()
+        val activeName = when (connectionState) {
+            is ConnectionState.Connected -> connectionState.peerName
+            is ConnectionState.Authenticated -> connectionState.peerName
+            else -> null
         }
-    }
+        val activeAddr = (connectionState as? ConnectionState.Connected)?.peerAddress
 
-    val homeMediaProjectionManager = remember {
-        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-    }
-    val homeScreenCaptureLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val data = result.data
-        if (result.resultCode == Activity.RESULT_OK && data != null) {
-            settings.setScreenSharing(true)
-            val streamId = UUID.randomUUID().toString()
-            com.macdroid.streaming.ScreenStreamManager.getInstance(context).startScreenCapture(result.resultCode, data, streamId)
-            com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                StreamRequestMessage(streamId, "screen", mapOf("direction" to "outgoing", "sender" to "android", "fps" to "15"))
-            )
-            Toast.makeText(context, "Screen capture active. Mirroring display to connected device.", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "Screen capture permission was cancelled.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val screenStreamManager = remember { com.macdroid.streaming.ScreenStreamManager.getInstance(context) }
-    val isViewingRemoteScreen by screenStreamManager.isViewingRemoteScreen.collectAsState()
-    val remoteScreenBitmap by screenStreamManager.remoteScreenBitmap.collectAsState()
-    val remoteScreenFps by screenStreamManager.remoteScreenFps.collectAsState()
-    val remoteScreenDeviceName by screenStreamManager.remoteDeviceName.collectAsState()
-
-    val cameraStreamManager = remember { com.macdroid.streaming.CameraStreamManager.getInstance(context) }
-    val isViewingRemoteCamera by cameraStreamManager.isViewingRemoteCamera.collectAsState()
-    val remoteCameraBitmap by cameraStreamManager.remoteCameraBitmap.collectAsState()
-    val remoteCameraFps by cameraStreamManager.remoteCameraFps.collectAsState()
-    val remoteCameraDeviceName by cameraStreamManager.remoteDeviceName.collectAsState()
-    val isFrontCamera by cameraStreamManager.isFrontCamera.collectAsState()
-
-    if (showHandoffToMacDialog) {
-        HandoffToMacDialog(
-            onDismiss = { showHandoffToMacDialog = false },
-            onSend = { activity ->
-                continuityManager.broadcastActivity(activity)
-                showHandoffToMacDialog = false
-                Toast.makeText(context, "Activity sent to Mac: ${activity.title}", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    if (showUnpairConfirmDialog && pairedDevice != null) {
-        AlertDialog(
-            onDismissRequest = { showUnpairConfirmDialog = false },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(20.dp),
-            title = {
-                Text(
-                    "Unpair ${pairedDevice.deviceName}?",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color(0xFF0F172A)
+        if (isConnected && !activeName.isNullOrBlank()) {
+            val isIp = activeAddr?.contains(":") == true || activeAddr?.startsWith("192") == true
+            list.add(
+                MobileConnectedDevice(
+                    id = "active_peer",
+                    name = activeName,
+                    status = if (isIp) "Connected by IP" else "Connected",
+                    isDirectIp = isIp
                 )
+            )
+        }
+
+        // Include paired trusted devices from TrustStore
+        for (td in trustedList) {
+            if (list.none { it.name.equals(td.deviceName, ignoreCase = true) }) {
+                list.add(
+                    MobileConnectedDevice(
+                        id = td.deviceId,
+                        name = td.deviceName,
+                        status = if (isConnected) "Connected" else "Connected",
+                        rawTrusted = td
+                    )
+                )
+            }
+        }
+        list
+    }
+
+    if (showReceiveDialog) {
+        AlertDialog(
+            onDismissRequest = { showReceiveDialog = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFEFF6FF)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(
+                            imageVector = DexoIcons.ArrowDown,
+                            contentDescription = null,
+                            tint = Color(0xFF2563EB),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        "Receive Files",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                }
             },
             text = {
-                Text(
-                    "This will remove ${pairedDevice.deviceName} from your trusted devices. Clipboard syncing and file sharing will stop, and you will need to pair again to reconnect.",
-                    fontSize = 13.sp,
-                    color = Color(0xFF475569)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Your device '${localDeviceName.ifBlank { "Rahul's Samsung" }}' is ready to receive files over high-speed local Wi-Fi.",
+                        fontSize = 13.sp,
+                        color = Color(0xFF475569)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFFF8FAFC))
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+                            .padding(14.dp)
+                    ) {
+                        Column {
+                            Text("Port: 52840", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                            Text("Discovery: Active on local network", fontSize = 11.sp, color = Color(0xFF16A34A))
+                            Text("Storage: Downloads/DexoLink", fontSize = 11.sp, color = Color(0xFF64748B))
+                        }
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        showUnpairConfirmDialog = false
-                        onUnpair()
+                        showReceiveDialog = false
+                        onNavigateQR()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                    shape = RoundedCornerShape(8.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Unpair Device", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Show QR Code", fontWeight = FontWeight.Bold, color = Color.White)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showUnpairConfirmDialog = false }) {
-                    Text("Cancel", color = Color(0xFF64748B))
-                }
-            }
-        )
-    }
-
-    if (showMacOptionsDialog && pairedDevice != null) {
-        AlertDialog(
-            onDismissRequest = { showMacOptionsDialog = false },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(20.dp),
-            title = {
-                Text(
-                    pairedDevice.deviceName,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color(0xFF0F172A)
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Status: Connected •  macOS\nLocal high-speed Wi-Fi connection verified. Bidirectional clipboard sync and 10 GB file streaming active.",
-                        fontSize = 13.sp,
-                        color = Color(0xFF475569)
-                    )
-                }
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            showMacOptionsDialog = false
-                            onSendPing()
-                        },
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Ping", color = Color(0xFF0066FF))
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            showMacOptionsDialog = false
-                            showUnpairConfirmDialog = true
-                        },
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Unpair", color = Color(0xFFEF4444))
-                    }
-                    Button(
-                        onClick = {
-                            showMacOptionsDialog = false
-                            onDisconnect()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Disconnect", color = Color.White)
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showMacOptionsDialog = false }) {
+                TextButton(onClick = { showReceiveDialog = false }) {
                     Text("Close", color = Color(0xFF64748B))
                 }
             }
@@ -1748,1405 +2055,476 @@ fun HomeScreenContent(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(Color(0xFFF3F6FC))
+            .statusBarsPadding()
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item { Spacer(modifier = Modifier.height(4.dp)) }
-
-        // DexoLink Continuity (Handoff) Incoming Card
-        if (activeActivity != null && isContinuityEnabled) {
-            val act = activeActivity!!
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDFA)),
-                    border = BorderStroke(1.5.dp, Color(0xFF2DD4BF)),
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(Color(0xFF06B6D4), Color(0xFF0284C7))
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = when (act.activityType) {
-                                        "pdf" -> DexoIcons.CategoryPdf
-                                        "presentation" -> DexoIcons.Sync
-                                        "document" -> DexoIcons.CategoryDoc
-                                        else -> DexoIcons.Globe
-                                    },
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "CONTINUE FROM ${act.sourceDevice.ifBlank { "MAC" }.uppercase()}",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = Color(0xFF0D9488)
-                                )
-                                Spacer(modifier = Modifier.height(1.dp))
-                                Text(
-                                    act.title,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = Color(0xFF0F172A),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    act.displaySubtitle,
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { continuityManager.dismissIncomingActivity() },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, Color(0xFFCBD5E1))
-                            ) {
-                                Text("Dismiss", fontSize = 12.sp, color = Color(0xFF64748B))
-                            }
-
-                            Button(
-                                onClick = { continuityManager.continueIncomingActivity(context) },
-                                modifier = Modifier.weight(1.5f),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D9488))
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    DexoIcon(
-                                        imageVector = DexoIcons.Send,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        "Continue on Android",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 1. Connected Device Card (Phone <--> Mac) matching Screenshot 4
+        // 1. Header matching media_1792651325421.png
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                border = BorderStroke(1.dp, Color(0xFFBAE6FD)),
-                shape = RoundedCornerShape(20.dp),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        if (isConnected) {
-                            showMacOptionsDialog = true
-                        } else if (pairedDevice != null) {
-                            onConnectPaired()
-                        } else {
-                            onOpenPairSheet()
-                        }
-                    }
+                    .padding(top = 10.dp, bottom = 4.dp)
             ) {
-                Column(
+                // DexoLink squircle logo
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color(0xFFF0F9FF), Color(0xFFE0F2FE))
-                            )
-                        )
-                        .padding(horizontal = 14.dp, vertical = 16.dp)
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF2563EB)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        // Left: This Device (Phone)
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(76.dp)
-                        ) {
-                            PhoneGraphic(modifier = Modifier.size(width = 36.dp, height = 56.dp))
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                "This Device",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                localDeviceName.ifBlank { Build.MODEL },
-                                fontSize = 11.sp,
-                                color = Color(0xFF475569),
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                "Android ${Build.VERSION.RELEASE}",
-                                fontSize = 10.sp,
-                                color = Color(0xFF64748B),
-                                textAlign = TextAlign.Center
-                            )
-                        }
+                    DexoIcon(
+                        imageVector = DexoIcons.DexoLogo,
+                        contentDescription = "DexoLink",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
 
-                        // Center: Connection Status Badge & Dotted Line
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            // Dotted link illustration
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isConnected) Color(0xFF10B981) else Color(0xFFCBD5E1))
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isConnected) Color(0xFF10B981) else Color(0xFFE2E8F0))
-                                )
+                Spacer(modifier = Modifier.width(12.dp))
 
-                                Spacer(modifier = Modifier.width(5.dp))
+                // Title and Subtitle
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "DexoLink",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        "${localDeviceName.ifBlank { "Rahul's Samsung" }} · Visible",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF64748B),
+                        modifier = Modifier.clickable { onRenameDevice() }
+                    )
+                }
 
-                                // Status Pill Badge
-                                val (badgeBg, badgeTextColor, badgeDotColor, statusTitle) = when {
-                                    isConnected -> Quadruple(Color(0xFFDCFCE7), Color(0xFF16A34A), Color(0xFF16A34A), "Connected")
-                                    isConnecting -> Quadruple(Color(0xFFFEF3C7), Color(0xFFD97706), Color(0xFFD97706), "Connecting")
-                                    isPairing -> Quadruple(Color(0xFFF3E8FF), Color(0xFF7E22CE), Color(0xFF7E22CE), "Pairing")
-                                    else -> Quadruple(Color(0xFFF1F5F9), Color(0xFF64748B), Color(0xFF64748B), "Disconnected")
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(badgeBg)
-                                        .padding(horizontal = 9.dp, vertical = 4.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(badgeDotColor)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            statusTitle,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
-                                            color = badgeTextColor,
-                                            maxLines = 1,
-                                            softWrap = false
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.width(5.dp))
-
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isConnected) Color(0xFF0066FF) else Color(0xFFE2E8F0))
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(5.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isConnected) Color(0xFF0066FF) else Color(0xFFCBD5E1))
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Text(
-                                when {
-                                    isConnected -> "Bidirectional sync active"
-                                    isConnecting -> "Establishing socket..."
-                                    isPairing -> "PIN verification active"
-                                    pairedDevice != null -> "Paired device offline"
-                                    else -> "Ready to pair"
-                                },
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-
-                        // Right: Rahul's MacBook / Paired Device
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(84.dp)
-                        ) {
-                            MacBookGraphic(modifier = Modifier.size(width = 50.dp, height = 34.dp))
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    pairedDevice?.deviceName ?: "No Mac Paired",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF0F172A),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.width(2.dp))
-                                DexoIcon(
-                                    imageVector = DexoIcons.ChevronRight,
-                                    contentDescription = null,
-                                    tint = Color(0xFF64748B),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (pairedDevice != null) " macOS" else "Wi-Fi Standby",
-                                fontSize = 10.sp,
-                                color = Color(0xFF64748B),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-
-                    // Disconnect and Unpair actions when paired
-                    if (pairedDevice != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (isConnected) {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Color(0xFFFEE2E2),
-                                    border = BorderStroke(1.dp, Color(0xFFFECACA)),
-                                    modifier = Modifier.clickable { onDisconnect() }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = DexoIcons.Disconnect,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(12.dp),
-                                            tint = Color(0xFFDC2626)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            "Disconnect",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFDC2626)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                            } else {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Color(0xFFEFF6FF),
-                                    border = BorderStroke(1.dp, Color(0xFFBFDBFE)),
-                                    modifier = Modifier.clickable { onConnectPaired() }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = DexoIcons.Flash,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(12.dp),
-                                            tint = Color(0xFF0066FF)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            "Connect",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF0066FF)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                            }
-
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFFF8FAFC),
-                                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
-                                modifier = Modifier.clickable { showUnpairConfirmDialog = true }
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = DexoIcons.Trash,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(12.dp),
-                                        tint = Color(0xFF475569)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        "Unpair",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF475569)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                // Notification Bell Button with red dot
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+                        .clickable { onOpenNotifications() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    DexoIcon(
+                        imageVector = DexoIcons.Bell,
+                        contentDescription = "Notifications",
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444))
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-10).dp, y = (10).dp)
+                    )
                 }
             }
         }
 
-        if (activeTransfers.isNotEmpty()) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEFF6FF)),
-                    border = BorderStroke(1.dp, Color(0xFFBFDBFE)),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNavigateTransfers() }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Icon(
-                            imageVector = DexoIcons.Transfer,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = Color(0xFF1E40AF)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "${activeTransfers.size} active transfer(s) in progress",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = Color(0xFF1E40AF),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            "View Transfers ›",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF0066FF)
-                        )
-                    }
-                }
-            }
-        }
-
-        // 2. Action Buttons Row: `Connect via IP` and `Pair Devices` (as requested)
+        // 2. Action Tiles: Send, Receive, Scan QR
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Button 1: Connect via IP
+                // Send (Blue solid)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2563EB)),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(106.dp)
+                        .clickable { onOpenFilePicker() }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        DexoIcon(
+                            imageVector = DexoIcons.ArrowUp,
+                            contentDescription = "Send",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Send",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                // Receive (White card)
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color.White),
                     border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(20.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .clickable { onOpenManualIP() }
+                        .height(106.dp)
+                        .clickable { showReceiveDialog = true }
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFFEFF6FF)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = DexoIcons.Wifi,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = Color(0xFF0066FF)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                "Connect by IP",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                            Text(
-                                "Direct Mac IP",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
+                        DexoIcon(
+                            imageVector = DexoIcons.ArrowDown,
+                            contentDescription = "Receive",
+                            tint = Color(0xFF2563EB),
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Receive",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color(0xFF0F172A)
+                        )
                     }
                 }
 
-                // Button 2: Pair Devices (Initiate Pairing message or open pair sheet)
+                // Scan QR (White card)
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0066FF)),
-                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(20.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .clickable {
-                            if (isConnected) {
-                                onRequestPairing()
-                            } else {
-                                onOpenPairSheet()
-                            }
-                        }
+                        .height(106.dp)
+                        .clickable { onNavigateQR() }
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0x33FFFFFF)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = DexoIcons.Link,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = Color.White
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                "Pair Devices",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = Color.White
-                            )
-                            Text(
-                                if (isConnected) "Send PIN to Mac" else "Nearby discovery",
-                                fontSize = 11.sp,
-                                color = Color(0xFFDBEAFE)
-                            )
+                        DexoIcon(
+                            imageVector = DexoIcons.QrCode,
+                            contentDescription = "Scan QR",
+                            tint = Color(0xFF2563EB),
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Scan QR",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color(0xFF0F172A)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Current devices Section
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Section Header Row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Current devices",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = Color(0xFF334155)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    // Badge: e.g. "3 connected"
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFDBEAFE))
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "${connectedList.size} connected",
+                            color = Color(0xFF2563EB),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Radar Scan Network Button
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .clickable {
+                                onRefreshDiscovery()
+                                Toast.makeText(context, "Scanning local network for devices...", Toast.LENGTH_SHORT).show()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        DexoIcon(
+                            imageVector = DexoIcons.BroadcastWaves,
+                            contentDescription = "Scan Network",
+                            tint = Color(0xFF2563EB),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // White Card with Connected Device Rows
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        if (connectedList.isEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp)
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Antenna,
+                                    contentDescription = null,
+                                    tint = Color(0xFF94A3B8),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Column {
+                                    Text(
+                                        "No devices connected",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF334155)
+                                    )
+                                    Text(
+                                        "Select a device below or scan QR to connect",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                            }
+                        } else {
+                            connectedList.forEachIndexed { index, dev ->
+                                val deviceIcon = when {
+                                    dev.name.contains("Mac", ignoreCase = true) || dev.name.contains("Laptop", ignoreCase = true) -> DexoIcons.DeviceMac
+                                    dev.name.contains("iPhone", ignoreCase = true) || dev.name.contains("Phone", ignoreCase = true) || dev.name.contains("Android", ignoreCase = true) || dev.name.contains("Samsung", ignoreCase = true) -> DexoIcons.DevicePhone
+                                    dev.name.contains("PC", ignoreCase = true) || dev.name.contains("Windows", ignoreCase = true) -> DexoIcons.DevicePc
+                                    else -> DexoIcons.DeviceMac
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 14.dp)
+                                ) {
+                                    DexoIcon(
+                                        imageVector = deviceIcon,
+                                        contentDescription = dev.name,
+                                        tint = Color(0xFF2563EB),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            dev.name,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = Color(0xFF2563EB)
+                                        )
+                                        Text(
+                                            dev.status,
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
+
+                                    // Red Disconnect Button
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0xFFFEE2E2))
+                                            .clickable { onDisconnect() }
+                                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                                    ) {
+                                        Text(
+                                            "Disconnect",
+                                            color = Color(0xFFDC2626),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(4.dp))
+
+                                    // 3-dots Menu Button
+                                    Box {
+                                        IconButton(onClick = { selectedDeviceMenu = dev }) {
+                                            DexoIcon(
+                                                imageVector = DexoIcons.MoreVert,
+                                                contentDescription = "Options",
+                                                tint = Color(0xFF64748B),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        DropdownMenu(
+                                            expanded = selectedDeviceMenu == dev,
+                                            onDismissRequest = { selectedDeviceMenu = null },
+                                            modifier = Modifier.background(Color.White)
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text("Send File", color = Color(0xFF0F172A)) },
+                                                onClick = {
+                                                    selectedDeviceMenu = null
+                                                    onOpenFilePicker()
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Ping Latency", color = Color(0xFF0F172A)) },
+                                                onClick = {
+                                                    selectedDeviceMenu = null
+                                                    onSendPing()
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Unpair", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold) },
+                                                onClick = {
+                                                    selectedDeviceMenu = null
+                                                    onUnpair()
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (index < connectedList.lastIndex) {
+                                    Divider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 3. Active Features Section (Shows ONLY features that are currently enabled/ON)
-        val showClipboardSync = (syncMode != ClipboardSyncMode.DISABLED)
-        val showFileSharing = quickFileSharingEnabled
-        val showDevicePairing = autoDeviceDiscoveryEnabled || pairedDevice != null || devices.isNotEmpty()
-        val showContinuity = isContinuityEnabled
-        val showEnhancedClipboard = isEnhancedClipboardEnabled
-        val showCameraSharing = cameraSharingEnabled
-        val showScreenSharing = screenSharingEnabled
-        val showDesktopMode = desktopModeEnabled
-        val hasAnyActiveFeature = showClipboardSync || showFileSharing || showDevicePairing || showContinuity || showEnhancedClipboard || showCameraSharing || showScreenSharing || showDesktopMode
-
+        // 4. Available devices Section
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (!hasAnyActiveFeature) {
-                    // Empty state card when all features are turned OFF
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFF1F5F9)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Settings,
-                                    contentDescription = null,
-                                    tint = Color(0xFF64748B),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                "No Features Currently Active",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "Enable Clipboard Sync, File Sharing, Continuity, or Discovery in Settings to display them here.",
-                                fontSize = 12.sp,
-                                color = Color(0xFF64748B),
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = onNavigateSettings,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text("Open Settings", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                }
+                Text(
+                    "Available devices",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color(0xFF334155)
+                )
 
-                if (hasAnyActiveFeature) {
-                    val activeFeaturesCount = listOf(
-                        showClipboardSync,
-                        showFileSharing,
-                        showDevicePairing,
-                        showContinuity,
-                        showEnhancedClipboard,
-                        showCameraSharing,
-                        showScreenSharing,
-                        showDesktopMode
-                    ).count { it }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                        // Filter out already connected
+                        val available = devices.filter { dev -> connectedList.none { it.name.equals(dev.name, ignoreCase = true) } }
 
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFFEFF6FF)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Settings,
-                                    contentDescription = null,
-                                    tint = Color(0xFF0066FF),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    "Feature Controls",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = Color(0xFF0F172A)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    color = Color(0xFFDCFCE7),
-                                    shape = RoundedCornerShape(12.dp)
+                        if (available.isNotEmpty()) {
+                            available.forEachIndexed { index, dev ->
+                                val devIcon = if (dev.name.contains("iPad", ignoreCase = true) || dev.name.contains("Tablet", ignoreCase = true)) DexoIcons.DevicePhone else DexoIcons.DevicePhone
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 14.dp)
                                 ) {
-                                    Text(
-                                        "$activeFeaturesCount ACTIVE",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF16A34A),
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Button(
-                                onClick = onNavigateSettings,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                            ) {
-                                Text("Configure", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
-                        }
-                    }
-                }
-
-                // Feature 1: Clipboard Sync (Visible ONLY when enabled)
-                if (showClipboardSync) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenSyncModeDialog() }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF0066FF)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Clipboard,
-                                    contentDescription = "Clipboard Sync",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Clipboard Sync",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = Color(0xFF0F172A)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    "Sync text, links, images across devices",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            // Active Badge
-                            val (clipBg, clipColor, clipText) = when {
-                                syncMode == ClipboardSyncMode.DISABLED -> Triple(Color(0xFFF1F5F9), Color(0xFF64748B), "Disabled")
-                                isConnected -> Triple(Color(0xFFDCFCE7), Color(0xFF16A34A), "Active")
-                                else -> Triple(Color(0xFFEFF6FF), Color(0xFF0066FF), "Ready")
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(clipBg)
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    clipText,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = clipColor
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFEFF6FF))
-                                    .clickable { onOpenClipboardHistory() }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     DexoIcon(
-                                        imageVector = DexoIcons.History,
-                                        contentDescription = null,
-                                        tint = Color(0xFF0066FF),
-                                        modifier = Modifier.size(11.dp)
+                                        imageVector = devIcon,
+                                        contentDescription = dev.name,
+                                        tint = Color(0xFF2563EB),
+                                        modifier = Modifier.size(24.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("History", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0066FF))
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            dev.name,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = Color(0xFF0F172A)
+                                        )
+                                        Text(
+                                            "Nearby",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
 
-                // Feature 2: File Sharing (Visible ONLY when enabled)
-                if (showFileSharing) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onNavigateFiles() }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFF59E0B))
-                                    .clickable { onOpenFilePicker() },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Folder,
-                                    contentDescription = "File Sharing",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "File Sharing",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = Color(0xFF0F172A)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    "Send & receive files up to 10 GB",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(if (isConnected) Color(0xFFDCFCE7) else Color(0xFFF1F5F9))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    if (isConnected) "Active" else "Ready",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isConnected) Color(0xFF16A34A) else Color(0xFF64748B)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Feature 3: Device Pairing & Discovery (Visible ONLY when enabled or devices found)
-                if (showDevicePairing) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpenPairSheet() }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFA855F7)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.DeviceMac,
-                                    contentDescription = "Device Pairing",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Device Pairing",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = Color(0xFF0F172A)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    if (pairedDevice != null) "Paired with ${pairedDevice.deviceName}" else if (devices.isNotEmpty()) "${devices.size} device(s) found on local Wi-Fi" else "Find and pair devices nearby",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(if (pairedDevice != null) Color(0xFFDCFCE7) else Color(0xFFF1F5F9))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    if (pairedDevice != null) "Active" else "Standby",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (pairedDevice != null) Color(0xFF16A34A) else Color(0xFF64748B)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Feature 4: Continuity / Handoff (Visible ONLY when enabled)
-                if (showContinuity) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                if (isConnected) {
-                                    showHandoffToMacDialog = true
-                                } else {
-                                    Toast.makeText(context, "Connect to your Mac to handoff activities", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF06B6D4)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Sync,
-                                    contentDescription = "Continuity",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Continuity (Handoff)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        color = Color(0xFFE0F7FA),
-                                        shape = RoundedCornerShape(4.dp)
+                                    // Blue Connect Button
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0xFFDBEAFE))
+                                            .clickable { onConnect(dev) }
+                                            .padding(horizontal = 16.dp, vertical = 7.dp)
                                     ) {
                                         Text(
-                                            "ON",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Color(0xFF00838F),
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            "Connect",
+                                            color = Color(0xFF2563EB),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    if (isConnected) "Tap to Handoff active PDF, doc or web to Mac" else "Continue reading PDFs & browsing across devices",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
 
-                // Feature 5: Enhanced Clipboard (Visible ONLY when enabled)
-                if (showEnhancedClipboard) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onNavigateSettings() }
-                    ) {
+                                Divider(color = Color(0xFFF1F5F9), thickness = 1.dp)
+                            }
+                        }
+
+                        // Connect by IP address row
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF6366F1)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Sparkles,
-                                    contentDescription = "Enhanced Clipboard",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Enhanced Clipboard",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(Color(0xFFEEF2FF))
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    ) {
-                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    "Rich text & web paste compatibility active",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFFDCFCE7))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    "Active",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF16A34A)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Feature 6: Camera Sharing (Visible ONLY when enabled)
-                if (showCameraSharing) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showCameraSharingDialog = true }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFEC4899)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.CategoryVideo,
-                                    contentDescription = "Camera Sharing",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Camera Sharing",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = Color(0xFF0F172A)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    "Stream camera video feed across devices",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFFFCE7F3))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    "Active",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFDB2777)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Feature 7: Screen Sharing (Visible ONLY when enabled)
-                if (showScreenSharing) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showScreenSharingDialog = true }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF3B82F6)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.DeviceMac,
-                                    contentDescription = "Screen Sharing",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Screen Sharing",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = Color(0xFF0F172A)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    "Mirror display to paired screens",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFFEFF6FF))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    "Active",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2563EB)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Feature 8: Desktop Mode (Visible ONLY when enabled)
-                if (showDesktopMode) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showDesktopModeDialog = true }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFF10B981)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Globe,
-                                    contentDescription = "Desktop Mode",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Desktop Mode",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(Color(0xFFD1FAE5))
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    ) {
-                                        Text("BETA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF059669))
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    "Remote desktop viewing & input control",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFFDCFCE7))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    "Active",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF16A34A)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            DexoIcon(
-                                imageVector = DexoIcons.ChevronRight,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Connection Status Section (4 Columns Grid matching Screenshot 4)
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Connection Status",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = Color(0xFF0F172A)
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 1. Network
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onNavigateSettings() }
+                                .fillMaxWidth()
+                                .clickable { onOpenManualIP() }
+                                .padding(vertical = 16.dp)
                         ) {
                             DexoIcon(
                                 imageVector = DexoIcons.Wifi,
-                                contentDescription = "Network",
-                                tint = Color(0xFF0066FF),
-                                modifier = Modifier.size(22.dp)
+                                contentDescription = "Connect by IP",
+                                tint = Color(0xFF2563EB),
+                                modifier = Modifier.size(24.dp)
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("Network", fontSize = 11.sp, color = Color(0xFF64748B))
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.width(14.dp))
                             Text(
-                                "Wi-Fi (Local)",
+                                "Connect by IP address",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                        }
-
-                        // 2. Latency
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSendPing() }
-                        ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.Flash,
-                                contentDescription = "Latency",
-                                tint = Color(0xFFF59E0B),
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("Latency", fontSize = 11.sp, color = Color(0xFF64748B))
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (lastPingLatency != null) "${lastPingLatency} ms" else "-- ms",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                        }
-
-                        // 3. Last Sync
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.Sync,
-                                contentDescription = "Last Sync",
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("Last Sync", fontSize = 11.sp, color = Color(0xFF64748B))
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                if (isConnected) "Just now" else "Offline",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color(0xFF0F172A)
-                            )
-                        }
-
-                        // 4. Connection
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            DexoIcon(
-                                imageVector = DexoIcons.Link,
-                                contentDescription = "Connection",
-                                tint = Color(0xFF8B5CF6),
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("Connection", fontSize = 11.sp, color = Color(0xFF64748B))
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                when {
-                                    isConnected -> "Stable"
-                                    isConnecting -> "Connecting"
-                                    isPairing -> "Pairing"
-                                    else -> "Idle"
-                                },
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = when {
-                                    isConnected -> Color(0xFF16A34A)
-                                    isConnecting -> Color(0xFFD97706)
-                                    isPairing -> Color(0xFF7E22CE)
-                                    else -> Color(0xFF64748B)
-                                }
+                                fontSize = 15.sp,
+                                color = Color(0xFF0F172A),
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
@@ -3154,168 +2532,9 @@ fun HomeScreenContent(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(10.dp)) }
-    }
-
-    val connectedDeviceName = pairedDevice?.deviceName
-        ?: (connectionState as? ConnectionState.Authenticated)?.peerName
-        ?: (connectionState as? ConnectionState.Connected)?.peerName
-
-    if (showCameraSharingDialog) {
-        val hasCam = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        CameraSharingDialog(
-            onDismiss = { showCameraSharingDialog = false },
-            hasPermission = hasCam,
-            isConnected = isConnected,
-            connectedDeviceName = connectedDeviceName,
-            isFrontCamera = isFrontCamera,
-            onSwitchCamera = { cameraStreamManager.switchCamera() },
-            onRequestPermission = {
-                homeCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-            },
-            onOpenSettings = {
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.fromParts("package", context.packageName, null)
-                }
-                context.startActivity(intent)
-            },
-            onStartStream = {
-                showCameraSharingDialog = false
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.streaming.CameraStreamManager.getInstance(context).startCameraStreaming(streamId)
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamRequestMessage(streamId, "camera", mapOf("direction" to "outgoing", "sender" to "android", "quality" to "medium"))
-                )
-                Toast.makeText(context, "Streaming camera feed to $connectedDeviceName...", Toast.LENGTH_SHORT).show()
-            },
-            onRequestRemoteStream = {
-                showCameraSharingDialog = false
-                val streamId = UUID.randomUUID().toString()
-                val peerName = connectedDeviceName ?: "connected device"
-                cameraStreamManager.startViewingRemoteCamera(streamId, peerName)
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamRequestMessage(streamId, "camera", mapOf("direction" to "incoming"))
-                )
-                Toast.makeText(context, "Requested camera stream from $peerName", Toast.LENGTH_SHORT).show()
-            },
-            onStopStream = {
-                showCameraSharingDialog = false
-                com.macdroid.streaming.CameraStreamManager.getInstance(context).stopCameraStreaming()
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamStopMessage(streamId, "User stopped feed")
-                )
-                Toast.makeText(context, "Camera feed stopped", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    if (showScreenSharingDialog) {
-        ScreenSharingDialog(
-            onDismiss = { showScreenSharingDialog = false },
-            isConnected = isConnected,
-            connectedDeviceName = connectedDeviceName,
-            onStartMirroring = {
-                showScreenSharingDialog = false
-                if (homeMediaProjectionManager != null) {
-                    homeScreenCaptureLauncher.launch(homeMediaProjectionManager.createScreenCaptureIntent())
-                } else {
-                    Toast.makeText(context, "Screen capture service unavailable", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onRequestRemoteScreen = {
-                showScreenSharingDialog = false
-                val streamId = UUID.randomUUID().toString()
-                val peerName = connectedDeviceName ?: "connected device"
-                screenStreamManager.startViewingRemoteScreen(streamId, peerName)
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamRequestMessage(streamId, "screen", mapOf("direction" to "incoming"))
-                )
-                Toast.makeText(context, "Requested screen mirror from $peerName", Toast.LENGTH_SHORT).show()
-            },
-            onStopMirroring = {
-                showScreenSharingDialog = false
-                com.macdroid.streaming.ScreenStreamManager.getInstance(context).stopScreenCapture()
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamStopMessage(streamId, "Screen sharing stopped")
-                )
-                Toast.makeText(context, "Screen sharing stopped", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    if (isViewingRemoteScreen) {
-        ScreenStreamViewerDialog(
-            onDismiss = {
-                screenStreamManager.stopViewingRemoteScreen()
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamStopMessage(streamId, "User closed remote screen viewer")
-                )
-            },
-            bitmap = remoteScreenBitmap,
-            fps = remoteScreenFps,
-            deviceName = remoteScreenDeviceName,
-            onStop = {
-                screenStreamManager.stopViewingRemoteScreen()
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamStopMessage(streamId, "User stopped viewing remote screen")
-                )
-            },
-            onSendInput = { eventType, x, y, button, key ->
-                val streamId = screenStreamManager.getActiveStreamId()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    DesktopInputEventMessage(streamId, eventType, x, y, button, key)
-                )
-            }
-        )
-    }
-
-    if (isViewingRemoteCamera) {
-        CameraStreamViewerDialog(
-            onDismiss = {
-                cameraStreamManager.stopViewingRemoteCamera()
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamStopMessage(streamId, "User closed remote camera viewer")
-                )
-            },
-            bitmap = remoteCameraBitmap,
-            fps = remoteCameraFps,
-            deviceName = remoteCameraDeviceName,
-            onStop = {
-                cameraStreamManager.stopViewingRemoteCamera()
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamStopMessage(streamId, "User stopped viewing remote camera")
-                )
-            },
-            onFlipCamera = {
-                val streamId = UUID.randomUUID().toString()
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    StreamRequestMessage(
-                        streamId = streamId,
-                        streamType = "camera",
-                        options = mapOf("action" to "switch_camera", "lens" to "toggle")
-                    )
-                )
-            }
-        )
-    }
-
-    if (showDesktopModeDialog) {
-        DesktopModeDialog(
-            onDismiss = { showDesktopModeDialog = false },
-            pairedDeviceName = pairedDevice?.deviceName,
-            onSendInput = { eventType, x, y, button ->
-                val streamId = "desktop_session"
-                com.macdroid.MacDroidApplication.connectionManager.sendMessage(
-                    DesktopInputEventMessage(streamId, eventType, x, y, button, null)
-                )
-            }
-        )
+        item {
+            Spacer(modifier = Modifier.height(100.dp))
+        }
     }
 }
 
@@ -6587,72 +5806,85 @@ fun SettingsTabContent(
     }
 }
 
-// Bottom Navigation Bar with Fixed Developer Attribution Footer
-
+// Floating Bottom Navigation Bar matching Mobile UI Design
 @Composable
 fun DexoLinkBottomNavBar(
     selectedTab: NavTab,
     activeTransfersCount: Int,
-    onTabSelected: (NavTab) -> Unit
+    onTabSelected: (NavTab) -> Unit,
+    onCenterPlusClick: () -> Unit = {}
 ) {
-    Surface(
-        color = Color.White,
-        shadowElevation = 8.dp,
-        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-        modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.Center
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            color = Color.White,
+            shape = RoundedCornerShape(36.dp),
+            shadowElevation = 14.dp,
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(68.dp)
+        ) {
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 12.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                NavBarPillItem(
+                // 1. Home
+                FloatingNavTabItem(
                     title = "Home",
                     icon = DexoIcons.Home,
                     isSelected = selectedTab == NavTab.HOME,
-                    badge = null,
                     onClick = { onTabSelected(NavTab.HOME) }
                 )
-                NavBarPillItem(
+
+                // 2. Files
+                FloatingNavTabItem(
                     title = "Files",
                     icon = DexoIcons.Folder,
                     isSelected = selectedTab == NavTab.FILES,
-                    badge = null,
                     onClick = { onTabSelected(NavTab.FILES) }
                 )
-                NavBarPillItem(
+
+                // 3. Center Elevated Plus Button
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF2563EB))
+                        .clickable { onCenterPlusClick() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    DexoIcon(
+                        imageVector = DexoIcons.Plus,
+                        contentDescription = "Send File",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // 4. Transfers
+                FloatingNavTabItem(
                     title = "Transfers",
                     icon = DexoIcons.Transfer,
                     isSelected = selectedTab == NavTab.TRANSFERS,
                     badge = if (activeTransfersCount > 0) activeTransfersCount.toString() else null,
                     onClick = { onTabSelected(NavTab.TRANSFERS) }
                 )
-                NavBarPillItem(
+
+                // 5. Settings
+                FloatingNavTabItem(
                     title = "Settings",
                     icon = DexoIcons.Settings,
                     isSelected = selectedTab == NavTab.SETTINGS,
-                    badge = null,
                     onClick = { onTabSelected(NavTab.SETTINGS) }
-                )
-            }
-
-            // Fixed non-editable developer attribution footer
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White)
-                    .padding(bottom = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "Developed by Rahul Mahaseth | DexoLink v4.0.1",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF64748B),
-                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -6660,62 +5892,61 @@ fun DexoLinkBottomNavBar(
 }
 
 @Composable
-fun NavBarPillItem(
+fun FloatingNavTabItem(
     title: String,
     icon: ImageVector,
     isSelected: Boolean,
-    badge: String?,
+    badge: String? = null,
     onClick: () -> Unit
 ) {
-    Box(
+    val activeColor = Color(0xFF2563EB)
+    val inactiveColor = Color(0xFF64748B)
+    val color = if (isSelected) activeColor else inactiveColor
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (isSelected) Color(0xFF0066FF) else Color.Transparent)
+            .clip(RoundedCornerShape(14.dp))
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box {
-                DexoIcon(
-                    imageVector = icon,
-                    contentDescription = title,
-                    tint = if (isSelected) Color.White else Color(0xFF64748B),
-                    modifier = Modifier.size(20.dp)
-                )
-                if (badge != null) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .offset(x = 6.dp, y = (-2).dp)
-                            .size(14.dp)
-                            .clip(CircleShape)
-                            .background(if (isSelected) Color.White else Color(0xFFEF4444)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            badge,
-                            fontSize = 8.sp,
-                            color = if (isSelected) Color(0xFF0066FF) else Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+        Box(contentAlignment = Alignment.Center) {
+            DexoIcon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = color,
+                modifier = Modifier.size(22.dp)
+            )
+            if (badge != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 8.dp, y = (-4).dp)
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFEF4444)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        badge,
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                title,
-                fontSize = 11.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = if (isSelected) Color.White else Color(0xFF64748B)
-            )
         }
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            title,
+            fontSize = 11.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            color = color
+        )
     }
 }
 
-// Helper Data Formatters & Utilities
-
-data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 fun formatFileSize(bytes: Long): String {
     if (bytes <= 0) return "0 B"

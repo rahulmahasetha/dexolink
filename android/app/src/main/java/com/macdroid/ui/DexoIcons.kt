@@ -843,6 +843,182 @@ object DexoIcons {
             close()
         }
     }
+
+    val QrCode: ImageVector = strokedIcon("QrCode") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            // Top-left
+            moveTo(3f, 3f)
+            lineTo(9f, 3f)
+            lineTo(9f, 9f)
+            lineTo(3f, 9f)
+            close()
+            moveTo(6f, 6f)
+            lineTo(6.01f, 6f)
+            // Top-right
+            moveTo(15f, 3f)
+            lineTo(21f, 3f)
+            lineTo(21f, 9f)
+            lineTo(15f, 9f)
+            close()
+            moveTo(18f, 6f)
+            lineTo(18.01f, 6f)
+            // Bottom-left
+            moveTo(3f, 15f)
+            lineTo(9f, 15f)
+            lineTo(9f, 21f)
+            lineTo(3f, 21f)
+            close()
+            moveTo(6f, 18f)
+            lineTo(6.01f, 18f)
+            // Bottom-right elements
+            moveTo(15f, 15f)
+            lineTo(17f, 15f)
+            moveTo(21f, 15f)
+            lineTo(21.01f, 15f)
+            moveTo(15f, 21f)
+            lineTo(15.01f, 21f)
+            moveTo(19f, 19f)
+            lineTo(21f, 19f)
+            lineTo(21f, 21f)
+        }
+    }
+
+    val Share: ImageVector = strokedIcon("Share") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            // Circle 1 (top right)
+            moveTo(18f, 6f)
+            curveTo(19.1f, 6f, 20f, 5.1f, 20f, 4f)
+            curveTo(20f, 2.9f, 19.1f, 2f, 18f, 2f)
+            curveTo(16.9f, 2f, 16f, 2.9f, 16f, 4f)
+            curveTo(16f, 5.1f, 16.9f, 6f, 18f, 6f)
+            close()
+            // Circle 2 (bottom right)
+            moveTo(18f, 22f)
+            curveTo(19.1f, 22f, 20f, 21.1f, 20f, 20f)
+            curveTo(20f, 18.9f, 19.1f, 18f, 18f, 18f)
+            curveTo(16.9f, 18f, 16f, 18.9f, 16f, 20f)
+            curveTo(16f, 21.1f, 16.9f, 22f, 18f, 22f)
+            close()
+            // Circle 3 (left middle)
+            moveTo(6f, 14f)
+            curveTo(7.1f, 14f, 8f, 13.1f, 8f, 12f)
+            curveTo(8f, 10.9f, 7.1f, 10f, 6f, 10f)
+            curveTo(4.9f, 10f, 4f, 10.9f, 4f, 12f)
+            curveTo(4f, 13.1f, 4.9f, 14f, 6f, 14f)
+            close()
+            // Connecting lines
+            moveTo(7.8f, 11.2f)
+            lineTo(16.2f, 4.8f)
+            moveTo(7.8f, 12.8f)
+            lineTo(16.2f, 19.2f)
+        }
+    }
+
+    val Refresh: ImageVector = strokedIcon("Refresh") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(21f, 12f)
+            curveTo(21f, 16.97f, 16.97f, 21f, 12f, 21f)
+            curveTo(7.03f, 21f, 3f, 16.97f, 3f, 12f)
+            curveTo(3f, 7.03f, 7.03f, 3f, 12f, 3f)
+            curveTo(15.1f, 3f, 17.8f, 4.57f, 19.4f, 7f)
+            moveTo(15f, 7f)
+            lineTo(20f, 7f)
+            lineTo(20f, 2f)
+        }
+    }
+
+    val DevicePc: ImageVector = strokedIcon("DevicePc") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(3f, 4f)
+            lineTo(21f, 4f)
+            curveTo(21.55f, 4f, 22f, 4.45f, 22f, 5f)
+            lineTo(22f, 16f)
+            curveTo(22f, 16.55f, 21.55f, 17f, 21f, 17f)
+            lineTo(3f, 17f)
+            curveTo(2.45f, 17f, 2f, 16.55f, 2f, 16f)
+            lineTo(2f, 5f)
+            curveTo(2f, 4.45f, 2.45f, 4f, 3f, 4f)
+            close()
+            moveTo(12f, 17f)
+            lineTo(12f, 21f)
+            moveTo(8f, 21f)
+            lineTo(16f, 21f)
+        }
+    }
+
+    val BroadcastWaves: ImageVector = strokedIcon("BroadcastWaves") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(12f, 12f)
+            lineTo(12.01f, 12f)
+            moveTo(9f, 9.5f)
+            curveTo(7.5f, 11f, 7.5f, 13f, 9f, 14.5f)
+            moveTo(15f, 9.5f)
+            curveTo(16.5f, 11f, 16.5f, 13f, 15f, 14.5f)
+            moveTo(6f, 6.5f)
+            curveTo(3f, 9.5f, 3f, 14.5f, 6f, 17.5f)
+            moveTo(18f, 6.5f)
+            curveTo(21f, 9.5f, 21f, 14.5f, 18f, 17.5f)
+        }
+    }
+
+    val DexoLogo: ImageVector = strokedIcon("DexoLogo") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.2f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(8f, 8f)
+            curveTo(5.8f, 8f, 4f, 9.8f, 4f, 12f)
+            curveTo(4f, 14.2f, 5.8f, 16f, 8f, 16f)
+            curveTo(10.5f, 16f, 12f, 12f, 12f, 12f)
+            curveTo(12f, 12f, 13.5f, 8f, 16f, 8f)
+            curveTo(18.2f, 8f, 20f, 9.8f, 20f, 12f)
+            curveTo(20f, 14.2f, 18.2f, 16f, 16f, 16f)
+            curveTo(13.5f, 16f, 12f, 12f, 12f, 12f)
+            curveTo(12f, 12f, 10.5f, 8f, 8f, 8f)
+            close()
+        }
+    }
+
+    val Plus: ImageVector = strokedIcon("Plus") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.5f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(12f, 5f)
+            lineTo(12f, 19f)
+            moveTo(5f, 12f)
+            lineTo(19f, 12f)
+        }
+    }
 }
 
 /**

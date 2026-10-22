@@ -62,7 +62,8 @@ enum class NavTab {
     HOME,
     FILES,
     TRANSFERS,
-    SETTINGS
+    SETTINGS,
+    QR_CONNECT
 }
 
 class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryListener, TransferEventListener {

@@ -53,6 +53,13 @@ func TestCheckIfInstanceRunning_Inactive(t *testing.T) {
 
 func TestWebUIStatusEndpoint(t *testing.T) {
 	testEngine := initEngine()
+	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("test_trust_status_%d.json", time.Now().UnixNano()))
+	defer os.Remove(tempFile)
+	testEngine.TrustStore = &TrustStore{
+		MultiplePairedDevices: false,
+		PairedDevices:         make(map[string]DeviceInfo),
+		filePath:              tempFile,
+	}
 	engine = testEngine
 
 	// Start an ephemeral test server mimicking startWebDashboard

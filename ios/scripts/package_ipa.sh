@@ -35,6 +35,8 @@ SWIFT_SOURCES=(
     "$IOS_DIR/Sources/DexoLinkiOS/Views/ClipboardView.swift"
     "$IOS_DIR/Sources/DexoLinkiOS/Views/ContentView.swift"
     "$IOS_DIR/Sources/DexoLinkiOS/Views/ContinuityView.swift"
+    "$IOS_DIR/Sources/DexoLinkiOS/Views/HomeView.swift"
+    "$IOS_DIR/Sources/DexoLinkiOS/Views/QRConnectView.swift"
     "$IOS_DIR/Sources/DexoLinkiOS/Views/DevicesView.swift"
     "$IOS_DIR/Sources/DexoLinkiOS/Views/TransferView.swift"
 )
