@@ -465,6 +465,28 @@ object DexoIcons {
             lineTo(12.01f, 20f)
         }
     }
+    val WifiOff: ImageVector = strokedIcon("WifiOff") {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2.0f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(2f, 2f)
+            lineTo(22f, 22f)
+            moveTo(8.5f, 5f)
+            curveTo(12.5f, 3.5f, 17f, 4f, 22f, 8.5f)
+            moveTo(14f, 9.5f)
+            curveTo(15.5f, 10.5f, 17f, 11.5f, 18.5f, 12.5f)
+            moveTo(2f, 8.5f)
+            curveTo(4f, 6.8f, 6.2f, 5.8f, 8.5f, 5f)
+            moveTo(9.5f, 15.5f)
+            curveTo(10.2f, 15.1f, 11.1f, 15f, 12f, 15f)
+            curveTo(13.2f, 15f, 14.2f, 15.5f, 15f, 16.5f)
+            moveTo(12f, 20f)
+            lineTo(12.01f, 20f)
+        }
+    }
     val Antenna: ImageVector = strokedIcon("Antenna") {
         path(
             fill = SolidColor(Color.Black)

@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreImage.CIFilterBuiltins
+import AVFoundation
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -11,8 +12,7 @@ public struct QRConnectView: View {
     @State private var qrPayload: String = ""
     @State private var qrImage: UIImage? = nil
     @State private var scanLineOffset: CGFloat = 0.1
-    @State private var isScanningActive: Bool = false
-    @State private var showingScannerAlert: Bool = false
+    @State private var showingCameraScanner: Bool = false
     @State private var showingShareSheet: Bool = false
 
     private let context = CIContext()
@@ -128,7 +128,11 @@ public struct QRConnectView: View {
                                 .scaledToFit()
                                 .frame(width: 200, height: 200)
                         } else {
-                            ProgressView()
+                            Text("Connect to Wi-Fi to generate your QR code")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(Color(hex: "64748B"))
+                                .multilineTextAlignment(.center)
+                                .padding(24)
                         }
                     }
                     .padding(.vertical, 4)
@@ -182,7 +186,7 @@ public struct QRConnectView: View {
 
                     // Full-width blue Scan QR Button
                     Button(action: {
-                        showingScannerAlert = true
+                        showingCameraScanner = true
                     }) {
                         HStack(spacing: 8) {
                             Image(systemName: "qrcode.viewfinder")
@@ -210,16 +214,42 @@ public struct QRConnectView: View {
             generateNewQR()
             startBeamAnimation()
         }
-        .alert("Camera Scanner", isPresented: $showingScannerAlert) {
-            Button("OK") {}
-        } message: {
-            Text("Camera scanner is searching for DexoLink QR code. Align with target screen to pair instantly.")
+        // Real camera QR scanner
+        .sheet(isPresented: $showingCameraScanner) {
+            QRCodeScannerSheet { scannedPayload in
+                showingCameraScanner = false
+                if !scannedPayload.isEmpty {
+                    appState.handleQRCodeScan(payload: scannedPayload)
+                    onBack()
+                }
+            } onCancel: {
+                showingCameraScanner = false
+            }
+        }
+        // Share sheet for QR image
+        .sheet(isPresented: $showingShareSheet) {
+            if let img = qrImage {
+                ShareSheetView(items: [img])
+            }
         }
     }
 
     private func generateNewQR() {
         let devName = appState.localDeviceName
-        let payload = "dexolink://connect?host=192.168.1.50&port=52840&name=\(devName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "iPhone")&t=\(Date().timeIntervalSince1970)"
+        guard let host = appState.localIPv4Address else {
+            self.qrPayload = ""
+            self.qrImage = nil
+            return
+        }
+        var components = URLComponents()
+        components.scheme = "dexolink"
+        components.host = "connect"
+        components.queryItems = [
+            URLQueryItem(name: "host", value: host),
+            URLQueryItem(name: "port", value: "52840"),
+            URLQueryItem(name: "name", value: devName)
+        ]
+        guard let payload = components.string else { return }
         self.qrPayload = payload
         self.qrImage = createQRCodeImage(from: payload)
     }
@@ -247,11 +277,8 @@ public struct QRConnectView: View {
 
     private func shareQRCode() {
         #if canImport(UIKit)
-        let av = UIActivityViewController(activityItems: [qrPayload], applicationActivities: nil)
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootVC = windowScene.windows.first?.rootViewController {
-            rootVC.present(av, animated: true)
-        }
+        guard qrImage != nil else { return }
+        showingShareSheet = true
         #endif
     }
 }
@@ -288,5 +315,128 @@ struct ReticleView: View {
             }
             .stroke(Color.white, style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round))
         }
+    }
+}
+
+// MARK: - Share Sheet (UIActivityViewController wrapper)
+struct ShareSheetView: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Real AVFoundation QR Code Scanner
+struct QRCodeScannerSheet: View {
+    var onScanned: (String) -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            QRCodeScannerRepresentable(onScanned: onScanned)
+                .ignoresSafeArea()
+                .navigationTitle("Scan QR Code")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", action: onCancel)
+                    }
+                }
+        }
+    }
+}
+
+struct QRCodeScannerRepresentable: UIViewControllerRepresentable {
+    var onScanned: (String) -> Void
+
+    func makeUIViewController(context: Context) -> QRCodeScannerViewController {
+        let vc = QRCodeScannerViewController()
+        vc.onScanned = onScanned
+        return vc
+    }
+    func updateUIViewController(_ uiViewController: QRCodeScannerViewController, context: Context) {}
+}
+
+class QRCodeScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onScanned: ((String) -> Void)?
+    private var captureSession: AVCaptureSession?
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        checkCameraPermissionAndSetup()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        captureSession?.stopRunning()
+    }
+
+    private func checkCameraPermissionAndSetup() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            setupSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted { self?.setupSession() }
+                }
+            }
+        default:
+            showPermissionError()
+        }
+    }
+
+    private func setupSession() {
+        let session = AVCaptureSession()
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device) else { return }
+        session.addInput(input)
+
+        let output = AVCaptureMetadataOutput()
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(self, queue: .main)
+        output.metadataObjectTypes = [.qr]
+
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.frame = view.layer.bounds
+        preview.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(preview)
+        self.previewLayer = preview
+
+        self.captureSession = session
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+        }
+    }
+
+    private func showPermissionError() {
+        DispatchQueue.main.async {
+            let label = UILabel()
+            label.text = "Camera permission required.\nGo to Settings > DexoLink > Camera."
+            label.textColor = .white
+            label.numberOfLines = 0
+            label.textAlignment = .center
+            label.translatesAutoresizingMaskIntoConstraints = false
+            self.view.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: self.view.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: self.view.centerYAnchor),
+                label.leadingAnchor.constraint(equalTo: self.view.leadingAnchor, constant: 24),
+                label.trailingAnchor.constraint(equalTo: self.view.trailingAnchor, constant: -24)
+            ])
+        }
+    }
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput,
+                        didOutput metadataObjects: [AVMetadataObject],
+                        from connection: AVCaptureConnection) {
+        guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              let scanned = object.stringValue,
+              !scanned.isEmpty else { return }
+        captureSession?.stopRunning()
+        onScanned?(scanned)
     }
 }

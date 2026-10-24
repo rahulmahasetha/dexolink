@@ -1,5 +1,5 @@
 """
-DexoLink Windows Desktop App (v4.0.1)
+DexoLink Windows Desktop App (v4.1.0)
 Modern, lightweight, easy-to-use GUI for Windows using Python standard library (Tkinter/ttk).
 Zero external dependencies required.
 """
@@ -164,7 +164,7 @@ class ScreenViewerWindow(tk.Toplevel):
 class DexoLinkGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("DexoLink v4.0.1 — Seamless Cross-Device Sync")
+        self.root.title("DexoLink v4.1.0 — Seamless Cross-Device Sync")
         self.root.geometry("780x620")
         self.root.minsize(700, 560)
         self.root.configure(bg=COLOR_BG)
@@ -186,7 +186,7 @@ class DexoLinkGUI:
         self.continuity_var = tk.BooleanVar(value=self.engine.continuity_enabled)
         self.auto_discovery_var = tk.BooleanVar(value=self.engine.auto_discovery_enabled)
         self.auto_accept_var = tk.BooleanVar(value=self.engine.auto_accept_enabled)
-        # v4.0.1: Media Streaming & Remote Control
+        # v4.0.2: Media Streaming & Remote Control
         self.camera_sharing_var = tk.BooleanVar(value=self.engine.camera_sharing_enabled)
         self.screen_sharing_var = tk.BooleanVar(value=self.engine.screen_sharing_enabled)
         self.desktop_mode_var = tk.BooleanVar(value=self.engine.desktop_mode_enabled)
@@ -227,7 +227,7 @@ class DexoLinkGUI:
         lbl_brand = tk.Label(title_box, text="DexoLink", font=("Segoe UI", 16, "bold"), fg=COLOR_CYAN, bg=COLOR_BG)
         lbl_brand.pack(side=tk.LEFT)
         
-        lbl_ver = tk.Label(title_box, text="v4.0.1", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_BG, padx=8)
+        lbl_ver = tk.Label(title_box, text="v4.1.0", font=("Segoe UI", 9, "bold"), fg=COLOR_MUTED, bg=COLOR_BG, padx=8)
         lbl_ver.pack(side=tk.LEFT, pady=(4, 0))
 
         # Status badge & compact Settings button
@@ -278,7 +278,7 @@ class DexoLinkGUI:
         self.device_combo.pack(fill=tk.X, pady=(6, 4))
         self.device_combo.set("Scanning for local devices...")
 
-        # Quick Media Streaming Actions (v4.0.1)
+        # Quick Media Streaming Actions (v4.0.2)
         media_btn_box = tk.Frame(dest_card, bg=COLOR_CARD)
         media_btn_box.pack(fill=tk.X, pady=(6, 2))
 
@@ -699,7 +699,7 @@ class DexoLinkGUI:
                               font=("Segoe UI", 9), relief="flat", padx=10, pady=4, cursor="hand2", command=self._change_downloads)
         btn_change.pack(side=tk.LEFT)
 
-        # 4. MEDIA STREAMING & REMOTE CONTROL (v4.0.1)
+        # 4. MEDIA STREAMING & REMOTE CONTROL (v4.0.2)
         sec_stream = tk.Frame(scrollable_frame, bg=COLOR_CARD, padx=14, pady=12, highlightbackground=COLOR_BORDER, highlightthickness=1)
         sec_stream.pack(fill=tk.X, pady=(0, 12))
 
@@ -741,7 +741,7 @@ class DexoLinkGUI:
         footer = tk.Frame(modal, bg=COLOR_BG, padx=20, pady=14)
         footer.pack(fill=tk.X, side=tk.BOTTOM)
 
-        lbl_info = tk.Label(footer, text="DexoLink v4.0.1 • Native Engine Active", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG)
+        lbl_info = tk.Label(footer, text="DexoLink v4.1.0 • Native Engine Active", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_BG)
         lbl_info.pack(side=tk.LEFT)
 
         btn_done = tk.Button(footer, text="Done", bg=COLOR_ACCENT, fg=COLOR_TEXT, activebackground=COLOR_ACCENT_HOVER,
@@ -877,7 +877,7 @@ class DexoLinkGUI:
         status_bar = tk.Frame(self.root, bg=COLOR_CARD, height=28, padx=14)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
-        lbl_port = tk.Label(status_bar, text=f"Port: {self.engine.port} (TCP/UDP) | Engine: v4.0.1", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD)
+        lbl_port = tk.Label(status_bar, text=f"Port: {self.engine.port} (TCP/UDP) | Engine: v4.1.0", font=("Segoe UI", 9), fg=COLOR_MUTED, bg=COLOR_CARD)
         lbl_port.pack(side=tk.LEFT, pady=4)
 
         self.lbl_connections = tk.Label(status_bar, text="Connected: 0 devices", font=("Segoe UI", 9, "bold"), fg=COLOR_CYAN, bg=COLOR_CARD)

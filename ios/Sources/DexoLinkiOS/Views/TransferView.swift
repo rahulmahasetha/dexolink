@@ -122,7 +122,7 @@ struct TransferView: View {
                             HStack {
                                 Image(systemName: "arrow.up.circle.fill")
                                     .foregroundColor(.blue)
-                                Text("Sending \(transfer.fileName)")
+                                Text("Sending \(transfer.fileName)\(transfer.recipientName != nil ? " to " + transfer.recipientName! : "")")
                                     .font(.subheadline)
                                     .fontWeight(.semibold)
                                     .lineLimit(1)
@@ -131,19 +131,35 @@ struct TransferView: View {
                                     .font(.caption)
                                     .fontWeight(.bold)
                                     .foregroundColor(.blue)
+                                if !transfer.isComplete {
+                                    Button(action: {
+                                        appState.cancelTransfer(id: transfer.id)
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                            .font(.system(size: 16))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
 
                             ProgressView(value: transfer.progressFraction)
-                                .tint(.blue)
+                                .tint(transfer.errorMessage != nil ? .red : .blue)
 
                             HStack {
                                 Text("\(transfer.bytesSent / 1024) KB / \(transfer.totalBytes / 1024) KB")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                                 Spacer()
-                                Text(transfer.isComplete ? "Verified" : "Streaming 64KB chunks...")
-                                    .font(.caption2)
-                                    .foregroundColor(transfer.isComplete ? .green : .secondary)
+                                if let err = transfer.errorMessage {
+                                    Text(err)
+                                        .font(.caption2)
+                                        .foregroundColor(.red)
+                                } else {
+                                    Text(transfer.isComplete ? "Verified" : "Streaming 64KB chunks...")
+                                        .font(.caption2)
+                                        .foregroundColor(transfer.isComplete ? .green : .secondary)
+                                }
                             }
                         }
                         .padding()
@@ -198,6 +214,7 @@ struct TransferView: View {
                 .padding()
             }
             .navigationTitle("DexoLink")
+            .toolbar(.hidden, for: .navigationBar)
             .fileImporter(isPresented: $showDocumentPicker, allowedContentTypes: [.item]) { result in
                 if case .success(let url) = result {
                     guard url.startAccessingSecurityScopedResource() else { return }

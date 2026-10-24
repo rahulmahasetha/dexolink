@@ -165,9 +165,9 @@ func showTrayContextMenu(hwnd uintptr) {
 	engine.mu.Unlock()
 
 	// 1. Status Header
-	statusTitle := fmt.Sprintf("DexoLink v4.0.1  ●  %d Connected", connCount)
+	statusTitle := fmt.Sprintf("DexoLink v4.1.0  ●  %d Connected", connCount)
 	if connCount == 0 {
-		statusTitle = "DexoLink v4.0.1  ○  Ready (0 Connected)"
+		statusTitle = "DexoLink v4.1.0  ○  Ready (0 Connected)"
 	}
 	titlePtr, _ := syscall.UTF16PtrFromString(statusTitle)
 	procAppendMenuW.Call(hMenu, uintptr(mfString|mfDisabled|mfGrayed), 100, uintptr(unsafe.Pointer(titlePtr)))

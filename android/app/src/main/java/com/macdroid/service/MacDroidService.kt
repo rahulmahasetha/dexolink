@@ -345,19 +345,16 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
 
     override fun onDeviceFound(device: DiscoveredDevice) {
         val trustStore = TrustStore.getInstance(this)
-        val paired = trustStore.getPairedDevice()
+        val devId = device.deviceId ?: ""
+        val isMyPairedDevice = trustStore.isPairedWith(devId, device.name)
 
-        if (paired != null && !connectionManager.isConnected() && connectionManager.state !is ConnectionState.Connecting) {
-            val isMyPairedDevice = (device.deviceId != null && device.deviceId == paired.deviceId) ||
-                    device.name == paired.deviceName
-
-            if (isMyPairedDevice && connectionManager.autoReconnect && !connectionManager.userExplicitlyDisconnected) {
+        if (isMyPairedDevice && !connectionManager.isConnected() && connectionManager.state !is ConnectionState.Connecting) {
+            if (connectionManager.autoReconnect && !connectionManager.userExplicitlyDisconnected) {
+                Log.d(TAG, "Discovered paired device '${device.name}', auto-reconnecting...")
                 connectionManager.connect(device.host, device.port)
             }
-        } else if (connectionManager.isConnected()) {
-            if (paired != null && (device.deviceId == paired.deviceId || device.name == paired.deviceName)) {
-                connectionManager.updateTargetIfChanged(device.host, device.port)
-            }
+        } else if (connectionManager.isConnected() && isMyPairedDevice) {
+            connectionManager.updateTargetIfChanged(device.host, device.port)
         }
     }
 
@@ -586,10 +583,17 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val statusText = if (isMediaProjectionActive) {
-            "Display Mirroring is active"
+        val isCameraActive = com.macdroid.storage.DexoLinkSettings.getInstance(this).cameraSharing.value
+        val statusText = when {
+            isMediaProjectionActive -> "Active Screen Sharing • DexoLink"
+            isCameraActive -> "Active Camera Sharing • DexoLink"
+            else -> "DexoLink is active"
+        }
+
+        val priority = if (isMediaProjectionActive || isCameraActive) {
+            NotificationCompat.PRIORITY_HIGH
         } else {
-            "DexoLink is active"
+            NotificationCompat.PRIORITY_LOW
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -599,7 +603,7 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
             .setContentIntent(openAppPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(priority)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }

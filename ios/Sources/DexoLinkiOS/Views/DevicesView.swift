@@ -37,16 +37,30 @@ struct DevicesView: View {
                             .foregroundColor(.secondary)
                     } else {
                         ForEach(appState.pairedDevices) { dev in
+                            let isConnected = appState.isConnected && appState.connectedDeviceName.lowercased() == dev.name.lowercased()
                             HStack {
-                                Image(systemName: "laptopcomputer.and.iphone")
-                                    .foregroundColor(.blue)
+                                ZStack(alignment: .bottomTrailing) {
+                                    Image(systemName: "laptopcomputer.and.iphone")
+                                        .foregroundColor(isConnected ? .blue : .secondary)
+                                        .frame(width: 28, height: 28)
+                                    ZStack {
+                                        Circle()
+                                            .fill(isConnected ? Color(hex: "16A34A") : Color(hex: "94A3B8"))
+                                            .frame(width: 12, height: 12)
+                                            .overlay(Circle().stroke(Color.white, lineWidth: 1))
+                                        Image(systemName: isConnected ? "wifi" : "wifi.slash")
+                                            .font(.system(size: 7, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
+                                    .offset(x: 2, y: 2)
+                                }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(dev.name)
                                         .font(.subheadline)
                                         .fontWeight(.semibold)
-                                    Text("Paired: \(dev.pairedDate, style: .date)")
+                                    Text(isConnected ? "Connected" : "Disconnected • Paired: \(dev.pairedDate, style: .date)")
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(isConnected ? Color(hex: "16A34A") : .secondary)
                                 }
                                 Spacer()
                                 Button(action: {
@@ -96,19 +110,31 @@ struct DevicesView: View {
                                         .fontWeight(.bold)
                                         .foregroundColor(.green)
                                 } else {
-                                    Button(action: {
-                                        appState.pairDevice(dev)
-                                    }) {
-                                        Text("Pair")
-                                            .font(.caption)
+                                    let isDevBlocked = !appState.isMultiplePairedDevicesEnabled && !appState.pairedDevices.isEmpty
+                                    if isDevBlocked {
+                                        Text("Blocked")
+                                            .font(.caption2)
                                             .fontWeight(.bold)
-                                            .foregroundColor(.white)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 4)
-                                            .background(Color.blue)
-                                            .cornerRadius(8)
+                                            .foregroundColor(.red)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.red.opacity(0.12))
+                                            .cornerRadius(4)
+                                    } else {
+                                        Button(action: {
+                                            appState.pairDevice(dev)
+                                        }) {
+                                            Text("Pair")
+                                                .font(.caption)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 4)
+                                                .background(Color.blue)
+                                                .cornerRadius(8)
+                                        }
+                                        .buttonStyle(.borderless)
                                     }
-                                    .buttonStyle(.borderless)
                                 }
                             }
                         }
@@ -153,7 +179,7 @@ struct DevicesView: View {
                     }
                 }
 
-                // Section 4: Media Streaming & Remote Control (v4.0.1)
+                // Section 4: Media Streaming & Remote Control (v4.0.2)
                 Section(header: Text("Media Streaming & Remote Control")) {
                     Toggle(isOn: Binding(
                         get: { appState.isCameraSharingEnabled },
@@ -263,7 +289,7 @@ struct DevicesView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("4.0.1 (Universal)")
+                        Text("4.1.0 (Universal)")
                             .foregroundColor(.secondary)
                     }
                     HStack {
@@ -281,6 +307,7 @@ struct DevicesView: View {
                 }
             }
             .navigationTitle("Devices & Settings")
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingConnectOnlineSheet) {
                 NavigationStack {
                     Form {

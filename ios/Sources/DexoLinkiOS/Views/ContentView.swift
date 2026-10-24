@@ -12,6 +12,7 @@ public struct ContentView: View {
     @ObservedObject var appState = iOSAppState.shared
     @State private var currentTab: iOSTab = .home
     @State private var showingQuickSendPicker = false
+    @State private var showingNotifications = false
 
     public init() {}
 
@@ -22,6 +23,14 @@ public struct ContentView: View {
 
             // Main Active Screen Content
             VStack(spacing: 0) {
+                if currentTab != .qrConnect {
+                    DexoLinkAppHeader(appState: appState) {
+                        showingNotifications = true
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                }
+
                 switch currentTab {
                 case .home:
                     HomeView(appState: appState, onNavigateQR: {
@@ -36,17 +45,11 @@ public struct ContentView: View {
                         }
                     })
                 case .files:
-                    NavigationStack {
-                        FilesListView(appState: appState)
-                    }
+                    FilesListView(appState: appState)
                 case .transfers:
-                    NavigationStack {
-                        TransferView(appState: appState)
-                    }
+                    TransferView(appState: appState)
                 case .settings:
-                    NavigationStack {
-                        DevicesView(appState: appState)
-                    }
+                    DevicesView(appState: appState)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -68,6 +71,55 @@ public struct ContentView: View {
             FilePickerBridge { url in
                 appState.sendFile(url: url, targetDevice: appState.discoveredDevices.first)
             }
+        }
+        .sheet(isPresented: $showingNotifications) {
+            NotificationsSheetView(appState: appState)
+        }
+    }
+}
+
+private struct DexoLinkAppHeader: View {
+    @ObservedObject var appState: iOSAppState
+    var onNotifications: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color(hex: "2563EB"))
+                    .frame(width: 48, height: 48)
+                Image(systemName: "infinity")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("DexoLink")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(Color(hex: "0F172A"))
+                Text("\(appState.localDeviceName) · Visible")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color(hex: "64748B"))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button(action: onNotifications) {
+                ZStack(alignment: .topTrailing) {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.white)
+                        .frame(width: 44, height: 44)
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: "E2E8F0"), lineWidth: 1))
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(Color(hex: "0F172A"))
+                        .frame(width: 44, height: 44)
+                    Circle()
+                        .fill(Color(hex: "EF4444"))
+                        .frame(width: 8, height: 8)
+                        .offset(x: -10, y: 10)
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 }

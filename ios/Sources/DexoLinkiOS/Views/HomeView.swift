@@ -11,7 +11,6 @@ public struct HomeView: View {
     var onNavigateQR: () -> Void = {}
     
     @State private var showingReceiveSheet = false
-    @State private var showingNotificationsSheet = false
     @State private var showingConnectIPSheet = false
     @State private var showingFilePicker = false
     @State private var manualHostInput = ""
@@ -26,61 +25,6 @@ public struct HomeView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // 1. Header (Logo, Name, "Rahul's Samsung · Visible", Bell with red dot)
-                HStack(spacing: 12) {
-                    // App Logo: blue squircle with white DexoLink infinity icon
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color(hex: "2563EB"))
-                            .frame(width: 48, height: 48)
-
-                        Image(systemName: "infinity")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-
-                    // Title and Device Subtitle
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("DexoLink")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundColor(Color(hex: "0F172A"))
-
-                        Text("\(appState.localDeviceName) · Visible")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(Color(hex: "64748B"))
-                    }
-
-                    Spacer()
-
-                    // Notification Bell Button with red dot
-                    Button(action: {
-                        showingNotificationsSheet = true
-                    }) {
-                        ZStack(alignment: .topTrailing) {
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(Color.white)
-                                .frame(width: 44, height: 44)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14)
-                                        .stroke(Color(hex: "E2E8F0"), lineWidth: 1)
-                                )
-
-                            Image(systemName: "bell.fill")
-                                .font(.system(size: 18))
-                                .foregroundColor(Color(hex: "0F172A"))
-                                .frame(width: 44, height: 44)
-
-                            // Red dot indicator
-                            Circle()
-                                .fill(Color(hex: "EF4444"))
-                                .frame(width: 8, height: 8)
-                                .offset(x: -10, y: 10)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.top, 8)
-
                 // 2. Action Tiles: Send, Receive, Scan QR
                 HStack(spacing: 12) {
                     // Tile 1: Send (Solid blue)
@@ -152,15 +96,16 @@ public struct HomeView: View {
                     .buttonStyle(.plain)
                 }
 
-                // 3. Current devices Section
+                // 3. Paired devices Section
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        Text("Current devices")
+                        Text("Paired devices")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(Color(hex: "334155"))
 
-                        // Badge: "3 connected" or "${count} connected"
-                        Text("\(connectedDevicesList.count) connected")
+                        // Badge: "N connected"
+                        let connectedCount = pairedDevicesList.filter { isDeviceConnected($0) }.count
+                        Text("\(connectedCount) connected")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(Color(hex: "2563EB"))
                             .padding(.horizontal, 10)
@@ -170,7 +115,7 @@ public struct HomeView: View {
 
                         Spacer()
 
-                        // Scan Network button ((●))
+                        // Scan Network button
                         Button(action: {
                             appState.refreshDiscovery()
                         }) {
@@ -193,17 +138,17 @@ public struct HomeView: View {
 
                     // White Card Container
                     VStack(spacing: 0) {
-                        if connectedDevicesList.isEmpty {
+                        if pairedDevicesList.isEmpty {
                             HStack(spacing: 12) {
                                 Image(systemName: "antenna.radiowaves.left.and.right")
                                     .foregroundColor(Color(hex: "94A3B8"))
                                     .font(.system(size: 20))
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("No devices connected")
+                                    Text("No paired devices")
                                         .font(.system(size: 14, weight: .semibold))
                                         .foregroundColor(Color(hex: "334155"))
-                                    Text("Select a device below or scan QR to connect")
+                                    Text("Pair with a device using QR code or IP address")
                                         .font(.system(size: 12))
                                         .foregroundColor(Color(hex: "64748B"))
                                 }
@@ -211,37 +156,69 @@ public struct HomeView: View {
                             }
                             .padding(16)
                         } else {
-                            ForEach(Array(connectedDevicesList.enumerated()), id: \.element.id) { index, dev in
+                            ForEach(Array(pairedDevicesList.enumerated()), id: \.element.id) { index, dev in
+                                let connected = isDeviceConnected(dev)
                                 HStack(spacing: 14) {
-                                    Image(systemName: dev.systemIcon)
-                                        .font(.system(size: 22))
-                                        .foregroundColor(Color(hex: "2563EB"))
-                                        .frame(width: 28)
+                                    ZStack(alignment: .bottomTrailing) {
+                                        Image(systemName: dev.systemIcon)
+                                            .font(.system(size: 22))
+                                            .foregroundColor(connected ? Color(hex: "2563EB") : Color(hex: "64748B"))
+                                            .frame(width: 32, height: 32)
+
+                                        // Status Badge: green Wi-Fi for online/connected, gray Wi-Fi-disabled for offline/disconnected
+                                        ZStack {
+                                            Circle()
+                                                .fill(connected ? Color(hex: "16A34A") : Color(hex: "94A3B8"))
+                                                .frame(width: 14, height: 14)
+                                                .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                                            Image(systemName: connected ? "wifi" : "wifi.slash")
+                                                .font(.system(size: 8, weight: .bold))
+                                                .foregroundColor(.white)
+                                        }
+                                        .offset(x: 3, y: 3)
+                                    }
+                                    .frame(width: 36, height: 36)
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(dev.name)
                                             .font(.system(size: 15, weight: .bold))
-                                            .foregroundColor(Color(hex: "2563EB"))
-                                        Text(dev.status)
+                                            .foregroundColor(connected ? Color(hex: "2563EB") : Color(hex: "334155"))
+                                        Text(connected ? "Connected" : "Disconnected")
                                             .font(.system(size: 12))
-                                            .foregroundColor(Color(hex: "64748B"))
+                                            .foregroundColor(connected ? Color(hex: "16A34A") : Color(hex: "94A3B8"))
                                     }
 
                                     Spacer()
 
-                                    // Red Disconnect Button
-                                    Button(action: {
-                                        appState.disconnect()
-                                    }) {
-                                        Text("Disconnect")
-                                            .font(.system(size: 13, weight: .bold))
-                                            .foregroundColor(Color(hex: "DC2626"))
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 7)
-                                            .background(Color(hex: "FEE2E2"))
-                                            .cornerRadius(20)
+                                    if connected {
+                                        // Red Disconnect Button
+                                        Button(action: {
+                                            appState.disconnect()
+                                        }) {
+                                            Text("Disconnect")
+                                                .font(.system(size: 13, weight: .bold))
+                                                .foregroundColor(Color(hex: "DC2626"))
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 7)
+                                                .background(Color(hex: "FEE2E2"))
+                                                .cornerRadius(20)
+                                        }
+                                        .buttonStyle(.plain)
+                                    } else {
+                                        // Blue Connect Button
+                                        Button(action: {
+                                            appState.connectDevice(dev.trustedDevice)
+                                        }) {
+                                            Text("Connect")
+                                                .font(.system(size: 13, weight: .bold))
+                                                .foregroundColor(Color(hex: "2563EB"))
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 7)
+                                                .background(Color(hex: "DBEAFE"))
+                                                .cornerRadius(20)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
 
                                     // ⋮ Menu
                                     Menu {
@@ -262,7 +239,7 @@ public struct HomeView: View {
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 14)
 
-                                if index < connectedDevicesList.count - 1 {
+                                if index < pairedDevicesList.count - 1 {
                                     Divider()
                                         .background(Color(hex: "F1F5F9"))
                                         .padding(.leading, 56)
@@ -279,6 +256,8 @@ public struct HomeView: View {
                 }
 
                 // 4. Available devices Section
+                let isSingleDeviceBlocked = !appState.isMultiplePairedDevicesEnabled && (!pairedDevicesList.isEmpty || appState.isConnected || !appState.pairedDevices.isEmpty)
+
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Available devices")
                         .font(.system(size: 16, weight: .bold))
@@ -286,33 +265,49 @@ public struct HomeView: View {
 
                     VStack(spacing: 0) {
                         ForEach(Array(availableDevicesList.enumerated()), id: \.element.id) { index, dev in
+                            let isBlocked: Bool = isSingleDeviceBlocked && !appState.isDeviceAlreadyPaired(id: dev.id, name: dev.name)
                             HStack(spacing: 14) {
                                 Image(systemName: "ipad.and.iphone")
                                     .font(.system(size: 22))
-                                    .foregroundColor(Color(hex: "2563EB"))
+                                    .foregroundColor(isBlocked ? Color(hex: "94A3B8") : Color(hex: "2563EB"))
                                     .frame(width: 28)
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(dev.name)
-                                        .font(.system(size: 15, weight: .bold))
-                                        .foregroundColor(Color(hex: "0F172A"))
-                                    Text("Nearby")
+                                    HStack(spacing: 6) {
+                                        Text(dev.name)
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(isBlocked ? Color(hex: "64748B") : Color(hex: "0F172A"))
+                                        if isBlocked {
+                                            Text("Blocked")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(Color(hex: "DC2626"))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color(hex: "FEE2E2"))
+                                                .cornerRadius(4)
+                                        }
+                                    }
+                                    Text(isBlocked ? "Single device pairing active" : "Nearby")
                                         .font(.system(size: 12))
                                         .foregroundColor(Color(hex: "64748B"))
                                 }
 
                                 Spacer()
 
-                                // Blue Connect Button
+                                // Connect Button
                                 Button(action: {
-                                    appState.pairDevice(dev)
+                                    if isBlocked {
+                                        appState.statusMessage = "Single Device Mode active. Enable 'Multiple Paired Devices' in Settings to pair additional devices."
+                                    } else {
+                                        appState.pairDevice(dev)
+                                    }
                                 }) {
                                     Text("Connect")
                                         .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(Color(hex: "2563EB"))
+                                        .foregroundColor(isBlocked ? Color(hex: "94A3B8") : Color(hex: "2563EB"))
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 7)
-                                        .background(Color(hex: "DBEAFE"))
+                                        .background(isBlocked ? Color(hex: "F1F5F9") : Color(hex: "DBEAFE"))
                                         .cornerRadius(20)
                                 }
                                 .buttonStyle(.plain)
@@ -365,9 +360,6 @@ public struct HomeView: View {
                 onNavigateQR()
             })
         }
-        .sheet(isPresented: $showingNotificationsSheet) {
-            NotificationsSheetView(appState: appState)
-        }
         .sheet(isPresented: $showingConnectIPSheet) {
             ConnectIPSheetView(appState: appState)
         }
@@ -376,8 +368,52 @@ public struct HomeView: View {
                 appState.sendFile(url: url, targetDevice: appState.discoveredDevices.first)
             }
         }
+        .alert(isPresented: Binding<Bool>(
+            get: { appState.statusMessage != nil },
+            set: { if !$0 { appState.statusMessage = nil } }
+        )) {
+            Alert(
+                title: Text("Single Device Mode"),
+                message: Text(appState.statusMessage ?? ""),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
+    // All paired devices (connected or disconnected) — used for "Paired devices" section
+    private var pairedDevicesList: [PairedDeviceDisplay] {
+        var list: [PairedDeviceDisplay] = []
+        // 1. Active connected peer (may not be in pairedDevices yet if just connected by QR)
+        if appState.isConnected && !appState.connectedDeviceName.isEmpty && appState.connectedDeviceName != "No Device Connected" {
+            let trustedMatch = appState.pairedDevices.first { $0.name.lowercased() == appState.connectedDeviceName.lowercased() }
+            let td = trustedMatch ?? TrustedDevice(id: "active", name: appState.connectedDeviceName)
+            list.append(PairedDeviceDisplay(
+                id: "active_" + td.id,
+                name: td.name,
+                systemIcon: iconForDeviceName(td.name),
+                trustedDevice: td
+            ))
+        }
+        // 2. All other trusted (paired) devices not already in list
+        for td in appState.pairedDevices {
+            if !list.contains(where: { $0.name.lowercased() == td.name.lowercased() }) {
+                list.append(PairedDeviceDisplay(
+                    id: td.id,
+                    name: td.name,
+                    systemIcon: iconForDeviceName(td.name),
+                    trustedDevice: td
+                ))
+            }
+        }
+        return list
+    }
+
+    // Whether a paired device is currently active
+    private func isDeviceConnected(_ dev: PairedDeviceDisplay) -> Bool {
+        return appState.isConnected && appState.connectedDeviceName.lowercased() == dev.name.lowercased()
+    }
+
+    // Legacy: connected-only list for Available devices filter
     private var connectedDevicesList: [DisplayedDevice] {
         var list: [DisplayedDevice] = []
         if appState.isConnected {
@@ -388,22 +424,12 @@ public struct HomeView: View {
                 systemIcon: iconForDeviceName(appState.connectedDeviceName)
             ))
         }
-        for dev in appState.pairedDevices {
-            if !list.contains(where: { $0.name.lowercased() == dev.name.lowercased() }) {
-                list.append(DisplayedDevice(
-                    id: dev.id,
-                    name: dev.name,
-                    status: appState.isConnected ? "Connected" : "Connected",
-                    systemIcon: iconForDeviceName(dev.name)
-                ))
-            }
-        }
         return list
     }
 
     private var availableDevicesList: [DiscoveredDevice] {
         return appState.discoveredDevices.filter { dev in
-            !connectedDevicesList.contains(where: { $0.name.lowercased() == dev.name.lowercased() })
+            !pairedDevicesList.contains(where: { $0.name.lowercased() == dev.name.lowercased() })
         }
     }
 
@@ -418,6 +444,15 @@ public struct HomeView: View {
         }
     }
 }
+
+// Model for a paired/trusted device displayed in the Paired devices section
+struct PairedDeviceDisplay: Identifiable {
+    let id: String
+    let name: String
+    let systemIcon: String
+    let trustedDevice: TrustedDevice
+}
+
 
 // Model for Displayed Device
 struct DisplayedDevice: Identifiable {

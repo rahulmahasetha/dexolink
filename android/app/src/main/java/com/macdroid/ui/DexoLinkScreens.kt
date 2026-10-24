@@ -2,12 +2,15 @@ package com.macdroid.ui
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.core.content.FileProvider
+import java.io.FileOutputStream
 
 import android.Manifest
 import android.app.Activity
@@ -60,6 +63,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -473,6 +477,7 @@ fun MainScreenRoot(
     devices: List<DiscoveredDevice>,
     pairedDevice: TrustedDevice?,
     localDeviceName: String,
+    localPort: Int,
     lastPingLatency: Long?,
     logs: List<String>,
     lastSyncedSnippet: String?,
@@ -515,6 +520,7 @@ fun MainScreenRoot(
     isEnhancedClipboardEnabled: Boolean = false,
     onToggleEnhancedClipboard: (Boolean) -> Unit = {}
 ) {
+    val context = LocalContext.current
     val backStack = remember { mutableStateListOf(NavTab.HOME) }
     val currentTab = backStack.lastOrNull() ?: NavTab.HOME
     var showManualIPDialog by remember { mutableStateOf(false) }
@@ -743,6 +749,11 @@ fun MainScreenRoot(
                             }
                         }
                     } else {
+                        val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(context) }
+                        val multiPairedEnabled by settings.multiPairedDevices.collectAsState()
+                        val trustStore = remember { TrustStore.getInstance(context) }
+                        val isSingleDeviceBlocked = !multiPairedEnabled && trustStore.hasPairedDevice()
+
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -750,6 +761,7 @@ fun MainScreenRoot(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(devices) { dev ->
+                                val isBlocked = isSingleDeviceBlocked && !trustStore.isPairedWith(dev.deviceId ?: "", dev.name)
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -757,8 +769,16 @@ fun MainScreenRoot(
                                         .background(Color(0xFFF8FAFC))
                                         .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
                                         .clickable {
-                                            onConnect(dev)
-                                            showPairDevicesSheet = false
+                                            if (isBlocked) {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Single Device Mode active. Enable 'Multiple Paired Devices' in Settings to pair additional devices.",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            } else {
+                                                onConnect(dev)
+                                                showPairDevicesSheet = false
+                                            }
                                         }
                                         .padding(10.dp)
                                 ) {
@@ -766,24 +786,52 @@ fun MainScreenRoot(
                                         MacBookGraphic(modifier = Modifier.size(width = 36.dp, height = 24.dp))
                                         Spacer(modifier = Modifier.width(10.dp))
                                         Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    dev.name,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = if (isBlocked) Color(0xFF64748B) else Color(0xFF0F172A)
+                                                )
+                                                if (isBlocked) {
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Surface(
+                                                        color = Color(0xFFFEE2E2),
+                                                        shape = RoundedCornerShape(4.dp)
+                                                    ) {
+                                                        Text(
+                                                            "Blocked",
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFFDC2626),
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
                                             Text(
-                                                dev.name,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp,
-                                                color = Color(0xFF0F172A)
-                                            )
-                                            Text(
-                                                "${dev.host}:${dev.port}",
+                                                if (isBlocked) "Single device mode active" else "${dev.host}:${dev.port}",
                                                 fontSize = 11.sp,
                                                 color = Color(0xFF64748B)
                                             )
                                         }
                                         Button(
                                             onClick = {
-                                                onConnect(dev)
-                                                showPairDevicesSheet = false
+                                                if (isBlocked) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Single Device Mode active. Enable 'Multiple Paired Devices' in Settings to pair additional devices.",
+                                                        Toast.LENGTH_LONG
+                                                    ).show()
+                                                } else {
+                                                    onConnect(dev)
+                                                    showPairDevicesSheet = false
+                                                }
                                             },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (isBlocked) Color(0xFFE2E8F0) else Color(0xFF0066FF),
+                                                contentColor = if (isBlocked) Color(0xFF64748B) else Color.White
+                                            ),
                                             shape = RoundedCornerShape(8.dp),
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                                         ) {
@@ -1302,7 +1350,7 @@ fun MainScreenRoot(
 
     Scaffold(
         topBar = {
-            if (currentTab != NavTab.HOME && currentTab != NavTab.QR_CONNECT) {
+            if (currentTab != NavTab.QR_CONNECT) {
             Surface(
                 color = Color.White,
                 shadowElevation = 0.5.dp,
@@ -1310,7 +1358,7 @@ fun MainScreenRoot(
             ) {
                 TopAppBar(
                     navigationIcon = {
-                        if (backStack.size > 1) {
+                        if (backStack.size > 1 && currentTab != NavTab.HOME) {
                             IconButton(onClick = { navigateBack() }) {
                                 Icon(
                                     imageVector = DexoIcons.ArrowBack,
@@ -1336,9 +1384,13 @@ fun MainScreenRoot(
                                     color = Color(0xFF0F172A)
                                 )
                                 Text(
-                                    "Connect • Sync • Share",
+                                    "$localDeviceName · Visible",
                                     fontSize = 11.sp,
-                                    color = Color(0xFF64748B)
+                                    color = Color(0xFF64748B),
+                                    modifier = Modifier.clickable {
+                                        renameTarget = "local"
+                                        showRenameDialog = true
+                                    }
                                 )
                             }
                         }
@@ -1368,26 +1420,6 @@ fun MainScreenRoot(
                                 .offset(x = (-6).dp, y = 6.dp)
                             )
                         }
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
-                        // Settings gear icon
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFF1F5F9))
-                                .clickable { navigateToTab(NavTab.SETTINGS) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = DexoIcons.Settings,
-                                contentDescription = "Settings",
-                                modifier = Modifier.size(18.dp),
-                                tint = Color(0xFF475569)
-                            )
-                        }
-
                         Spacer(modifier = Modifier.width(6.dp))
 
                         // 3-dots overflow menu
@@ -1546,8 +1578,20 @@ fun MainScreenRoot(
                 NavTab.QR_CONNECT -> {
                     QRConnectScreen(
                         localDeviceName = localDeviceName,
+                        localPort = localPort,
                         onBack = { navigateBack() },
-                        onConnectManual = onConnectManual
+                        onConnectManual = onConnectManual,
+                        onQRScanned = { payload ->
+                            val scanned = runCatching { Uri.parse(payload) }.getOrNull()
+                            val host = scanned?.getQueryParameter("host")
+                            val port = scanned?.getQueryParameter("port")?.toIntOrNull() ?: 52840
+                            if (scanned?.scheme == "dexolink" && scanned.host == "connect" && !host.isNullOrBlank()) {
+                                onConnectManual(host, port)
+                                navigateBack()
+                            } else {
+                                Toast.makeText(context, "This QR code is not a DexoLink connection code", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     )
                 }
                 NavTab.FILES -> {
@@ -1610,17 +1654,20 @@ fun MainScreenRoot(
 @Composable
 fun QRConnectScreen(
     localDeviceName: String,
+    localPort: Int,
     onBack: () -> Unit,
-    onConnectManual: (String, Int) -> Unit
+    onConnectManual: (String, Int) -> Unit,
+    onQRScanned: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
-    var qrPayload by remember(localDeviceName) {
-        val port = 52840
-        val devName = localDeviceName.ifBlank { "Rahul's Samsung" }
-        mutableStateOf("dexolink://connect?host=192.168.1.50&port=$port&name=${Uri.encode(devName)}")
+    var qrPayload by remember(localDeviceName, localPort) {
+        val port = localPort
+        val devName = localDeviceName
+        val host = com.macdroid.MacDroidApplication.discoveryService.getLocalIpAddress().orEmpty()
+        mutableStateOf(if (host.isNotBlank()) "dexolink://connect?host=$host&port=$port&name=${Uri.encode(devName)}" else "")
     }
     var qrBitmap by remember(qrPayload) {
-        mutableStateOf(generateQRCodeBitmap(qrPayload, 600))
+        mutableStateOf(qrPayload.takeIf { it.isNotBlank() }?.let { generateQRCodeBitmap(it, 600) })
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "scanLine")
@@ -1717,12 +1764,22 @@ fun QRConnectScreen(
                                 .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
                                 .background(Color.White)
                                 .clickable {
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(Intent.EXTRA_TEXT, qrPayload)
-                                        type = "text/plain"
+                                    val bitmap = qrBitmap ?: return@clickable
+                                    val qrFile = File(context.cacheDir, "dexolink-connection-qr.png")
+                                    val wroteImage = runCatching {
+                                        qrFile.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                                    }.getOrDefault(false)
+                                    if (!wroteImage) {
+                                        Toast.makeText(context, "Could not prepare the QR image", Toast.LENGTH_LONG).show()
+                                        return@clickable
                                     }
-                                    context.startActivity(Intent.createChooser(sendIntent, "Share DexoLink Connection Link"))
+                                    val imageUri = FileProvider.getUriForFile(context, "com.macdroid.fileprovider", qrFile)
+                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "image/png"
+                                        putExtra(Intent.EXTRA_STREAM, imageUri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share DexoLink QR Code"))
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1742,12 +1799,17 @@ fun QRConnectScreen(
                                 .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
                                 .background(Color.White)
                                 .clickable {
-                                    val port = 52840
-                                    val devName = localDeviceName.ifBlank { "Rahul's Samsung" }
+                                    val port = localPort
+                                    val devName = localDeviceName
                                     val t = System.currentTimeMillis()
-                                    qrPayload = "dexolink://connect?host=192.168.1.50&port=$port&name=${Uri.encode(devName)}&t=$t"
-                                    qrBitmap = generateQRCodeBitmap(qrPayload, 600)
-                                    Toast.makeText(context, "QR code refreshed", Toast.LENGTH_SHORT).show()
+                                    val host = com.macdroid.MacDroidApplication.discoveryService.getLocalIpAddress()
+                                    if (host.isNullOrBlank()) {
+                                        Toast.makeText(context, "Connect to Wi-Fi before generating a QR code", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        qrPayload = "dexolink://connect?host=$host&port=$port&name=${Uri.encode(devName)}&t=$t"
+                                        qrBitmap = generateQRCodeBitmap(qrPayload, 600)
+                                        Toast.makeText(context, "QR code refreshed", Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1779,13 +1841,13 @@ fun QRConnectScreen(
                             contentDescription = "QR Code",
                             modifier = Modifier.fillMaxSize()
                         )
-                    }
+                    } ?: Text("Connect to Wi-Fi to generate your QR code", color = Color(0xFF64748B), fontSize = 13.sp)
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    localDeviceName.ifBlank { "Rahul's Samsung" },
+                    localDeviceName.ifBlank { "This device" },
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     color = Color(0xFF0F172A)
@@ -1867,7 +1929,18 @@ fun QRConnectScreen(
         // Full-width blue Scan QR Button
         Button(
             onClick = {
-                Toast.makeText(context, "Camera scanner active. Searching for QR code...", Toast.LENGTH_SHORT).show()
+                GmsBarcodeScanning.getClient(context).startScan()
+                    .addOnSuccessListener { barcode ->
+                        val payload = barcode.rawValue
+                        if (!payload.isNullOrBlank()) onQRScanned?.invoke(payload)
+                        else Toast.makeText(context, "No QR code was detected", Toast.LENGTH_LONG).show()
+                    }
+                    .addOnCanceledListener {
+                        // User dismissed the scanner; keep the QR screen open.
+                    }
+                    .addOnFailureListener { error ->
+                        Toast.makeText(context, "Unable to scan QR code: ${error.localizedMessage}", Toast.LENGTH_LONG).show()
+                    }
             },
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
             shape = RoundedCornerShape(16.dp),
@@ -1934,15 +2007,17 @@ fun HomeScreenContent(
     onRenameDevice: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(context) }
+    val multiPairedEnabled by settings.multiPairedDevices.collectAsState()
     val trustStore = remember { TrustStore.getInstance(context) }
-    val trustedList = remember(pairedDevice) { trustStore.getTrustedDevices() }
+    val trustedList = remember(pairedDevice, multiPairedEnabled) { trustStore.getTrustedDevices() }
     val isConnected = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Authenticated
 
     var showReceiveDialog by remember { mutableStateOf(false) }
     var selectedDeviceMenu by remember { mutableStateOf<MobileConnectedDevice?>(null) }
 
     // Aggregate real connected and trusted devices
-    val connectedList = remember(connectionState, pairedDevice, trustedList) {
+    val connectedList = remember(connectionState, pairedDevice, trustedList, isConnected) {
         val list = mutableListOf<MobileConnectedDevice>()
         val activeName = when (connectionState) {
             is ConnectionState.Connected -> connectionState.peerName
@@ -1970,7 +2045,7 @@ fun HomeScreenContent(
                     MobileConnectedDevice(
                         id = td.deviceId,
                         name = td.deviceName,
-                        status = if (isConnected) "Connected" else "Connected",
+                        status = "Disconnected",
                         rawTrusted = td
                     )
                 )
@@ -2012,7 +2087,7 @@ fun HomeScreenContent(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Your device '${localDeviceName.ifBlank { "Rahul's Samsung" }}' is ready to receive files over high-speed local Wi-Fi.",
+                        "Your device '${localDeviceName.ifBlank { "This device" }}' is ready to receive files over high-speed local Wi-Fi.",
                         fontSize = 13.sp,
                         color = Color(0xFF475569)
                     )
@@ -2056,83 +2131,10 @@ fun HomeScreenContent(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF3F6FC))
-            .statusBarsPadding()
             .padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Header matching media_1792651325421.png
-        item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 4.dp)
-            ) {
-                // DexoLink squircle logo
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF2563EB)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    DexoIcon(
-                        imageVector = DexoIcons.DexoLogo,
-                        contentDescription = "DexoLink",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Title and Subtitle
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "DexoLink",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp,
-                        color = Color(0xFF0F172A)
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        "${localDeviceName.ifBlank { "Rahul's Samsung" }} · Visible",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF64748B),
-                        modifier = Modifier.clickable { onRenameDevice() }
-                    )
-                }
-
-                // Notification Bell Button with red dot
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White)
-                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
-                        .clickable { onOpenNotifications() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    DexoIcon(
-                        imageVector = DexoIcons.Bell,
-                        contentDescription = "Notifications",
-                        tint = Color(0xFF0F172A),
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFEF4444))
-                            .align(Alignment.TopEnd)
-                            .offset(x = (-10).dp, y = (10).dp)
-                    )
-                }
-            }
-        }
-
-        // 2. Action Tiles: Send, Receive, Scan QR
+        // Home actions: Send, Receive, Scan QR
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2238,7 +2240,7 @@ fun HomeScreenContent(
             }
         }
 
-        // 3. Current devices Section
+        // 3. Paired devices Section
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 // Section Header Row
@@ -2247,7 +2249,7 @@ fun HomeScreenContent(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        "Current devices",
+                        "Paired devices",
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         color = Color(0xFF334155)
@@ -2261,7 +2263,13 @@ fun HomeScreenContent(
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            "${connectedList.size} connected",
+                            "${connectedList.count { dev ->
+                                isConnected && (dev.id == "active_peer" || dev.name.equals(
+                                    (connectionState as? ConnectionState.Connected)?.peerName
+                                        ?: (connectionState as? ConnectionState.Authenticated)?.peerName,
+                                    ignoreCase = true
+                                ))
+                            }} connected",
                             color = Color(0xFF2563EB),
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
@@ -2330,6 +2338,9 @@ fun HomeScreenContent(
                             }
                         } else {
                             connectedList.forEachIndexed { index, dev ->
+                                val activePeerName = (connectionState as? ConnectionState.Connected)?.peerName
+                                    ?: (connectionState as? ConnectionState.Authenticated)?.peerName
+                                val deviceIsConnected = isConnected && (dev.id == "active_peer" || dev.name.equals(activePeerName, ignoreCase = true))
                                 val deviceIcon = when {
                                     dev.name.contains("Mac", ignoreCase = true) || dev.name.contains("Laptop", ignoreCase = true) -> DexoIcons.DeviceMac
                                     dev.name.contains("iPhone", ignoreCase = true) || dev.name.contains("Phone", ignoreCase = true) || dev.name.contains("Android", ignoreCase = true) || dev.name.contains("Samsung", ignoreCase = true) -> DexoIcons.DevicePhone
@@ -2343,38 +2354,60 @@ fun HomeScreenContent(
                                         .fillMaxWidth()
                                         .padding(vertical = 14.dp)
                                 ) {
-                                    DexoIcon(
-                                        imageVector = deviceIcon,
-                                        contentDescription = dev.name,
-                                        tint = Color(0xFF2563EB),
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                                    Box(
+                                        modifier = Modifier.size(34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        DexoIcon(
+                                            imageVector = deviceIcon,
+                                            contentDescription = dev.name,
+                                            tint = if (deviceIsConnected) Color(0xFF2563EB) else Color(0xFF64748B),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        // Status Badge: green Wi-Fi badge for online/connected, gray Wi-Fi-disabled badge for offline/disconnected
+                                        Box(
+                                            modifier = Modifier
+                                                .size(14.dp)
+                                                .align(Alignment.BottomEnd)
+                                                .clip(CircleShape)
+                                                .background(if (deviceIsConnected) Color(0xFF16A34A) else Color(0xFF94A3B8))
+                                                .border(1.5.dp, Color.White, CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            DexoIcon(
+                                                imageVector = if (deviceIsConnected) DexoIcons.Wifi else DexoIcons.WifiOff,
+                                                contentDescription = if (deviceIsConnected) "Connected" else "Disconnected",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(8.dp)
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.width(14.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             dev.name,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 15.sp,
-                                            color = Color(0xFF2563EB)
+                                            color = if (deviceIsConnected) Color(0xFF2563EB) else Color(0xFF334155)
                                         )
                                         Text(
-                                            dev.status,
+                                            if (deviceIsConnected) (if (dev.status.isBlank() || dev.status.equals("Disconnected", ignoreCase = true)) "Connected" else dev.status) else "Disconnected",
                                             fontSize = 12.sp,
-                                            color = Color(0xFF64748B)
+                                            color = if (deviceIsConnected) Color(0xFF16A34A) else Color(0xFF94A3B8)
                                         )
                                     }
 
-                                    // Red Disconnect Button
+                                    // Keep paired devices available when disconnected.
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(20.dp))
-                                            .background(Color(0xFFFEE2E2))
-                                            .clickable { onDisconnect() }
+                                            .background(if (deviceIsConnected) Color(0xFFFEE2E2) else Color(0xFFDBEAFE))
+                                            .clickable { if (deviceIsConnected) onDisconnect() else onConnectPaired() }
                                             .padding(horizontal = 14.dp, vertical = 7.dp)
                                     ) {
                                         Text(
-                                            "Disconnect",
-                                            color = Color(0xFFDC2626),
+                                            if (deviceIsConnected) "Disconnect" else "Connect",
+                                            color = if (deviceIsConnected) Color(0xFFDC2626) else Color(0xFF2563EB),
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp
                                         )
@@ -2435,6 +2468,10 @@ fun HomeScreenContent(
 
         // 4. Available devices Section
         item {
+            val isSingleDeviceMode = !multiPairedEnabled
+            val hasPairedOrConnected = connectedList.isNotEmpty() || (pairedDevice != null) || trustedList.isNotEmpty()
+            val isSingleDeviceBlocked = isSingleDeviceMode && hasPairedOrConnected
+
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     "Available devices",
@@ -2455,6 +2492,7 @@ fun HomeScreenContent(
 
                         if (available.isNotEmpty()) {
                             available.forEachIndexed { index, dev ->
+                                val isBlocked = isSingleDeviceBlocked && !trustStore.isPairedWith(dev.deviceId ?: "", dev.name)
                                 val devIcon = if (dev.name.contains("iPad", ignoreCase = true) || dev.name.contains("Tablet", ignoreCase = true)) DexoIcons.DevicePhone else DexoIcons.DevicePhone
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -2465,35 +2503,62 @@ fun HomeScreenContent(
                                     DexoIcon(
                                         imageVector = devIcon,
                                         contentDescription = dev.name,
-                                        tint = Color(0xFF2563EB),
+                                        tint = if (isBlocked) Color(0xFF94A3B8) else Color(0xFF2563EB),
                                         modifier = Modifier.size(24.dp)
                                     )
                                     Spacer(modifier = Modifier.width(14.dp))
                                     Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                dev.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp,
+                                                color = if (isBlocked) Color(0xFF64748B) else Color(0xFF0F172A)
+                                            )
+                                            if (isBlocked) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    color = Color(0xFFFEE2E2),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        "Blocked",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFFDC2626),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
                                         Text(
-                                            dev.name,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            color = Color(0xFF0F172A)
-                                        )
-                                        Text(
-                                            "Nearby",
+                                            if (isBlocked) "Single device mode active" else "Nearby",
                                             fontSize = 12.sp,
                                             color = Color(0xFF64748B)
                                         )
                                     }
 
-                                    // Blue Connect Button
+                                    // Connect Button
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(20.dp))
-                                            .background(Color(0xFFDBEAFE))
-                                            .clickable { onConnect(dev) }
+                                            .background(if (isBlocked) Color(0xFFF1F5F9) else Color(0xFFDBEAFE))
+                                            .clickable {
+                                                if (isBlocked) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Single Device Mode active. Enable 'Multiple Paired Devices' in Settings to pair additional devices.",
+                                                        Toast.LENGTH_LONG
+                                                    ).show()
+                                                } else {
+                                                    onConnect(dev)
+                                                }
+                                            }
                                             .padding(horizontal = 16.dp, vertical = 7.dp)
                                     ) {
                                         Text(
                                             "Connect",
-                                            color = Color(0xFF2563EB),
+                                            color = if (isBlocked) Color(0xFF94A3B8) else Color(0xFF2563EB),
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 14.sp
                                         )
@@ -4534,16 +4599,26 @@ fun SettingsTabContent(
         }
     }
 
+    val coroutineScope = rememberCoroutineScope()
+    val trustStore = remember { com.macdroid.storage.TrustStore.getInstance(context) }
+    val multiPairedEnabled by settings.multiPairedDevices.collectAsState()
+    val trustedList = remember(multiPairedEnabled, pairedDevice) { trustStore.getTrustedDevices() }
+    val continuityManager = remember { com.macdroid.continuity.ContinuityManager.getInstance(context) }
+    val isContinuityEnabled by continuityManager.isContinuityEnabled.collectAsState()
+    val updateManager = remember { com.macdroid.core.UpdateManager.getInstance(context) }
+    val updateStatus by updateManager.status.collectAsState()
+    val currentAppVersion = remember { updateManager.getCurrentVersion() }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item { Spacer(modifier = Modifier.height(4.dp)) }
+        item(key = "header_spacer") { Spacer(modifier = Modifier.height(4.dp)) }
 
         // Title Header
-        item {
+        item(key = "title_header") {
             Column {
                 Text(
                     "Settings",
@@ -4561,7 +4636,7 @@ fun SettingsTabContent(
         }
 
         // Section 1: Features (Matching Reference Design Image 2)
-        item {
+        item(key = "section_features") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
@@ -4802,9 +4877,6 @@ fun SettingsTabContent(
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
 
                         // Continuity (Handoff) - Independent ON/OFF Toggle
-                        val continuityManager = remember { com.macdroid.continuity.ContinuityManager.getInstance(context) }
-                        val isContinuityEnabled by continuityManager.isContinuityEnabled.collectAsState()
-
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -4888,7 +4960,7 @@ fun SettingsTabContent(
         }
 
         // Section 2: Sync Options (Matching Reference Design Image 2)
-        item {
+        item(key = "section_sync_options") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
@@ -5031,7 +5103,7 @@ fun SettingsTabContent(
         }
 
         // Section 3: Media Streaming & Remote Control (Matching Reference Design Image 2)
-        item {
+        item(key = "section_media_streaming") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
@@ -5260,7 +5332,7 @@ fun SettingsTabContent(
         }
 
         // Section 4: Security (Matching Reference Design Image 2)
-        item {
+        item(key = "section_security") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DexoIcon(
@@ -5287,7 +5359,6 @@ fun SettingsTabContent(
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         // 1. Multiple Paired Devices
-                        val multiPairedEnabled by settings.multiPairedDevices.collectAsState()
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -5358,8 +5429,6 @@ fun SettingsTabContent(
                         Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
 
                         // 3. Paired Devices List & Device-Specific Unpair
-                        val trustStore = remember { com.macdroid.storage.TrustStore.getInstance(context) }
-                        val trustedList = remember(multiPairedEnabled, pairedDevice) { trustStore.getTrustedDevices() }
                         if (trustedList.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Trusted Paired Devices (${trustedList.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Color(0xFF64748B))
@@ -5562,8 +5631,303 @@ fun SettingsTabContent(
             }
         }
 
+        // Section 5: Software Update (Phase 5)
+        item(key = "section_software_update") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DexoIcon(
+                        imageVector = DexoIcons.Refresh,
+                        contentDescription = null,
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "SOFTWARE UPDATE",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B),
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        // Current version & Status header
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF0284C7)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Refresh,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("DexoLink for Android", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0F172A))
+                                Text("Installed: v$currentAppVersion", fontSize = 11.sp, color = Color(0xFF64748B))
+                            }
+
+                            // Dynamic status badge
+                            when (val status = updateStatus) {
+                                is com.macdroid.core.UpdateStatus.UpToDate -> {
+                                    Surface(
+                                        color = Color(0xFFDCFCE7),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "Up to date",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF16A34A),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                is com.macdroid.core.UpdateStatus.Available -> {
+                                    Surface(
+                                        color = Color(0xFFE0F2FE),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "v${status.info.latestVersion} Available",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0284C7),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                is com.macdroid.core.UpdateStatus.Checking -> {
+                                    Surface(
+                                        color = Color(0xFFFEF3C7),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "Checking...",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFD97706),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                is com.macdroid.core.UpdateStatus.Downloading -> {
+                                    Surface(
+                                        color = Color(0xFFF3E8FF),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "${(status.progressFraction * 100).toInt()}%",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF7C3AED),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                is com.macdroid.core.UpdateStatus.Verifying -> {
+                                    Surface(
+                                        color = Color(0xFFEEF2FF),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "Verifying SHA-256",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF4F46E5),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                is com.macdroid.core.UpdateStatus.ReadyToInstall -> {
+                                    Surface(
+                                        color = Color(0xFFDCFCE7),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "Ready to install",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF16A34A),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                is com.macdroid.core.UpdateStatus.Error -> {
+                                    Surface(
+                                        color = Color(0xFFFEE2E2),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "Check Failed",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFDC2626),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    Surface(
+                                        color = Color(0xFFF1F5F9),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            "GitHub Releases",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF64748B),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Progress bar if downloading
+                        val status = updateStatus
+                        if (status is com.macdroid.core.UpdateStatus.Downloading) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            LinearProgressIndicator(
+                                progress = status.progressFraction,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = Color(0xFF0066FF),
+                                trackColor = Color(0xFFE2E8F0)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(
+                                    "${status.bytesDownloaded / (1024 * 1024)} MB of ${if (status.totalBytes > 0) "${status.totalBytes / (1024 * 1024)} MB" else "..."}",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                                Text(
+                                    "${(status.progressFraction * 100).toInt()}%",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0066FF)
+                                )
+                            }
+                        }
+
+                        // Release Notes snippet if update is available
+                        if (status is com.macdroid.core.UpdateStatus.Available) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                color = Color(0xFFF8FAFC),
+                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        status.info.releaseTitle,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        status.info.releaseNotes.take(180) + if (status.info.releaseNotes.length > 180) "..." else "",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF475569)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Action buttons
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        updateManager.checkForUpdates()
+                                    }
+                                },
+                                enabled = status !is com.macdroid.core.UpdateStatus.Checking && status !is com.macdroid.core.UpdateStatus.Downloading,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(vertical = 8.dp)
+                            ) {
+                                Text(
+                                    if (status is com.macdroid.core.UpdateStatus.Checking) "Checking..." else "Check for Updates",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF0066FF)
+                                )
+                            }
+
+                            if (status is com.macdroid.core.UpdateStatus.Available) {
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            val apk = updateManager.downloadAndVerifyApk(status.info)
+                                            if (apk != null) {
+                                                updateManager.installApk(apk)
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        "Update Now",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            } else if (status is com.macdroid.core.UpdateStatus.ReadyToInstall) {
+                                Button(
+                                    onClick = {
+                                        updateManager.installApk(status.apkFile)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        "Install APK",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Footer (Matching Reference Design Image 2)
-        item {
+        item(key = "footer") {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -5571,7 +5935,7 @@ fun SettingsTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v4.0.1",
+                    "Developed by Rahul Mahaseth | DexoLink v4.1.0",
                     fontSize = 11.sp,
                     color = Color(0xFF94A3B8),
                     textAlign = TextAlign.Center
@@ -5579,7 +5943,7 @@ fun SettingsTabContent(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(20.dp)) }
+        item(key = "footer_spacer") { Spacer(modifier = Modifier.height(20.dp)) }
     }
 
     if (showEnhancedClipboardInfoDialog) {

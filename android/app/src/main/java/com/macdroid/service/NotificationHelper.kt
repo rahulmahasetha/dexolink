@@ -69,122 +69,44 @@ object NotificationHelper {
     }
 
     /**
-     * Shows exactly one notification upon a successful connection event.
-     * Deduplicates repeat connection events.
+     * Suppresses noisy status drawer spam for connect events per Phase 7 requirements.
+     * Cancels any lingering alert notifications.
      */
     fun showConnectedNotification(context: Context, peerName: String) {
-        val settings = DexoLinkSettings.getInstance(context)
-        if (!settings.notificationsEnabled.value) return
-
-        val eventKey = "connected:$peerName"
-        if (lastNotifiedState == eventKey) return
-        lastNotifiedState = eventKey
-        wasPreviouslyConnected = true
-
         val nm = getNotificationManager(context) ?: return
         nm.cancel(NOTIFICATION_ID_DISCONNECT)
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS_ID)
-            .setContentTitle("Connected to $peerName")
-            .setContentText("Local Wi-Fi link verified and ready to sync")
-            .setSmallIcon(R.drawable.ic_qs_dexolink)
-            .setContentIntent(getOpenAppPendingIntent(context))
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
-        nm.notify(NOTIFICATION_ID_CONNECT, notification)
-        Log.d(TAG, "Posted single connected notification for $peerName")
+        nm.cancel(NOTIFICATION_ID_CONNECT)
+        Log.d(TAG, "Device connected: $peerName (drawer notification suppressed for privacy/cleanliness)")
     }
 
     /**
-     * Shows exactly one notification upon a disconnection event.
-     * Fires only if a device was actually previously connected to prevent startup spam.
+     * Suppresses noisy status drawer spam for disconnect events per Phase 7 requirements.
      */
     fun showDisconnectedNotification(context: Context, peerName: String?) {
-        val settings = DexoLinkSettings.getInstance(context)
-        if (!settings.notificationsEnabled.value) return
-        if (!wasPreviouslyConnected) return
-
-        val name = peerName ?: "device"
-        val eventKey = "disconnected:$name"
-        if (lastNotifiedState == eventKey) return
-        lastNotifiedState = eventKey
-        wasPreviouslyConnected = false
-
         val nm = getNotificationManager(context) ?: return
         nm.cancel(NOTIFICATION_ID_CONNECT)
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS_ID)
-            .setContentTitle("Disconnected")
-            .setContentText("Disconnected from $name")
-            .setSmallIcon(R.drawable.ic_qs_dexolink)
-            .setContentIntent(getOpenAppPendingIntent(context))
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
-        nm.notify(NOTIFICATION_ID_DISCONNECT, notification)
-        Log.d(TAG, "Posted single disconnected notification for $name")
+        nm.cancel(NOTIFICATION_ID_DISCONNECT)
+        Log.d(TAG, "Device disconnected: ${peerName ?: "device"} (drawer notification suppressed)")
     }
 
     /**
-     * Shows exactly one notification when a device is successfully paired.
+     * Suppresses noisy status drawer spam for pairing events per Phase 7 requirements.
      */
     fun showPairedNotification(context: Context, peerName: String) {
-        val settings = DexoLinkSettings.getInstance(context)
-        if (!settings.notificationsEnabled.value) return
-
-        val eventKey = "paired:$peerName"
-        if (lastNotifiedState == eventKey) return
-        lastNotifiedState = eventKey
-
         val nm = getNotificationManager(context) ?: return
         nm.cancel(NOTIFICATION_ID_UNPAIR)
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS_ID)
-            .setContentTitle("Device Paired")
-            .setContentText("$peerName has been added to trusted devices")
-            .setSmallIcon(R.drawable.ic_qs_dexolink)
-            .setContentIntent(getOpenAppPendingIntent(context))
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
-        nm.notify(NOTIFICATION_ID_PAIR, notification)
-        Log.d(TAG, "Posted single paired notification for $peerName")
+        nm.cancel(NOTIFICATION_ID_PAIR)
+        Log.d(TAG, "Device paired: $peerName (drawer notification suppressed)")
     }
 
     /**
-     * Shows exactly one notification when a device is unpaired.
+     * Suppresses noisy status drawer spam for unpair events per Phase 7 requirements.
      */
     fun showUnpairedNotification(context: Context, peerName: String?) {
-        val settings = DexoLinkSettings.getInstance(context)
-        if (!settings.notificationsEnabled.value) return
-
-        val name = peerName ?: "device"
-        val eventKey = "unpaired:$name"
-        if (lastNotifiedState == eventKey) return
-        lastNotifiedState = eventKey
-
         val nm = getNotificationManager(context) ?: return
         nm.cancel(NOTIFICATION_ID_PAIR)
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_EVENTS_ID)
-            .setContentTitle("Device Unpaired")
-            .setContentText("$name removed from trusted devices")
-            .setSmallIcon(R.drawable.ic_qs_dexolink)
-            .setContentIntent(getOpenAppPendingIntent(context))
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
-        nm.notify(NOTIFICATION_ID_UNPAIR, notification)
-        Log.d(TAG, "Posted single unpaired notification for $name")
+        nm.cancel(NOTIFICATION_ID_UNPAIR)
+        Log.d(TAG, "Device unpaired: ${peerName ?: "device"} (drawer notification suppressed)")
     }
 
     /**

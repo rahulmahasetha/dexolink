@@ -2,6 +2,7 @@ import SwiftUI
 import Networking
 import Crypto
 import Core
+import CoreImage.CIFilterBuiltins
 
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
@@ -13,6 +14,8 @@ struct MenuBarView: View {
     @State private var isTargetedForDrop = false
     @State private var showHandoffSheet = false
     @State private var showSettingsSheet = false
+    @State private var showQRCodeSheet = false
+    @State private var connectionQRCode: NSImage?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +30,16 @@ struct MenuBarView: View {
                     .fontWeight(.bold)
 
                 Spacer()
+
+                Button {
+                    generateConnectionQRCode()
+                    showQRCodeSheet = true
+                } label: {
+                    Image(systemName: "qrcode")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Show a QR code for mobile devices to scan")
 
                 Button(action: {
                     showSettingsSheet.toggle()
@@ -68,6 +81,35 @@ struct MenuBarView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(Color(nsColor: .windowBackgroundColor))
+
+            .sheet(isPresented: $showQRCodeSheet) {
+                VStack(spacing: 14) {
+                    Text("Connect a Mobile Device")
+                        .font(.headline)
+                    Text("Scan this code with DexoLink on Android or iPhone.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if let connectionQRCode {
+                        Image(nsImage: connectionQRCode)
+                            .interpolation(.none)
+                            .resizable()
+                            .frame(width: 240, height: 240)
+                            .padding(12)
+                            .background(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        ShareLink(item: Image(nsImage: connectionQRCode), preview: SharePreview("DexoLink Connection QR")) {
+                            Label("Share QR Image", systemImage: "square.and.arrow.up")
+                        }
+                    } else {
+                        Text("Connect this Mac to a network and try again.")
+                            .foregroundColor(.secondary)
+                    }
+                    Button("Close") { showQRCodeSheet = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding(24)
+                .frame(minWidth: 320, minHeight: 360)
+            }
 
             Divider()
 
@@ -710,7 +752,7 @@ struct MenuBarView: View {
             // MARK: - Developer Attribution Footer
             HStack {
                 Spacer()
-                Text("Developed by Rahul Mahaseth | DexoLink v4.0.1")
+                Text("Developed by Rahul Mahaseth | DexoLink v4.1.0")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary.opacity(0.8))
                 Spacer()
@@ -748,6 +790,36 @@ struct MenuBarView: View {
                 isPresented: $showSettingsSheet
             )
         }
+    }
+
+    private func generateConnectionQRCode() {
+        guard appState.localIP != "Unavailable", !appState.localIP.isEmpty else {
+            connectionQRCode = nil
+            return
+        }
+        var components = URLComponents()
+        components.scheme = "dexolink"
+        components.host = "connect"
+        components.queryItems = [
+            URLQueryItem(name: "host", value: appState.localIP),
+            URLQueryItem(name: "port", value: String(appState.discoveryService.listeningPort)),
+            URLQueryItem(name: "name", value: Host.current().localizedName ?? "Mac")
+        ]
+        guard let payload = components.string else {
+            connectionQRCode = nil
+            return
+        }
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else {
+            connectionQRCode = nil
+            return
+        }
+        let representation = NSCIImageRep(ciImage: output)
+        let image = NSImage(size: representation.size)
+        image.addRepresentation(representation)
+        connectionQRCode = image
     }
 
     private var isConnected: Bool {
@@ -2076,7 +2148,7 @@ struct SettingsSheetView: View {
                         .cornerRadius(10)
                     }
 
-                    // Section 2: Remote Viewing & Media Streaming (v4.0.1)
+                    // Section 2: Remote Viewing & Media Streaming (v4.0.2)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Image(systemName: "video.fill")
@@ -2368,7 +2440,7 @@ struct SettingsSheetView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(.secondary)
                             Spacer()
-                            Text("v4.0.1")
+                            Text("v4.1.0")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.cyan)
                         }
