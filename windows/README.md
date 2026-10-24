@@ -1,4 +1,4 @@
-# DexoLink for Windows (v0.2)
+# DexoLink for Windows (v4.0.2)
 
 Lightweight, high-performance, zero-external-dependency companion engine for Windows 10/11.
 

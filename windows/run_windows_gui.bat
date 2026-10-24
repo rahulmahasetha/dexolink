@@ -1,5 +1,5 @@
 @echo off
-title DexoLink v0.2 (Windows)
+title DexoLink v4.0.2 (Windows)
 echo Starting DexoLink Windows App...
 python dexolink_gui.py
 if %ERRORLEVEL% NEQ 0 (

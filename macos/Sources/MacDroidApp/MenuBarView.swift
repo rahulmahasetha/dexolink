@@ -752,7 +752,7 @@ struct MenuBarView: View {
             // MARK: - Developer Attribution Footer
             HStack {
                 Spacer()
-                Text("Developed by Rahul Mahaseth | DexoLink v0.2")
+                Text("Developed by Rahul Mahaseth | DexoLink v4.0.2")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundColor(.secondary.opacity(0.8))
                 Spacer()
@@ -2440,7 +2440,7 @@ struct SettingsSheetView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(.secondary)
                             Spacer()
-                            Text("v0.2")
+                            Text("v4.0.2")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.cyan)
                         }

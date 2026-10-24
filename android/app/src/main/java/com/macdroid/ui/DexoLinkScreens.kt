@@ -5935,7 +5935,7 @@ fun SettingsTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v0.2",
+                    "Developed by Rahul Mahaseth | DexoLink v4.0.2",
                     fontSize = 11.sp,
                     color = Color(0xFF94A3B8),
                     textAlign = TextAlign.Center

@@ -1811,7 +1811,7 @@ func startWebDashboard(ready chan<- error) {
 		engine.mu.Unlock()
 
 		json.NewEncoder(w).Encode(map[string]any{
-			"version":                "0.2",
+			"version":                "4.0.2",
 			"device_id":              engine.DeviceID,
 			"deviceId":               engine.DeviceID,
 			"device_name":            engine.DeviceName,
@@ -2322,7 +2322,7 @@ func startWebDashboard(ready chan<- error) {
 
 func main() {
 	fmt.Println("======================================================")
-	fmt.Printf("  DexoLink for Windows v0.2 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("  DexoLink for Windows v4.0.2 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Println("  Universal Cross-Platform Synchronization & System Tray")
 	fmt.Println("======================================================")
 
@@ -2390,7 +2390,7 @@ const webUIHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DexoLink v0.2 (Windows)</title>
+<title>DexoLink v4.0.2 (Windows)</title>
 <style>
   :root {
     --bg: #0b1120;
@@ -2518,7 +2518,7 @@ const webUIHTML = `<!DOCTYPE html>
       <div class="brand">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
         <h1>DexoLink</h1>
-        <span class="badge">v0.2</span>
+        <span class="badge">v4.0.2</span>
       </div>
       <div class="header-actions">
         <button class="icon-btn" onclick="openConnectionQRModal()" title="Show a QR code for Android and iPhone">
@@ -2635,14 +2635,14 @@ const webUIHTML = `<!DOCTYPE html>
         </ul>
       </div>
 
-      <!-- Card: Media Streaming & Remote Control (v0.2) -->
+      <!-- Card: Media Streaming & Remote Control (v4.0.2) -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
             <span>Media Streaming & Remote Control</span>
           </div>
-          <span class="badge badge-green">v0.2</span>
+          <span class="badge badge-green">v4.0.2</span>
         </div>
 
         <!-- Camera Section -->
@@ -2770,7 +2770,7 @@ const webUIHTML = `<!DOCTYPE html>
       </div>
       <button class="btn btn-bordered btn-sm" onclick="rescanDiscovery()">Refresh</button>
     </div>
-    <div class="dev-attr">Developed by Rahul Mahaseth | DexoLink v0.2 (Universal)</div>
+    <div class="dev-attr">Developed by Rahul Mahaseth | DexoLink v4.0.2 (Universal)</div>
 
   </div>
 
@@ -3752,7 +3752,7 @@ const popupUIHTML = `<!DOCTYPE html>
     <div class="header-left">
       <div class="logo-icon">&#8734;</div>
       <div class="title">DexoLink</div>
-      <span class="version">v0.2</span>
+      <span class="version">v4.0.2</span>
     </div>
     <div id="statusBadge" class="status-badge idle">
       <div class="status-dot"></div>

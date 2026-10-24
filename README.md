@@ -1,6 +1,6 @@
 # DexoLink
 
-[![Version](https://img.shields.io/badge/Release-v0.2-blue.svg)](https://github.com/rahulmahasetha/dexolink/releases)
+[![Version](https://img.shields.io/badge/Release-v4.0.2-blue.svg)](https://github.com/rahulmahasetha/dexolink/releases)
 [![CI/CD Pipeline](https://github.com/rahulmahasetha/dexolink/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulmahasetha/dexolink/actions/workflows/ci.yml)
 [![Platform - macOS](https://img.shields.io/badge/Platform-macOS%2013%2B-black?logo=apple)](https://github.com/rahulmahasetha/dexolink)
 [![Platform - iOS](https://img.shields.io/badge/Platform-iOS%2016%2B-lightgrey?logo=apple)](https://github.com/rahulmahasetha/dexolink)
@@ -12,21 +12,21 @@
 
 ---
 
-## Public App Downloads (v0.2)
+## Public App Downloads (v4.0.2)
 
 > **Note:** Even though the project source code repository is kept private on GitHub, the compiled application packages are **publicly distributed** for anyone to install and run without building from source or logging in.
 
 | Platform | Download Asset | Supported OS | Description |
 |:---|:---|:---|:---|
 | **macOS** | [**DexoLink.dmg**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink.dmg) | macOS 13.0+ (Ventura, Sonoma, Sequoia) | Drag & drop menu bar application (`DexoLink.app`) |
-| **macOS (v0.2)** | [**DexoLink-v0.2.dmg**](https://github.com/rahulmahasetha/dexolink/releases/download/v0.2/DexoLink-v0.2.dmg) | macOS 13.0+ | Exact versioned DMG disk image |
+| **macOS (v4.0.2)** | [**DexoLink-v4.0.2.dmg**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.2/DexoLink-v4.0.2.dmg) | macOS 13.0+ | Exact versioned DMG disk image |
 | **Android** | [**DexoLink-Android.apk**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink-Android.apk) | Android 8.0+ (Oreo through Android 15) | Standalone APK package |
-| **Android (v0.2)** | [**DexoLink-v0.2.apk**](https://github.com/rahulmahasetha/dexolink/releases/download/v0.2/DexoLink-v0.2.apk) | Android 8.0+ | Exact versioned APK package |
+| **Android (v4.0.2)** | [**DexoLink-v4.0.2.apk**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.2/DexoLink-v4.0.2.apk) | Android 8.0+ | Exact versioned APK package |
 | **Windows (.exe)** | [**DexoLink.exe**](https://github.com/rahulmahasetha/dexolink/releases/latest/download/DexoLink.exe) | Windows 10 / 11 (64-bit) | Standalone native Windows executable app |
-| **Windows (v0.2 .exe)** | [**DexoLink-v0.2.exe**](https://github.com/rahulmahasetha/dexolink/releases/download/v0.2/DexoLink-v0.2.exe) | Windows 10 / 11 | Exact versioned standalone executable app |
+| **Windows (v4.0.2 .exe)** | [**DexoLink-v4.0.2.exe**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.2/DexoLink-v4.0.2.exe) | Windows 10 / 11 | Exact versioned standalone executable app |
 | **Windows (Source / GUI)** | [**`windows/run_windows_gui.bat`**](windows/README.md) | Windows 10 / 11 | Desktop GUI app (`dexolink_gui.py`) & launcher |
 | **iPhone (iOS .ipa)** | [**DexoLink.ipa**](ios/README.md) | iOS 16.0+ (iPhone & iPad) | Standalone installable iOS package (`DexoLink.ipa`) |
-| **iPhone (v0.2 .ipa)** | [**DexoLink-v0.2.ipa**](https://github.com/rahulmahasetha/dexolink/releases/download/v0.2/DexoLink-v0.2.ipa) | iOS 16.0+ | Exact versioned installable iOS package |
+| **iPhone (v4.0.2 .ipa)** | [**DexoLink-v4.0.2.ipa**](https://github.com/rahulmahasetha/dexolink/releases/download/v4.0.2/DexoLink-v4.0.2.ipa) | iOS 16.0+ | Exact versioned installable iOS package |
 
 ---
 
