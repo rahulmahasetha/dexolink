@@ -91,6 +91,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val activeTransfers = mutableStateListOf<TransferItem>()
     private val completedTransfers = mutableStateListOf<TransferItem>()
     private val receivedFiles = mutableStateListOf<File>()
+    private var pendingReconnectDeviceName: String? = null
     private val clipboardHistory = mutableStateListOf<ClipboardHistoryItem>()
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -262,6 +263,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     devices = discoveredDevices,
                     pairedDevice = pairedDevice.value,
                     localDeviceName = localDeviceName.value,
+                    localPort = connectionManager.listeningPort.takeIf { it > 0 } ?: 52840,
                     lastPingLatency = lastPingLatency.value,
                     logs = logs,
                     lastSyncedSnippet = lastSyncedSnippet.value,
@@ -279,26 +281,58 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                         connectionManager.setClipboardSyncMode(mode)
                     },
                     onConnect = { device ->
-                        connectionManager.connect(device.host, device.port)
+                        val settings = com.macdroid.storage.DexoLinkSettings.getInstance(this)
+                        val trustStore = TrustStore.getInstance(this)
+                        val isSingleMode = !settings.multiPairedDevices.value && (trustStore.hasPairedDevice() || connectionManager.isConnected())
+                        val devId = device.deviceId ?: ""
+                        if (isSingleMode && !trustStore.isPairedWith(devId, device.name)) {
+                            val currentPairedName = trustStore.getPairedDevice()?.deviceName ?: "Current Device"
+                            Toast.makeText(
+                                this,
+                                "Single Device Mode active. Unpair '$currentPairedName' or enable Multiple Paired Devices in Settings.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            connectionManager.connect(device.host, device.port)
+                        }
                     },
                     onConnectPaired = {
-                        val paired = pairedDevice.value
+                        val paired = pairedDevice.value ?: TrustStore.getInstance(this).getPairedDevice()
                         if (paired != null) {
-                            val host = connectionManager.lastConnectedHost ?: ""
-                            val port = if (connectionManager.lastConnectedPort > 0) connectionManager.lastConnectedPort else 52840
-                            if (host.isNotBlank()) {
-                                connectionManager.connect(host, port)
+                            val matchingDiscovered = discoveredDevices.firstOrNull { it.name.equals(paired.deviceName, ignoreCase = true) }
+                            if (matchingDiscovered != null) {
+                                connectionManager.connect(matchingDiscovered.host, matchingDiscovered.port)
                             } else {
-                                discoveredDevices.clear()
-                                discoveryService.stopBrowsing()
-                                discoveryService.startBrowsing()
-                                Toast.makeText(this, "Searching for ${paired.deviceName} on Wi-Fi...", Toast.LENGTH_SHORT).show()
+                                val host = connectionManager.lastConnectedHost ?: ""
+                                val port = if (connectionManager.lastConnectedPort > 0) connectionManager.lastConnectedPort else 52840
+                                if (host.isNotBlank()) {
+                                    connectionManager.connect(host, port)
+                                } else {
+                                    pendingReconnectDeviceName = paired.deviceName
+                                    discoveredDevices.clear()
+                                    discoveryService.stopBrowsing()
+                                    discoveryService.startBrowsing()
+                                    Toast.makeText(this, "Searching for ${paired.deviceName} on Wi-Fi...", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
                     },
                     onConnectManual = { host, port ->
-                        connectionManager.connect(host, port)
-                        log("Connecting to manual IP: $host:$port")
+                        val settings = com.macdroid.storage.DexoLinkSettings.getInstance(this)
+                        val trustStore = TrustStore.getInstance(this)
+                        val isSingleMode = !settings.multiPairedDevices.value && (trustStore.hasPairedDevice() || connectionManager.isConnected())
+                        val existing = trustStore.getPairedDevice()
+                        if (isSingleMode && existing != null && existing.deviceId != host && existing.deviceName != host) {
+                            val currentPairedName = existing.deviceName
+                            Toast.makeText(
+                                this,
+                                "Single Device Mode active. Unpair '$currentPairedName' or enable Multiple Paired Devices in Settings.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            connectionManager.connect(host, port)
+                            log("Connecting to manual IP: $host:$port")
+                        }
                     },
                     onDisconnect = {
                         connectionManager.disconnect(disableAutoReconnect = true)
@@ -660,6 +694,10 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         } else {
             discoveredDevices.add(device)
             log("Discovered: ${device.name} @ ${device.host}:${device.port}")
+        }
+        if (pendingReconnectDeviceName.equals(device.name, ignoreCase = true)) {
+            pendingReconnectDeviceName = null
+            runOnUiThread { connectionManager.connect(device.host, device.port) }
         }
     }
 
