@@ -25,6 +25,10 @@ if [ ! -f "$BIN_PATH" ]; then
 fi
 
 if [ ! -f "$BIN_PATH" ]; then
+    BIN_PATH="$(find "$MACOS_DIR/.build" -type f -name MacDroidApp 2>/dev/null | grep -i release | head -n 1 || true)"
+fi
+
+if [ ! -f "$BIN_PATH" ]; then
     echo "Error: Release binary not found at $BIN_PATH"
     exit 1
 fi
@@ -162,7 +166,7 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
 EOF
 
 echo "Signing DexoLink.app bundle with identifier com.dexolink.macos..."
-codesign --force --deep --sign - --identifier "com.dexolink.macos" "$APP_BUNDLE"
+codesign --force --deep --sign - --timestamp=none --identifier "com.dexolink.macos" "$APP_BUNDLE"
 
 echo "Staging DMG creation..."
 mkdir -p "$STAGE_DIR"
