@@ -1,4 +1,4 @@
-# DexoLink for iPhone (iOS App v4.0.1)
+# DexoLink for iPhone (iOS App v4.1.0)
 
 A modern, fast, and easy-to-use native SwiftUI app for iPhone running iOS 16.0+.
 
@@ -14,7 +14,7 @@ A modern, fast, and easy-to-use native SwiftUI app for iPhone running iOS 16.0+.
 3. **Continuity & Handoff:**
    - Seamlessly hand off web pages between your iPhone, Mac, Windows, and Android devices.
    - 1-tap **Open in Safari** for incoming links.
-4. **Media Streaming & Remote Control (v4.0.1):**
+4. **Media Streaming & Remote Control (v4.0.2):**
    - **Camera Sharing:** Stream your iPhone's camera to your Mac or PC (**OFF by default** in Settings; respects `NSCameraUsageDescription`).
    - **Screen Sharing:** Mirror iPhone display to another device (**OFF by default** in Settings; uses ReplayKit broadcast framework).
    - **Desktop Mode (beta):** View and interact with remote Mac and Windows desktops (**OFF by default** in Settings).

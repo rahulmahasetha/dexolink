@@ -5,11 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACOS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$MACOS_DIR/.." && pwd)"
 
+SDK_FLAG=""
+if [ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk" ]; then
+    SDK_FLAG="--sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+fi
 echo "Building DexoLink macOS release binary..."
 cd "$MACOS_DIR"
-swift build -c release
+swift build -c release $SDK_FLAG
 
-SHOW_BIN="$(swift build -c release --show-bin-path 2>/dev/null || true)"
+SHOW_BIN="$(swift build -c release $SDK_FLAG --show-bin-path 2>/dev/null || true)"
 BIN_PATH="$SHOW_BIN/MacDroidApp"
 
 if [ ! -f "$BIN_PATH" ]; then
@@ -79,9 +83,9 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.0.1</string>
+    <string>4.1.0</string>
     <key>CFBundleVersion</key>
-    <string>4.0.1</string>
+    <string>4.1.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

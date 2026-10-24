@@ -1,4 +1,4 @@
-# DexoLink for Windows (v4.0.1)
+# DexoLink for Windows (v4.1.0)
 
 Lightweight, high-performance, zero-external-dependency companion engine for Windows 10/11.
 
@@ -12,7 +12,7 @@ Lightweight, high-performance, zero-external-dependency companion engine for Win
   - Automatic line ending normalization (`\r\n` <-> `\n`) and SHA-256 loop prevention.
   - Zero-width character stripping for Enhanced Clipboard compatibility.
 - **Fast Chunked File Sharing:**
-  - 64KB chunked transmission with SHA-256 file verification.
+  - High-throughput 512KB chunked transmission with SHA-256 file verification.
   - Automatically saves incoming files to `Downloads/DexoLink/`.
 - **Continuity / Handoff:**
   - Automatically opens URLs sent via Handoff in the user's default Windows browser.
