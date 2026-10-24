@@ -38,7 +38,8 @@ APP_NAME="DexoLink.app"
 APP_BUNDLE="$DIST_DIR/$APP_NAME"
 DMG_NAME="DexoLink.dmg"
 DMG_OUTPUT="$DIST_DIR/$DMG_NAME"
-STAGE_DIR="$DIST_DIR/dmg_stage"
+STAGE_DIR="$(mktemp -d /tmp/dexolink_dmg_stage.XXXXXX)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
 
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -87,9 +88,9 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.1.0</string>
+    <string>0.2</string>
     <key>CFBundleVersion</key>
-    <string>4.1.0</string>
+    <string>0.2</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
@@ -168,14 +169,44 @@ EOF
 echo "Signing DexoLink.app bundle with identifier com.dexolink.macos..."
 codesign --force --deep --sign - --timestamp=none --identifier "com.dexolink.macos" "$APP_BUNDLE"
 
-echo "Staging DMG creation..."
-mkdir -p "$STAGE_DIR"
+echo "Staging DMG creation in $STAGE_DIR..."
+rm -rf "$STAGE_DIR"/*
 cp -R "$APP_BUNDLE" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
 
+# Unmount any stale DexoLink volumes to prevent "Resource busy"
+hdiutil info | grep -E "/Volumes/DexoLink" | awk '{print $1}' | while read -r dev; do
+    [ -n "$dev" ] && hdiutil detach "$dev" -force 2>/dev/null || true
+done
+hdiutil detach "/Volumes/DexoLink" -force 2>/dev/null || true
+
+# Flush disk cache to avoid open file descriptor collisions
+sync
+sleep 1
+
 echo "Building DexoLink.dmg with hdiutil..."
 rm -f "$DMG_OUTPUT"
-hdiutil create -volname "DexoLink" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_OUTPUT"
+
+DMG_CREATED=false
+for attempt in 1 2 3; do
+    echo "hdiutil create attempt $attempt of 3..."
+    if hdiutil create -volname "DexoLink" -srcfolder "$STAGE_DIR" -ov -format UDZO -noanyowners "$DMG_OUTPUT"; then
+        DMG_CREATED=true
+        break
+    fi
+    echo "Warning: hdiutil create attempt $attempt encountered busy lock. Detaching volumes, syncing, and retrying in 2s..."
+    hdiutil info | grep -E "/Volumes/DexoLink" | awk '{print $1}' | while read -r dev; do
+        [ -n "$dev" ] && hdiutil detach "$dev" -force 2>/dev/null || true
+    done
+    hdiutil detach "/Volumes/DexoLink" -force 2>/dev/null || true
+    sync
+    sleep 2
+done
+
+if [ "$DMG_CREATED" = false ]; then
+    echo "Error: Failed to create DexoLink.dmg after 3 attempts."
+    exit 1
+fi
 rm -rf "$STAGE_DIR"
 
 echo "Successfully created installable macOS app and DMG:"

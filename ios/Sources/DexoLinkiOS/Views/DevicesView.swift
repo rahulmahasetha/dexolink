@@ -289,7 +289,7 @@ struct DevicesView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("4.1.0 (Universal)")
+                        Text("0.2 (Universal)")
                             .foregroundColor(.secondary)
                     }
                     HStack {

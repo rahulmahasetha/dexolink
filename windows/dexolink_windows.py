@@ -1,5 +1,5 @@
 """
-DexoLink Windows Companion Engine (v4.1.0)
+DexoLink Windows Companion Engine (v0.2)
 Lightweight, zero-dependency, local-network cross-platform engine for Windows.
 Supports:
 - Device discovery (UDP beacon 52841)
@@ -360,7 +360,7 @@ class DexoLinkWindowsEngine:
         # Start UDP Discovery Broadcaster & Listener
         threading.Thread(target=self._udp_beacon_broadcast, daemon=True).start()
         threading.Thread(target=self._udp_beacon_listen, daemon=True).start()
-        print(f"[DexoLink Windows] Engine v4.1.0 listening on port {self.port} (ID: {self.device_id})")
+        print(f"[DexoLink Windows] Engine v0.2 listening on port {self.port} (ID: {self.device_id})")
 
     def stop(self):
         self.running = False

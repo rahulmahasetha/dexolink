@@ -1,4 +1,4 @@
-# DexoLink for iPhone (iOS App v4.1.0)
+# DexoLink for iPhone (iOS App v0.2)
 
 A modern, fast, and easy-to-use native SwiftUI app for iPhone running iOS 16.0+.
 

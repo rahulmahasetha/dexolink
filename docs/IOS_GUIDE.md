@@ -1,4 +1,4 @@
-# DexoLink for iPhone (iOS Guide & Architecture - v4.1.0)
+# DexoLink for iPhone (iOS Guide & Architecture - v0.2)
 
 This guide documents the iOS architecture, shared code modules, and implementation patterns for DexoLink on iPhone (iOS 16.0+).
 

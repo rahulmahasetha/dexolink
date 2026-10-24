@@ -15,10 +15,10 @@ on:
         type: boolean
         default: true
       tag_name:
-        description: 'Release Tag Name (e.g. v4.1.0)'
+        description: 'Release Tag Name (e.g. v0.2)'
         required: false
         type: string
-        default: 'v4.1.0'
+        default: 'v0.2'
 
 permissions:
   contents: write
@@ -56,9 +56,9 @@ jobs:
         run: |
           mkdir -p apple_artifacts
           cp macos/dist/DexoLink.dmg apple_artifacts/DexoLink.dmg
-          cp macos/dist/DexoLink.dmg apple_artifacts/DexoLink-v4.1.0.dmg
+          cp macos/dist/DexoLink.dmg apple_artifacts/DexoLink-v0.2.dmg
           cp ios/dist/DexoLink.ipa apple_artifacts/DexoLink.ipa
-          cp ios/dist/DexoLink.ipa apple_artifacts/DexoLink-v4.1.0.ipa
+          cp ios/dist/DexoLink.ipa apple_artifacts/DexoLink-v0.2.ipa
           ls -lh apple_artifacts/
 
       - name: Upload Apple Artifacts
@@ -99,7 +99,7 @@ jobs:
       - name: Stage Android Release Artifacts
         run: |
           mkdir -p android_artifacts
-          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-v4.1.0.apk 2>/dev/null || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v4.1.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-v0.2.apk 2>/dev/null || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-v0.2.apk
           cp android/app/build/outputs/apk/release/app-release.apk android_artifacts/DexoLink-Android.apk 2>/dev/null || cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/DexoLink-Android.apk
           cp android/app/build/outputs/apk/debug/app-debug.apk android_artifacts/app-debug.apk 2>/dev/null || true
           ls -lh android_artifacts/
@@ -135,7 +135,7 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o DexoLink.exe .
           mkdir -p ../windows_artifacts
           cp DexoLink.exe ../windows_artifacts/DexoLink.exe
-          cp DexoLink.exe ../windows_artifacts/DexoLink-v4.1.0.exe
+          cp DexoLink.exe ../windows_artifacts/DexoLink-v0.2.exe
           ls -lh ../windows_artifacts/
 
       - name: Upload Windows EXE Artifact
@@ -193,8 +193,8 @@ jobs:
             echo "TAG=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
             echo "TITLE=DexoLink ${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
           else
-            echo "TAG=v4.1.0" >> $GITHUB_OUTPUT
-            echo "TITLE=DexoLink v4.1.0" >> $GITHUB_OUTPUT
+            echo "TAG=v0.2" >> $GITHUB_OUTPUT
+            echo "TITLE=DexoLink v0.2" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release
