@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -20,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/skip2/go-qrcode"
 )
 
 // Constants
@@ -28,7 +31,7 @@ const (
 	BeaconPort      = 52841
 	WebUIPort       = 52842
 	ProtocolVersion = 1
-	ChunkSize       = 64 * 1024               // 64 KB per chunk (matches DexoLink spec)
+	ChunkSize       = 512 * 1024              // 512 KB per chunk (high throughput, matches macOS & Android spec)
 	MaxFileSize     = 10 * 1024 * 1024 * 1024 // 10 GB max file size
 	MaxMessageSize  = 10 * 1024 * 1024        // 10 MB max message size
 )
@@ -293,13 +296,27 @@ func encodeMessage(payload any) ([]byte, error) {
 	return buf, nil
 }
 
-// BroadcastMessage sends a message to all active connected peer sessions
+// BroadcastMessage sends a message to all eligible connected peer sessions
+// In single-device mode: sends ONLY to the single paired device.
+// In multiple-device mode: sends to all active connected, paired devices.
 func (e *DexoLinkEngine) BroadcastMessage(msg any) int {
+	e.TrustStore.mu.Lock()
+	multi := e.TrustStore.MultiplePairedDevices
+	e.TrustStore.mu.Unlock()
+
 	sent := 0
 	e.ActiveSessions.Range(func(key, val any) bool {
 		s := val.(*PeerSession)
+		if !multi {
+			if !e.TrustStore.IsPaired(s.DeviceID, s.DeviceName) {
+				return true
+			}
+		}
 		if err := s.SendMessage(msg); err == nil {
 			sent++
+		}
+		if !multi && sent > 0 {
+			return false
 		}
 		return true
 	})
@@ -592,6 +609,22 @@ func (e *DexoLinkEngine) handleClient(conn net.Conn, session *PeerSession) {
 			if pName == "" {
 				pName = "Remote Device"
 			}
+			e.TrustStore.mu.Lock()
+			multi := e.TrustStore.MultiplePairedDevices
+			pairedCount := len(e.TrustStore.PairedDevices)
+			_, alreadyPaired := e.TrustStore.PairedDevices[pID]
+			e.TrustStore.mu.Unlock()
+
+			if !multi && pairedCount > 0 && !alreadyPaired {
+				_ = session.SendMessage(map[string]any{
+					"type":     "PAIR_RESPONSE",
+					"accepted": false,
+					"error":    "Single Device Mode active on Windows. Enable Multiple Paired Devices in Settings to pair additional devices.",
+				})
+				fmt.Printf("[DexoLink Windows] Rejected pair request from %s: Single Device Mode active\n", pName)
+				break
+			}
+
 			e.TrustStore.AddDevice(DeviceInfo{
 				DeviceID:   pID,
 				DeviceName: pName,
@@ -1565,10 +1598,22 @@ func (e *DexoLinkEngine) startUDPListener() {
 
 				// Auto-connect to paired device if not already connected
 				if e.TrustStore.IsPaired(devID, devName) {
-					if _, connected := e.ActiveSessions.Load(devID); !connected {
-						go func(ip string, p int, id, name string) {
-							_, _ = e.connectToPeer(ip, p, id, name)
-						}(resolvedIP, port, devID, devName)
+					e.TrustStore.mu.Lock()
+					multi := e.TrustStore.MultiplePairedDevices
+					e.TrustStore.mu.Unlock()
+
+					activeCount := 0
+					e.ActiveSessions.Range(func(k, v any) bool {
+						activeCount++
+						return true
+					})
+
+					if multi || activeCount == 0 {
+						if _, connected := e.ActiveSessions.Load(devID); !connected {
+							go func(ip string, p int, id, name string) {
+								_, _ = e.connectToPeer(ip, p, id, name)
+							}(resolvedIP, port, devID, devName)
+						}
 					}
 				}
 			}
@@ -1677,6 +1722,27 @@ func startWebDashboard(ready chan<- error) {
 		fmt.Fprint(w, popupUIHTML)
 	})
 
+	mux.HandleFunc("/api/connection-qr", func(w http.ResponseWriter, r *http.Request) {
+		localIPs := getLocalIPs()
+		if len(localIPs) == 0 {
+			http.Error(w, "No active network address is available", http.StatusServiceUnavailable)
+			return
+		}
+		deviceName, err := os.Hostname()
+		if err != nil || strings.TrimSpace(deviceName) == "" {
+			deviceName = "Windows PC"
+		}
+		payload := fmt.Sprintf("dexolink://connect?host=%s&port=%d&name=%s", url.QueryEscape(localIPs[0]), DefaultPort, url.QueryEscape(deviceName))
+		png, err := qrcode.Encode(payload, qrcode.Medium, 480)
+		if err != nil {
+			http.Error(w, "Could not generate the connection QR code", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(png)
+	})
+
 	mux.HandleFunc("/api/reconnect", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		go func() {
@@ -1745,7 +1811,7 @@ func startWebDashboard(ready chan<- error) {
 		engine.mu.Unlock()
 
 		json.NewEncoder(w).Encode(map[string]any{
-			"version":                "4.0.1",
+			"version":                "4.1.0",
 			"device_id":              engine.DeviceID,
 			"deviceId":               engine.DeviceID,
 			"device_name":            engine.DeviceName,
@@ -1865,6 +1931,21 @@ func startWebDashboard(ready chan<- error) {
 			port = DefaultPort
 		}
 		if id != "" {
+			engine.TrustStore.mu.Lock()
+			multi := engine.TrustStore.MultiplePairedDevices
+			pairedCount := len(engine.TrustStore.PairedDevices)
+			_, alreadyPaired := engine.TrustStore.PairedDevices[id]
+			engine.TrustStore.mu.Unlock()
+
+			if !multi && pairedCount > 0 && !alreadyPaired {
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]any{
+					"success": false,
+					"error":   "Single Device Mode active. Enable Multiple Paired Devices in Settings to pair additional devices.",
+				})
+				return
+			}
+
 			dev := DeviceInfo{
 				DeviceID:   id,
 				DeviceName: name,
@@ -1963,11 +2044,49 @@ func startWebDashboard(ready chan<- error) {
 
 		go func(fPath string, tID string, fName string, fSize int64) {
 			defer os.Remove(fPath)
-			ok, sErr := engine.SendFile(tID, fPath)
-			if !ok || sErr != nil {
-				fmt.Printf("[DexoLink Windows] Failed sending %s: %v\n", fName, sErr)
+
+			engine.TrustStore.mu.Lock()
+			multi := engine.TrustStore.MultiplePairedDevices
+			engine.TrustStore.mu.Unlock()
+
+			if tID != "" || !multi {
+				// Single mode or explicitly targeted recipient
+				ok, sErr := engine.SendFile(tID, fPath)
+				if !ok || sErr != nil {
+					fmt.Printf("[DexoLink Windows] Failed sending %s: %v\n", fName, sErr)
+				} else {
+					fmt.Printf("[DexoLink Windows] Successfully sent %s (%d bytes)\n", fName, fSize)
+				}
 			} else {
-				fmt.Printf("[DexoLink Windows] Successfully sent %s (%d bytes)\n", fName, fSize)
+				// Multiple mode: broadcast file independently to all eligible connected, paired devices
+				var recipients []string
+				engine.ActiveSessions.Range(func(key, val any) bool {
+					s := val.(*PeerSession)
+					if engine.TrustStore.IsPaired(s.DeviceID, s.DeviceName) {
+						recipients = append(recipients, s.DeviceID)
+					}
+					return true
+				})
+
+				if len(recipients) == 0 {
+					_, _ = engine.SendFile("", fPath)
+					return
+				}
+
+				var wg sync.WaitGroup
+				for _, recID := range recipients {
+					wg.Add(1)
+					go func(peerID string) {
+						defer wg.Done()
+						ok, sErr := engine.SendFile(peerID, fPath)
+						if !ok || sErr != nil {
+							fmt.Printf("[DexoLink Windows] Failed sending %s to %s: %v\n", fName, peerID, sErr)
+						} else {
+							fmt.Printf("[DexoLink Windows] Successfully sent %s to %s\n", fName, peerID)
+						}
+					}(recID)
+				}
+				wg.Wait()
 			}
 		}(tempPath, targetPeerID, header.Filename, written)
 
@@ -2203,7 +2322,7 @@ func startWebDashboard(ready chan<- error) {
 
 func main() {
 	fmt.Println("======================================================")
-	fmt.Printf("  DexoLink for Windows v4.0.1 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("  DexoLink for Windows v4.1.0 (%s/%s)\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Println("  Universal Cross-Platform Synchronization & System Tray")
 	fmt.Println("======================================================")
 
@@ -2271,7 +2390,7 @@ const webUIHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DexoLink v4.0.1 (Windows)</title>
+<title>DexoLink v4.1.0 (Windows)</title>
 <style>
   :root {
     --bg: #0b1120;
@@ -2399,9 +2518,12 @@ const webUIHTML = `<!DOCTYPE html>
       <div class="brand">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
         <h1>DexoLink</h1>
-        <span class="badge">v4.0.1</span>
+        <span class="badge">v4.1.0</span>
       </div>
       <div class="header-actions">
+        <button class="icon-btn" onclick="openConnectionQRModal()" title="Show a QR code for Android and iPhone">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20v1"></path></svg>
+        </button>
         <button class="icon-btn" onclick="openSettingsModal()" title="Settings & Feature Controls">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
@@ -2513,14 +2635,14 @@ const webUIHTML = `<!DOCTYPE html>
         </ul>
       </div>
 
-      <!-- Card: Media Streaming & Remote Control (v4.0.1) -->
+      <!-- Card: Media Streaming & Remote Control (v4.1.0) -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
             <span>Media Streaming & Remote Control</span>
           </div>
-          <span class="badge badge-green">v4.0.1</span>
+          <span class="badge badge-green">v4.1.0</span>
         </div>
 
         <!-- Camera Section -->
@@ -2648,7 +2770,7 @@ const webUIHTML = `<!DOCTYPE html>
       </div>
       <button class="btn btn-bordered btn-sm" onclick="rescanDiscovery()">Refresh</button>
     </div>
-    <div class="dev-attr">Developed by Rahul Mahaseth | DexoLink v4.0.1 (Universal)</div>
+    <div class="dev-attr">Developed by Rahul Mahaseth | DexoLink v4.1.0 (Universal)</div>
 
   </div>
 
@@ -2762,6 +2884,19 @@ const webUIHTML = `<!DOCTYPE html>
   </div>
 
   <!-- Direct IP Modal -->
+  <div id="connectionQRModal" class="modal-overlay" onclick="if(event.target===this)closeConnectionQRModal()">
+    <div class="modal-box" style="max-width:360px; text-align:center;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 style="font-size:16px; font-weight:800;">Connect a Mobile Device</h2>
+        <button class="btn btn-bordered btn-sm" onclick="closeConnectionQRModal()">&times;</button>
+      </div>
+      <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">Scan this code with DexoLink on Android or iPhone.</p>
+      <img id="connectionQRCodeImage" alt="DexoLink connection QR code" style="width:260px;height:260px;object-fit:contain;background:#fff;border-radius:10px;padding:8px;">
+      <div style="margin-top:12px;"><a class="btn" href="/api/connection-qr" download="DexoLink-Connection-QR.png">Save QR image</a></div>
+    </div>
+  </div>
+
+  <!-- Direct IP Modal -->
   <div id="directIPModal" class="modal-overlay">
     <div class="modal-box" style="max-width:400px;">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:12px;">
@@ -2809,6 +2944,12 @@ const webUIHTML = `<!DOCTYPE html>
     function closeHistoryModal() { document.getElementById('historyModal').style.display = 'none'; }
     function openDirectIPModal() { document.getElementById('directIPModal').style.display = 'flex'; }
     function closeDirectIPModal() { document.getElementById('directIPModal').style.display = 'none'; }
+    function openConnectionQRModal() {
+      const image = document.getElementById('connectionQRCodeImage');
+      image.src = '/api/connection-qr?ts=' + Date.now();
+      document.getElementById('connectionQRModal').style.display = 'flex';
+    }
+    function closeConnectionQRModal() { document.getElementById('connectionQRModal').style.display = 'none'; }
 
     function switchHistoryTab(tab) {
       if (tab === 'transfers') {
@@ -3277,20 +3418,25 @@ const webUIHTML = `<!DOCTYPE html>
           dList.innerHTML = data.discovered_devices.map(d => {
             const isPaired = data.paired_devices && data.paired_devices.some(p => p.device_id === d.device_id || p.device_name === d.device_name);
             const isConn = connDevices.some(c => c.device_id === d.device_id || c.ip === d.ip);
+            const isBlocked = !data.multiple_paired && data.paired_devices && data.paired_devices.length > 0 && !isPaired;
             return '<li class="list-item">' +
               '<div class="list-item-left">' +
-                '<div style="width:7px; height:7px; border-radius:50%; background:' + (isConn ? '#22c55e' : '#38bdf8') + ';"></div>' +
+                '<div style="width:7px; height:7px; border-radius:50%; background:' + (isConn ? '#22c55e' : (isBlocked ? '#94a3b8' : '#38bdf8')) + ';"></div>' +
                 '<div>' +
                   '<div class="list-item-title">' + d.device_name + '</div>' +
                   '<div class="list-item-sub">' + d.ip + ':' + d.port + ' • ' + (d.device_type ? d.device_type : 'device') + '</div>' +
                 '</div>' +
               '</div>' +
-              '<div style="display:flex; gap:5px;">' +
+              '<div style="display:flex; gap:5px; align-items:center;">' +
                 (isConn ?
                   '<span class="badge badge-green" style="display:flex; align-items:center;">Connected</span>' :
                   (isPaired ?
                     '<button class="btn btn-sm btn-success" onclick="connectPeer(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Connect</button>' :
-                    '<button class="btn btn-sm btn-bordered" onclick="pairDevice(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Pair Device</button>'
+                    (isBlocked ?
+                      '<span class="badge" style="background:#fee2e2; color:#dc2626; border:1px solid #fca5a5; font-size:10px; font-weight:bold; padding:2px 6px; border-radius:4px;">Blocked</span>' +
+                      '<button class="btn btn-sm" style="background:#f1f5f9; color:#94a3b8; cursor:not-allowed;" onclick="showToast(\'Single Device Mode active. Enable Multiple Paired Devices in Settings to pair additional devices.\', \'error\')">Pair Device</button>' :
+                      '<button class="btn btn-sm btn-bordered" onclick="pairDevice(\'' + d.device_id + '\',\'' + d.device_name.replace(/'/g, "\\'") + '\',\'' + d.ip + '\',' + d.port + ')">Pair Device</button>'
+                    )
                   )
                 ) +
               '</div>' +
@@ -3606,7 +3752,7 @@ const popupUIHTML = `<!DOCTYPE html>
     <div class="header-left">
       <div class="logo-icon">&#8734;</div>
       <div class="title">DexoLink</div>
-      <span class="version">v4.0.1</span>
+      <span class="version">v4.1.0</span>
     </div>
     <div id="statusBadge" class="status-badge idle">
       <div class="status-dot"></div>

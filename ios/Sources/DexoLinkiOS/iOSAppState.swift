@@ -3,6 +3,8 @@ import Foundation
 import Network
 import Combine
 import AVFoundation
+import Darwin
+import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -15,13 +17,15 @@ public struct DiscoveredDevice: Identifiable, Equatable, Hashable {
     public let endpoint: String
     public let port: UInt16
     public var isPaired: Bool
+    public let serviceType: String
 
-    public init(id: String, name: String, endpoint: String, port: UInt16 = 52840, isPaired: Bool = false) {
+    public init(id: String, name: String, endpoint: String, port: UInt16 = 52840, isPaired: Bool = false, serviceType: String = "_macdroid._tcp") {
         self.id = id
         self.name = name
         self.endpoint = endpoint
         self.port = port
         self.isPaired = isPaired
+        self.serviceType = serviceType
     }
 }
 
@@ -64,21 +68,40 @@ public struct TrustedDevice: Identifiable, Codable, Equatable {
     public let id: String
     public let name: String
     public let pairedDate: Date
+    public let host: String?
+    public let port: UInt16?
 
-    public init(id: String, name: String, pairedDate: Date = Date()) {
+    public init(id: String, name: String, pairedDate: Date = Date(), host: String? = nil, port: UInt16? = nil) {
         self.id = id
         self.name = name
         self.pairedDate = pairedDate
+        self.host = host
+        self.port = port
     }
 }
 
 public struct TransferProgressItem: Identifiable {
-    public let id = UUID()
+    public let id: UUID
     public let fileName: String
     public let totalBytes: Int64
     public var bytesSent: Int64
     public var isComplete: Bool
     public var isSuccess: Bool
+    public var recipientName: String?
+    public var errorMessage: String?
+    public var isCancelled: Bool
+
+    public init(id: UUID = UUID(), fileName: String, totalBytes: Int64, bytesSent: Int64 = 0, isComplete: Bool = false, isSuccess: Bool = false, recipientName: String? = nil, errorMessage: String? = nil, isCancelled: Bool = false) {
+        self.id = id
+        self.fileName = fileName
+        self.totalBytes = totalBytes
+        self.bytesSent = bytesSent
+        self.isComplete = isComplete
+        self.isSuccess = isSuccess
+        self.recipientName = recipientName
+        self.errorMessage = errorMessage
+        self.isCancelled = isCancelled
+    }
 
     public var progressFraction: Double {
         guard totalBytes > 0 else { return 0 }
@@ -129,6 +152,15 @@ public class iOSAppState: ObservableObject {
     @Published public var connectedDeviceName: String = "No Device Connected"
     @Published public var discoveredDevices: [DiscoveredDevice] = []
     @Published public var pairedDevices: [TrustedDevice] = []
+    @Published public var statusMessage: String? = nil
+    @Published public var autoReconnect: Bool = true
+    @Published public var userExplicitlyDisconnected: Bool = false
+
+    public func isDeviceAlreadyPaired(id: String, name: String) -> Bool {
+        return pairedDevices.contains { dev in
+            dev.id == id || dev.name.caseInsensitiveCompare(name) == .orderedSame
+        }
+    }
     
     // Multiple Paired Devices Setting (OFF by default)
     @Published public var isMultiplePairedDevicesEnabled: Bool {
@@ -148,7 +180,7 @@ public class iOSAppState: ObservableObject {
     @Published public var enhancedClipboard: Bool {
         didSet { UserDefaults.standard.set(enhancedClipboard, forKey: "dexolink_ios_enhanced_clip") }
     }
-    // v4.0.1: Media Streaming & Remote Control Settings (OFF by default)
+    // v4.0.2: Media Streaming & Remote Control Settings (OFF by default)
     @Published public var isCameraSharingEnabled: Bool {
         didSet { UserDefaults.standard.set(isCameraSharingEnabled, forKey: "dexolink_ios_camera_sharing") }
     }
@@ -195,101 +227,258 @@ public class iOSAppState: ObservableObject {
 
     // Active Transfers & History
     @Published public var activeTransfer: TransferProgressItem?
+    @Published public var activeTransfersList: [TransferProgressItem] = []
     @Published public var transferHistory: [TransferHistoryItem] = []
     @Published public var clipboardHistory: [String] = []
     @Published public var currentHandoff: ContinuityHandoffItem?
 
     private var listener: NWListener?
     private var activeConnections: [String: NWConnection] = [:]
+    private var discoveryBrowsers: [NWBrowser] = []
+    private var pendingReconnectDeviceName: String?
     private var cancellables = Set<AnyCancellable>()
 
-    public init() {
-        self.isMultiplePairedDevicesEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_multi_paired")
-        self.autoClipboardSync = UserDefaults.standard.object(forKey: "dexolink_ios_auto_clip") as? Bool ?? true
-        self.enhancedClipboard = UserDefaults.standard.bool(forKey: "dexolink_ios_enhanced_clip")
-        self.isCameraSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_camera_sharing")
-        self.isFrontCamera = UserDefaults.standard.bool(forKey: "dexolink_ios_front_camera")
-        self.isScreenSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_screen_sharing")
-        self.isDesktopModeEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_desktop_mode")
-        
-        loadPairedDevices()
-        startLocalListener()
-        startDeviceDiscovery()
+    private var lastSentClipboardHash: String?
+    private var lastReceivedClipboardHash: String?
+    private var clipboardSequenceNumber: Int = 0
+
+    private func computeTextHash(_ text: String) -> String {
+        let hash = SHA256.hash(data: Data(text.utf8))
+        return hash.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func loadPairedDevices() {
-        if let data = UserDefaults.standard.data(forKey: "dexolink_ios_paired_devices"),
-           let list = try? JSONDecoder().decode([TrustedDevice].self, from: data) {
-            self.pairedDevices = list
-        }
+    private func sendPacket(_ packet: Data, on conn: NWConnection) {
+        conn.send(content: packet, completion: .contentProcessed({ error in
+            if let err = error {
+                print("[DexoLink iOS] sendPacket error: \(err)")
+            }
+        }))
     }
 
-    private func savePairedDevices() {
-        if let data = try? JSONEncoder().encode(pairedDevices) {
-            UserDefaults.standard.set(data, forKey: "dexolink_ios_paired_devices")
-        }
+    private func makeFramedPacket(_ payload: [String: Any]) -> Data? {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        var lengthPrefix = UInt32(data.count).bigEndian
+        var packet = Data(bytes: &lengthPrefix, count: 4)
+        packet.append(data)
+        return packet
     }
 
-    // MARK: - Networking & Discovery (Local Network without Internet)
-    
-    public func startLocalListener() {
-        do {
-            let parameters = NWParameters.tcp
-            let l = try NWListener(using: parameters, on: 52840)
-            l.service = NWListener.Service(name: UIDevice.current.name, type: "_dexolink._tcp")
-            l.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    print("[DexoLink iOS] Listening on local port 52840")
-                case .failed(let err):
-                    print("[DexoLink iOS] Listener failed: \(err)")
-                default:
-                    break
+    private func startReceiving(on connection: NWConnection, connectionId: String) {
+        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self, weak connection] content, _, isComplete, error in
+            guard let self = self, let conn = connection else { return }
+            if let err = error {
+                print("[DexoLink iOS] Connection \(connectionId) receive error: \(err)")
+                self.handleConnectionClosed(connectionId: connectionId)
+                return
+            }
+            if isComplete && (content == nil || content!.isEmpty) {
+                print("[DexoLink iOS] Connection \(connectionId) closed by peer")
+                self.handleConnectionClosed(connectionId: connectionId)
+                return
+            }
+            guard let header = content, header.count == 4 else {
+                if !isComplete {
+                    self.startReceiving(on: conn, connectionId: connectionId)
+                }
+                return
+            }
+            let length = Int(header.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
+            guard length > 0 && length < 20 * 1024 * 1024 else {
+                print("[DexoLink iOS] Invalid packet length: \(length)")
+                self.startReceiving(on: conn, connectionId: connectionId)
+                return
+            }
+
+            conn.receive(minimumIncompleteLength: length, maximumLength: length) { [weak self, weak conn] bodyData, _, bodyComplete, bodyError in
+                guard let self = self, let activeConn = conn else { return }
+                if let data = bodyData, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    self.handleIncomingProtocolMessage(json, on: activeConn, connectionId: connectionId)
+                }
+                if !bodyComplete && bodyError == nil {
+                    self.startReceiving(on: activeConn, connectionId: connectionId)
+                } else if bodyError != nil {
+                    self.handleConnectionClosed(connectionId: connectionId)
                 }
             }
-            l.newConnectionHandler = { [weak self] connection in
-                self?.handleIncomingConnection(connection)
+        }
+    }
+
+    private func handleIncomingProtocolMessage(_ msg: [String: Any], on connection: NWConnection, connectionId: String) {
+        guard let type = msg["type"] as? String else { return }
+        switch type {
+        case "CLIPBOARD_PUSH":
+            if let content = msg["content"] as? String, !content.isEmpty {
+                let seq = (msg["sequenceNumber"] as? Int) ?? 0
+                let hash = computeTextHash(content)
+                if hash != lastReceivedClipboardHash && hash != lastSentClipboardHash {
+                    lastReceivedClipboardHash = hash
+                    DispatchQueue.main.async {
+                        #if canImport(UIKit)
+                        UIPasteboard.general.string = content
+                        #endif
+                        if !self.clipboardHistory.contains(content) {
+                            self.clipboardHistory.insert(content, at: 0)
+                            if self.clipboardHistory.count > 50 { self.clipboardHistory.removeLast() }
+                        }
+                    }
+                    print("[DexoLink iOS] Received clipboard push (seq: \(seq), chars: \(content.count))")
+                } else {
+                    print("[DexoLink iOS] Dropped duplicate/echo clipboard push (hash: \(hash.prefix(8)))")
+                }
+                if let ackPacket = makeFramedPacket(["type": "CLIPBOARD_ACK", "sequenceNumber": seq]) {
+                    sendPacket(ackPacket, on: connection)
+                }
             }
-            l.start(queue: .main)
-            self.listener = l
-        } catch {
-            print("[DexoLink iOS] Could not start NWListener: \(error)")
+        case "CLIPBOARD_ACK":
+            if let seq = msg["sequenceNumber"] as? Int {
+                print("[DexoLink iOS] Clipboard push acknowledged by peer (seq: \(seq))")
+            }
+        case "TRANSFER_REQUEST":
+            let transferId = (msg["transferId"] as? String) ?? UUID().uuidString
+            let totalSize = (msg["totalSize"] as? Int64) ?? 0
+            print("[DexoLink iOS] Received TRANSFER_REQUEST for \(transferId) (\(totalSize) bytes)")
+            if let respPacket = makeFramedPacket(["type": "TRANSFER_RESPONSE", "transferId": transferId, "accepted": true]) {
+                sendPacket(respPacket, on: connection)
+            }
+        case "FILE_META":
+            let fileName = (msg["name"] as? String) ?? "received_file"
+            let size = (msg["size"] as? Int64) ?? 0
+            DispatchQueue.main.async {
+                let item = TransferProgressItem(
+                    fileName: fileName,
+                    totalBytes: size,
+                    bytesSent: 0,
+                    isComplete: false,
+                    isSuccess: false,
+                    recipientName: "Remote Device"
+                )
+                self.activeTransfer = item
+                self.activeTransfersList.append(item)
+            }
+        case "FILE_CHUNK":
+            let offset = (msg["offset"] as? Int64) ?? 0
+            if let b64 = msg["data"] as? String, let chunkData = Data(base64Encoded: b64) {
+                let newBytes = offset + Int64(chunkData.count)
+                DispatchQueue.main.async {
+                    self.activeTransfer?.bytesSent = newBytes
+                }
+            }
+        case "FILE_COMPLETE":
+            let fileId = (msg["fileId"] as? String) ?? ""
+            let transferId = (msg["transferId"] as? String) ?? ""
+            DispatchQueue.main.async {
+                if let cur = self.activeTransfer {
+                    self.activeTransfer?.isComplete = true
+                    self.activeTransfer?.isSuccess = true
+                    self.transferHistory.insert(
+                        TransferHistoryItem(
+                            fileName: cur.fileName,
+                            fileSize: cur.totalBytes,
+                            isIncoming: true,
+                            peerName: cur.recipientName ?? "Remote Device"
+                        ),
+                        at: 0
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        self.activeTransfer = nil
+                        self.activeTransfersList.removeAll(where: { $0.isComplete })
+                    }
+                }
+            }
+            if let ackPacket = makeFramedPacket(["type": "FILE_ACK", "transferId": transferId, "fileId": fileId, "verified": true]) {
+                sendPacket(ackPacket, on: connection)
+            }
+        case "CANCEL":
+            DispatchQueue.main.async {
+                self.activeTransfer?.isCancelled = true
+                self.activeTransfer?.isComplete = true
+                self.activeTransfer?.isSuccess = false
+                self.activeTransfer?.errorMessage = "Cancelled by peer"
+            }
+        case "PING":
+            if let pongPacket = makeFramedPacket(["type": "PONG"]) {
+                sendPacket(pongPacket, on: connection)
+            }
+        default:
+            break
+        }
+    }
+
+    private func handleConnectionClosed(connectionId: String) {
+        DispatchQueue.main.async {
+            self.activeConnections.removeValue(forKey: connectionId)
+            if self.activeConnections.isEmpty {
+                self.isConnected = false
+                self.connectedDeviceName = "No Device Connected"
+                if !self.userExplicitlyDisconnected && self.autoReconnect {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                        guard let self = self else { return }
+                        if !self.isConnected && !self.userExplicitlyDisconnected {
+                            self.startDeviceDiscovery()
+                        }
+                    }
+                }
+            }
         }
     }
 
     private func handleIncomingConnection(_ connection: NWConnection) {
         connection.start(queue: .main)
-        // Handshake protocol logic
         self.isConnected = true
         self.connectedDeviceName = "Connected Peer"
+        let connId = UUID().uuidString
+        self.activeConnections[connId] = connection
+        self.startReceiving(on: connection, connectionId: connId)
     }
 
     public func startDeviceDiscovery() {
-        let browser = NWBrowser(for: .bonjour(type: "_dexolink._tcp", domain: nil), using: .tcp)
-        browser.browseResultsChangedHandler = { [weak self] results, changes in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                var list: [DiscoveredDevice] = []
-                for res in results {
-                    if case let .service(name, _, _, _) = res.endpoint {
-                        let isPaired = self.pairedDevices.contains(where: { $0.name == name })
-                        list.append(DiscoveredDevice(id: name, name: name, endpoint: name, isPaired: isPaired))
+        discoveryBrowsers.forEach { $0.cancel() }
+        discoveryBrowsers.removeAll()
+        for serviceType in ["_macdroid._tcp", "_dexolink._tcp"] {
+            let browser = NWBrowser(for: .bonjour(type: serviceType, domain: nil), using: .tcp)
+            browser.browseResultsChangedHandler = { [weak self] results, _ in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    let foundNames = Set(results.compactMap { result -> String? in
+                        if case let .service(name, _, _, _) = result.endpoint { return name }
+                        return nil
+                    })
+                    self.discoveredDevices.removeAll { $0.serviceType == serviceType && !foundNames.contains($0.name) }
+                    for res in results {
+                        if case let .service(name, _, _, _) = res.endpoint {
+                            let isPaired = self.pairedDevices.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
+                            let device = DiscoveredDevice(id: name, name: name, endpoint: name, isPaired: isPaired, serviceType: serviceType)
+                            if !self.discoveredDevices.contains(where: { $0.id == device.id }) {
+                                self.discoveredDevices.append(device)
+                            }
+                            if self.pendingReconnectDeviceName?.caseInsensitiveCompare(name) == .orderedSame {
+                                self.pendingReconnectDeviceName = nil
+                                self.connectToRemoteEndpoint(host: name, serviceType: serviceType)
+                            } else if !self.isConnected && !self.userExplicitlyDisconnected && self.autoReconnect && isPaired {
+                                print("[DexoLink iOS] Auto-reconnecting to paired device '\(name)'")
+                                self.connectToRemoteEndpoint(host: name, serviceType: serviceType)
+                            }
+                        }
                     }
                 }
-                self.discoveredDevices = list
             }
+            browser.start(queue: .main)
+            discoveryBrowsers.append(browser)
         }
-        browser.start(queue: .main)
     }
 
     // MARK: - Device Pairing & Unpairing
     
     public func pairDevice(_ device: DiscoveredDevice) {
+        if !isMultiplePairedDevicesEnabled && !pairedDevices.isEmpty && !pairedDevices.contains(where: { $0.id == device.id || $0.name.lowercased() == device.name.lowercased() }) {
+            self.statusMessage = "Single Device Mode active. Enable 'Multiple Paired Devices' in Settings to pair additional devices."
+            return
+        }
         if !isMultiplePairedDevicesEnabled {
             pairedDevices.removeAll()
         }
         if !pairedDevices.contains(where: { $0.id == device.id }) {
-            pairedDevices.append(TrustedDevice(id: device.id, name: device.name))
+            pairedDevices.append(TrustedDevice(id: device.id, name: device.name, host: device.endpoint, port: device.port))
             savePairedDevices()
         }
         self.isConnected = true
@@ -308,34 +497,232 @@ public class iOSAppState: ObservableObject {
     // MARK: - Outgoing File Transfer
     
     public func sendFile(url: URL, targetDevice: DiscoveredDevice?) {
-        guard let device = targetDevice ?? discoveredDevices.first(where: { $0.isPaired }) ?? discoveredDevices.first else {
-            return
-        }
         let fileName = url.lastPathComponent
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 1024
-        
-        let progress = TransferProgressItem(fileName: fileName, totalBytes: fileSize, bytesSent: 0, isComplete: false, isSuccess: false)
-        self.activeTransfer = progress
 
-        // Simulate streaming chunks for clean, responsive UI
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let chunkSize: Int64 = 64 * 1024
-            var sent: Int64 = 0
-            while sent < fileSize {
-                sent = min(sent + chunkSize, fileSize)
-                let currentSent = sent
-                DispatchQueue.main.async {
-                    self.activeTransfer?.bytesSent = currentSent
-                }
-                Thread.sleep(forTimeInterval: 0.05)
+        // Determine recipients based on Single mode vs Multiple mode
+        var recipients: [DiscoveredDevice] = []
+        if !isMultiplePairedDevicesEnabled {
+            // Single mode: send files ONLY to the selected target or the single paired device
+            if let target = targetDevice {
+                recipients = [target]
+            } else if let paired = pairedDevices.first {
+                let dev = discoveredDevices.first(where: { $0.id == paired.id || $0.name == paired.name }) ??
+                    DiscoveredDevice(id: paired.id, name: paired.name, endpoint: paired.host ?? paired.name, port: paired.port ?? 52840, isPaired: true)
+                recipients = [dev]
+            } else if let first = discoveredDevices.first {
+                recipients = [first]
             }
-            DispatchQueue.main.async {
-                self.activeTransfer?.isComplete = true
-                self.activeTransfer?.isSuccess = true
-                self.transferHistory.insert(TransferHistoryItem(fileName: fileName, fileSize: fileSize, isIncoming: false, peerName: device.name), at: 0)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    self.activeTransfer = nil
+        } else {
+            // Multiple mode: if target explicitly given, send to target; otherwise send to all eligible connected, paired devices
+            if let target = targetDevice {
+                recipients = [target]
+            } else {
+                let eligible = discoveredDevices.filter { $0.isPaired || isDeviceAlreadyPaired($0) }
+                recipients = eligible.isEmpty ? (discoveredDevices.isEmpty ? [] : [discoveredDevices[0]]) : eligible
+            }
+        }
+
+        guard !recipients.isEmpty else {
+            self.statusMessage = "No devices available to share file"
+            return
+        }
+
+        for recipient in recipients {
+            let transferUUID = UUID()
+            let transferId = "tr_\(Int(Date().timeIntervalSince1970 * 1000))_\(UUID().uuidString.prefix(6))"
+            let fileId = "fl_\(Int(Date().timeIntervalSince1970 * 1000))_\(UUID().uuidString.prefix(6))"
+
+            var progressItem = TransferProgressItem(
+                id: transferUUID,
+                fileName: fileName,
+                totalBytes: fileSize,
+                bytesSent: 0,
+                recipientName: recipient.name
+            )
+            self.activeTransfersList.append(progressItem)
+            self.activeTransfer = progressItem
+
+            // Find connection for recipient
+            let conn = activeConnections[recipient.endpoint] ?? activeConnections[recipient.name] ?? activeConnections[recipient.id] ?? (recipients.count == 1 ? activeConnections.values.first : nil)
+
+            if conn == nil {
+                // Handle offline recipients gracefully without blocking others!
+                progressItem.isComplete = true
+                progressItem.isSuccess = false
+                progressItem.errorMessage = "Device offline or not connected"
+                self.updateTransferProgress(progressItem)
+                self.transferHistory.insert(
+                    TransferHistoryItem(
+                        id: transferUUID,
+                        fileName: fileName,
+                        fileSize: fileSize,
+                        isIncoming: false,
+                        peerName: recipient.name
+                    ),
+                    at: 0
+                )
+                print("[DexoLink iOS] Recipient \(recipient.name) is offline, skipped gracefully")
+                continue
+            }
+
+            guard let activeConn = conn else { continue }
+
+            // Dispatch background streaming for this recipient independently
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+
+                // 1. Propose transfer
+                if let reqPacket = self.makeFramedPacket([
+                    "type": "TRANSFER_REQUEST",
+                    "transferId": transferId,
+                    "totalFiles": 1,
+                    "totalSize": fileSize
+                ]) {
+                    self.sendPacket(reqPacket, on: activeConn)
+                }
+
+                // 2. Send FILE_META
+                if let metaPacket = self.makeFramedPacket([
+                    "type": "FILE_META",
+                    "transferId": transferId,
+                    "fileId": fileId,
+                    "name": fileName,
+                    "size": fileSize,
+                    "mimeType": "application/octet-stream"
+                ]) {
+                    self.sendPacket(metaPacket, on: activeConn)
+                }
+
+                // 3. Stream Chunks with SHA-256 calculation
+                let chunkSize: Int = 64 * 1024
+                var offset: Int64 = 0
+                var hasher = SHA256()
+
+                if let fileHandle = try? FileHandle(forReadingFrom: url) {
+                    defer { try? fileHandle.close() }
+
+                    while offset < fileSize {
+                        // Check cancellation
+                        if let currentItem = self.activeTransfersList.first(where: { $0.id == transferUUID }), currentItem.isCancelled {
+                            if let cancelPacket = self.makeFramedPacket(["type": "CANCEL", "transferId": transferId]) {
+                                self.sendPacket(cancelPacket, on: activeConn)
+                            }
+                            print("[DexoLink iOS] Transfer \(transferId) cancelled by user")
+                            return
+                        }
+
+                        let readCount = min(chunkSize, Int(fileSize - offset))
+                        guard let chunkData = try? fileHandle.read(upToCount: readCount), !chunkData.isEmpty else {
+                            break
+                        }
+
+                        hasher.update(data: chunkData)
+                        let b64 = chunkData.base64EncodedString()
+
+                        if let chunkPacket = self.makeFramedPacket([
+                            "type": "FILE_CHUNK",
+                            "fileId": fileId,
+                            "offset": offset,
+                            "data": b64
+                        ]) {
+                            self.sendPacket(chunkPacket, on: activeConn)
+                        }
+
+                        offset += Int64(chunkData.count)
+                        let currentOffset = offset
+                        DispatchQueue.main.async {
+                            if let idx = self.activeTransfersList.firstIndex(where: { $0.id == transferUUID }) {
+                                self.activeTransfersList[idx].bytesSent = currentOffset
+                                if self.activeTransfer?.id == transferUUID {
+                                    self.activeTransfer?.bytesSent = currentOffset
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback for simulated or memory-based URLs
+                    while offset < fileSize {
+                        if let currentItem = self.activeTransfersList.first(where: { $0.id == transferUUID }), currentItem.isCancelled {
+                            return
+                        }
+                        offset = min(offset + Int64(chunkSize), fileSize)
+                        let currentOffset = offset
+                        DispatchQueue.main.async {
+                            if let idx = self.activeTransfersList.firstIndex(where: { $0.id == transferUUID }) {
+                                self.activeTransfersList[idx].bytesSent = currentOffset
+                                if self.activeTransfer?.id == transferUUID {
+                                    self.activeTransfer?.bytesSent = currentOffset
+                                }
+                            }
+                        }
+                        Thread.sleep(forTimeInterval: 0.03)
+                    }
+                }
+
+                let finalHash = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+                if let completePacket = self.makeFramedPacket([
+                    "type": "FILE_COMPLETE",
+                    "transferId": transferId,
+                    "fileId": fileId,
+                    "sha256": finalHash
+                ]) {
+                    self.sendPacket(completePacket, on: activeConn)
+                }
+
+                DispatchQueue.main.async {
+                    if let idx = self.activeTransfersList.firstIndex(where: { $0.id == transferUUID }) {
+                        self.activeTransfersList[idx].isComplete = true
+                        self.activeTransfersList[idx].isSuccess = true
+                        if self.activeTransfer?.id == transferUUID {
+                            self.activeTransfer?.isComplete = true
+                            self.activeTransfer?.isSuccess = true
+                        }
+                    }
+                    self.transferHistory.insert(
+                        TransferHistoryItem(
+                            id: transferUUID,
+                            fileName: fileName,
+                            fileSize: fileSize,
+                            isIncoming: false,
+                            peerName: recipient.name
+                        ),
+                        at: 0
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        self.activeTransfersList.removeAll(where: { $0.id == transferUUID })
+                        if self.activeTransfer?.id == transferUUID {
+                            self.activeTransfer = self.activeTransfersList.first(where: { !$0.isComplete })
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func updateTransferProgress(_ item: TransferProgressItem) {
+        DispatchQueue.main.async {
+            if let idx = self.activeTransfersList.firstIndex(where: { $0.id == item.id }) {
+                self.activeTransfersList[idx] = item
+            }
+            if self.activeTransfer?.id == item.id {
+                self.activeTransfer = item
+            }
+        }
+    }
+
+    public func cancelTransfer(id: UUID) {
+        DispatchQueue.main.async {
+            if let idx = self.activeTransfersList.firstIndex(where: { $0.id == id }) {
+                self.activeTransfersList[idx].isCancelled = true
+                self.activeTransfersList[idx].isComplete = true
+                self.activeTransfersList[idx].isSuccess = false
+                self.activeTransfersList[idx].errorMessage = "Transfer cancelled by user"
+                if self.activeTransfer?.id == id {
+                    self.activeTransfer?.isCancelled = true
+                    self.activeTransfer?.isComplete = true
+                    self.activeTransfer?.isSuccess = false
+                    self.activeTransfer?.errorMessage = "Transfer cancelled by user"
                 }
             }
         }
@@ -345,9 +732,50 @@ public class iOSAppState: ObservableObject {
     
     public func pushClipboardText(_ text: String) {
         guard !text.isEmpty else { return }
-        clipboardHistory.insert(text, at: 0)
+        let hash = computeTextHash(text)
+        if hash == lastSentClipboardHash || hash == lastReceivedClipboardHash {
+            print("[DexoLink iOS Clipboard] Dropped echo/duplicate text (hash: \(hash.prefix(8)))")
+            return
+        }
+        lastSentClipboardHash = hash
+
+        if !clipboardHistory.contains(text) {
+            clipboardHistory.insert(text, at: 0)
+            if clipboardHistory.count > 50 { clipboardHistory.removeLast() }
+        }
+        #if canImport(UIKit)
         UIPasteboard.general.string = text
-        print("[DexoLink iOS] Pushed text to connected peers: \(text.prefix(30))")
+        #endif
+
+        clipboardSequenceNumber += 1
+        let seq = clipboardSequenceNumber
+        guard let packet = makeFramedPacket([
+            "type": "CLIPBOARD_PUSH",
+            "sequenceNumber": seq,
+            "content": text
+        ]) else { return }
+
+        if !isMultiplePairedDevicesEnabled {
+            // Single mode: send ONLY to the single paired device or the active connection
+            if let paired = pairedDevices.first, let conn = activeConnections[paired.id] ?? activeConnections[paired.name] ?? activeConnections.values.first {
+                sendPacket(packet, on: conn)
+                print("[DexoLink iOS] Pushed clipboard to single target \(paired.name) (seq: \(seq))")
+            } else if let conn = activeConnections.values.first {
+                sendPacket(packet, on: conn)
+                print("[DexoLink iOS] Pushed clipboard to active connection (seq: \(seq))")
+            }
+        } else {
+            // Multiple mode: send clipboard updates to all eligible connected, paired devices
+            var sentCount = 0
+            for (key, conn) in activeConnections {
+                let isPaired = pairedDevices.contains(where: { $0.id == key || $0.name.caseInsensitiveCompare(key) == .orderedSame })
+                if isPaired || activeConnections.count == 1 {
+                    sendPacket(packet, on: conn)
+                    sentCount += 1
+                }
+            }
+            print("[DexoLink iOS] Pushed clipboard to \(sentCount) connected peers (seq: \(seq))")
+        }
     }
 
     public func sendHandoffURL(_ urlString: String) {
@@ -372,8 +800,14 @@ public class iOSAppState: ObservableObject {
         "turn:openrelay.metered.ca:443?transport=tcp"
     ]
 
-    public func connectToRemoteEndpoint(host: String, port: UInt16 = 52840) {
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? 52840)
+    public func connectToRemoteEndpoint(host: String, port: UInt16 = 52840, serviceType: String? = nil) {
+        self.userExplicitlyDisconnected = false
+        let endpoint: NWEndpoint
+        if IPv4Address(host) != nil || IPv6Address(host) != nil {
+            endpoint = .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? 52840)
+        } else {
+            endpoint = .service(name: host, type: serviceType ?? "_macdroid._tcp", domain: "local.", interface: nil)
+        }
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         let conn = NWConnection(to: endpoint, using: parameters)
@@ -390,10 +824,19 @@ public class iOSAppState: ObservableObject {
                         self.discoveredDevices.insert(dev, at: 0)
                     }
                     print("[DexoLink iOS] Connected to online remote endpoint \(host):\(port)")
+                    self.startReceiving(on: conn, connectionId: host)
                 case .failed(let err):
                     print("[DexoLink iOS] Remote connection failed: \(err)")
                     self.isConnected = false
                     self.isOnlineConnected = false
+                    if !self.userExplicitlyDisconnected && self.autoReconnect {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                            guard let self = self else { return }
+                            if !self.isConnected && !self.userExplicitlyDisconnected {
+                                self.startDeviceDiscovery()
+                            }
+                        }
+                    }
                 default:
                     break
                 }
@@ -444,8 +887,31 @@ public class iOSAppState: ObservableObject {
         #if canImport(UIKit)
         return UIDevice.current.name
         #else
-        return Host.current().localizedName ?? "Rahul's iPhone"
+        return Host.current().localizedName ?? "iPhone"
         #endif
+    }
+
+    public var localIPv4Address: String? {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0, let first = interfaces else { return nil }
+        defer { freeifaddrs(interfaces) }
+
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let interface = current {
+            let flags = Int32(interface.pointee.ifa_flags)
+            if (flags & IFF_UP) != 0,
+               (flags & IFF_LOOPBACK) == 0,
+               let address = interface.pointee.ifa_addr,
+               address.pointee.sa_family == UInt8(AF_INET) {
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(address, socklen_t(address.pointee.sa_len), &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    let host = String(cString: hostname)
+                    if host != "0.0.0.0" { return host }
+                }
+            }
+            current = interface.pointee.ifa_next
+        }
+        return nil
     }
 
     public var connectedDevicesCount: Int {
@@ -456,6 +922,7 @@ public class iOSAppState: ObservableObject {
     }
 
     public func disconnect() {
+        self.userExplicitlyDisconnected = true
         for (_, conn) in activeConnections {
             conn.cancel()
         }
@@ -466,6 +933,63 @@ public class iOSAppState: ObservableObject {
 
     public func refreshDiscovery() {
         startDeviceDiscovery()
+    }
+
+    // MARK: - QR Code Connection Handler
+    /// Called when a QR code payload is scanned. Parses dexolink://connect URL
+    /// and automatically connects + pairs with the remote device.
+    public func handleQRCodeScan(payload: String) {
+        guard let url = URL(string: payload),
+              url.scheme == "dexolink",
+              url.host == "connect" else {
+            print("[DexoLink iOS] Invalid QR payload: \(payload)")
+            return
+        }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let params = Dictionary(uniqueKeysWithValues:
+            (components?.queryItems ?? []).compactMap { item in
+                item.value.map { (item.name, $0) }
+            }
+        )
+        guard let host = params["host"], !host.isEmpty else { return }
+        let port = UInt16(params["port"] ?? "52840") ?? 52840
+        let name = params["name"]?.removingPercentEncoding ?? "Remote Device"
+
+        print("[DexoLink iOS] QR scanned — connecting to \(name) at \(host):\(port)")
+
+        // Add as discovered + paired immediately so it shows in Paired devices
+        let dev = DiscoveredDevice(id: host, name: name, endpoint: host, port: port, isPaired: true)
+        DispatchQueue.main.async {
+            if !self.discoveredDevices.contains(where: { $0.id == host }) {
+                self.discoveredDevices.insert(dev, at: 0)
+            }
+            if !self.pairedDevices.contains(where: { $0.id == host }) {
+                if !self.isMultiplePairedDevicesEnabled {
+                    self.pairedDevices.removeAll()
+                }
+                self.pairedDevices.append(TrustedDevice(id: host, name: name, host: host, port: port))
+                self.savePairedDevices()
+            }
+        }
+        // Now open the TCP connection
+        connectToRemoteEndpoint(host: host, port: port)
+    }
+
+    // MARK: - Reconnect a Trusted Paired Device
+    /// Reconnects a previously paired device by looking it up from discovered devices.
+    public func connectDevice(_ device: TrustedDevice) {
+        // Try to find it in currently discovered devices
+        if let discovered = discoveredDevices.first(where: { $0.name.lowercased() == device.name.lowercased() }) {
+            connectToRemoteEndpoint(host: discovered.endpoint, port: discovered.port, serviceType: discovered.serviceType)
+            self.isConnected = true
+            self.connectedDeviceName = device.name
+        } else if let host = device.host ?? (IPv4Address(device.id) != nil || IPv6Address(device.id) != nil ? device.id : nil) {
+            connectToRemoteEndpoint(host: host, port: device.port ?? 52840)
+        } else {
+            pendingReconnectDeviceName = device.name
+            startDeviceDiscovery()
+            print("[DexoLink iOS] Searching for paired device '\(device.name)' to reconnect")
+        }
     }
 }
 

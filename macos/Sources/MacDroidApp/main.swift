@@ -1162,10 +1162,11 @@ extension AppState: DiscoveryServiceDelegate {
                 return true
             }
 
-            // Strict 1-device policy: only auto-connect if master is enabled, discovery is enabled, NOT explicitly disconnected, currently disconnected, and device is online!
             if self.isEnabled, self.discoveryEnabled, !self.userExplicitlyDisconnected, case .disconnected = self.connectionState {
-                if let paired = TrustStore.shared.getPairedDevice(),
-                   let matched = self.discoveredDevices.first(where: { ($0.id == paired.deviceId || $0.name.caseInsensitiveCompare(paired.deviceName) == .orderedSame) && $0.isOnline }) {
+                let trusted = TrustStore.shared.getTrustedDevices()
+                if let matched = self.discoveredDevices.first(where: { dev in
+                    dev.isOnline && trusted.contains(where: { $0.deviceId == dev.id || $0.deviceName.caseInsensitiveCompare(dev.name) == .orderedSame })
+                }) {
                     print("Discovered paired online device: \(matched.name), auto-connecting...")
                     self.connect(to: matched)
                 }

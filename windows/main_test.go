@@ -160,6 +160,55 @@ func TestTrustStoreMultiDeviceToggle(t *testing.T) {
 	}
 }
 
+func TestSingleVsMultiDevicePairingRestrictions(t *testing.T) {
+	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("test_single_pairing_%d.json", time.Now().UnixNano()))
+	defer os.Remove(tempFile)
+
+	ts := &TrustStore{
+		MultiplePairedDevices: false, // Default: single-device mode
+		PairedDevices:         make(map[string]DeviceInfo),
+		filePath:              tempFile,
+	}
+
+	// 1. Initial state: no devices paired yet -> first device is permitted
+	ts.AddDevice(DeviceInfo{DeviceID: "mac_1", DeviceName: "MacBook Pro"})
+	if len(ts.PairedDevices) != 1 {
+		t.Fatalf("Expected 1 device paired, got %d", len(ts.PairedDevices))
+	}
+
+	// Helper checking if a discovered device is blocked from pairing
+	isBlocked := func(targetID string) bool {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		multi := ts.MultiplePairedDevices
+		count := len(ts.PairedDevices)
+		_, alreadyPaired := ts.PairedDevices[targetID]
+		return !multi && count > 0 && !alreadyPaired
+	}
+
+	// In single-device mode, existing paired device is NOT blocked
+	if isBlocked("mac_1") {
+		t.Fatalf("Existing paired device must not be marked blocked")
+	}
+
+	// Another newly discovered device MUST be marked blocked
+	if !isBlocked("phone_2") {
+		t.Fatalf("Other discovered device 'phone_2' must be blocked in single device mode")
+	}
+
+	// 2. Enable multi-device mode -> Blocked status must be lifted
+	ts.SetMultiPaired(true)
+	if isBlocked("phone_2") {
+		t.Fatalf("Device 'phone_2' must NOT be blocked when multiple paired devices is enabled")
+	}
+
+	// Pairing phone_2 is now permitted
+	ts.AddDevice(DeviceInfo{DeviceID: "phone_2", DeviceName: "Pixel 8"})
+	if len(ts.PairedDevices) != 2 {
+		t.Fatalf("Expected 2 paired devices in multi-device mode, got %d", len(ts.PairedDevices))
+	}
+}
+
 func TestFileExistsHelper(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("test_fe_%d.tmp", time.Now().UnixNano()))
 	if fileExists(tmpFile) {
@@ -644,5 +693,135 @@ func TestWebUIPopupAndControls(t *testing.T) {
 	defer resp4.Body.Close()
 	if testEngine.Enabled != false {
 		t.Fatalf("Expected Enabled to be false after toggle")
+	}
+}
+
+func TestCrossDeviceSharingSingleVsMultiMode(t *testing.T) {
+	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("test_sharing_trust_%d.json", time.Now().UnixNano()))
+	defer os.Remove(tempFile)
+
+	ts := &TrustStore{
+		filePath:              tempFile,
+		MultiplePairedDevices: false, // Default: single device mode
+		PairedDevices:         make(map[string]DeviceInfo),
+	}
+	ts.AddDevice(DeviceInfo{DeviceID: "device_primary", DeviceName: "MacBook Pro"})
+
+	engine := initEngine()
+	engine.TrustStore = ts
+
+	// Create 2 mock peer sessions with net.Pipe()
+	clientConn1, serverConn1 := net.Pipe()
+	defer clientConn1.Close()
+	defer serverConn1.Close()
+
+	clientConn2, serverConn2 := net.Pipe()
+	defer clientConn2.Close()
+	defer serverConn2.Close()
+
+	sess1 := &PeerSession{
+		DeviceID:   "device_primary",
+		DeviceName: "MacBook Pro",
+		Conn:       clientConn1,
+	}
+	sess2 := &PeerSession{
+		DeviceID:   "device_secondary",
+		DeviceName: "Pixel 8",
+		Conn:       clientConn2,
+	}
+
+	// Drain reads asynchronously
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			_, err := serverConn1.Read(buf)
+			if err != nil {
+				return
+			}
+		}
+	}()
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			_, err := serverConn2.Read(buf)
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	engine.ActiveSessions.Store("device_primary", sess1)
+	engine.ActiveSessions.Store("device_secondary", sess2)
+
+	// In Single Mode: broadcast should ONLY send to the single paired device (1 recipient)
+	sentSingle := engine.BroadcastMessage(map[string]any{"type": "CLIPBOARD_PUSH", "content": "Hello Single"})
+	if sentSingle != 1 {
+		t.Fatalf("Expected single mode to send to exactly 1 recipient, got %d", sentSingle)
+	}
+
+	// Switch to Multiple Mode and pair the second device as well
+	ts.mu.Lock()
+	ts.MultiplePairedDevices = true
+	ts.mu.Unlock()
+	ts.AddDevice(DeviceInfo{DeviceID: "device_secondary", DeviceName: "Pixel 8"})
+
+	// In Multiple Mode: broadcast should send to ALL eligible connected paired devices (2 recipients)
+	sentMulti := engine.BroadcastMessage(map[string]any{"type": "CLIPBOARD_PUSH", "content": "Hello Multi"})
+	if sentMulti != 2 {
+		t.Fatalf("Expected multiple mode to send to 2 recipients, got %d", sentMulti)
+	}
+
+	// Test Clipboard Hash Deduplication
+	hash1 := computeTextHash("Unique text")
+	hash2 := computeTextHash("Unique text")
+	if hash1 != hash2 {
+		t.Fatalf("Expected identical hashes for same text, got %s vs %s", hash1, hash2)
+	}
+	if len(hash1) != 64 {
+		t.Fatalf("Expected 64-char SHA-256 hex hash, got %d chars", len(hash1))
+	}
+}
+
+func BenchmarkChunkStreaming64KB(b *testing.B) {
+	data := make([]byte, 64*1024)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	b.SetBytes(64 * 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hasher := sha256.New()
+		hasher.Write(data)
+		b64 := base64.StdEncoding.EncodeToString(data)
+		msg := map[string]any{
+			"type":   "FILE_CHUNK",
+			"fileId": "fl_bench",
+			"offset": int64(i * 64 * 1024),
+			"data":   b64,
+		}
+		buf, _ := json.Marshal(msg)
+		_ = len(buf)
+	}
+}
+
+func BenchmarkChunkStreaming512KB(b *testing.B) {
+	data := make([]byte, 512*1024)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	b.SetBytes(512 * 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hasher := sha256.New()
+		hasher.Write(data)
+		b64 := base64.StdEncoding.EncodeToString(data)
+		msg := map[string]any{
+			"type":   "FILE_CHUNK",
+			"fileId": "fl_bench",
+			"offset": int64(i * 512 * 1024),
+			"data":   b64,
+		}
+		buf, _ := json.Marshal(msg)
+		_ = len(buf)
 	}
 }

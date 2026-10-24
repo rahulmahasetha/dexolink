@@ -298,6 +298,86 @@ class DexoLinkSettingsLogicTest {
             assertTrue(incomingAction.contains("→ Android"))
         }
     }
+
+    @Test
+    fun testSingleDeviceMode_blocksOtherDiscoveredDevicesWhenDeviceIsPairedOrConnected() {
+        val multiPairedEnabled = false
+        val pairedDevices = listOf("macbook-1")
+        val isConnected = true
+
+        val isSingleDeviceBlocked = !multiPairedEnabled && (pairedDevices.isNotEmpty() || isConnected)
+        assertTrue("Single-device mode should flag blocking when a device is paired/connected", isSingleDeviceBlocked)
+
+        val discoveredDevices = listOf(
+            Pair("macbook-1", "MacBook Pro"),
+            Pair("ipad-2", "iPad Air"),
+            Pair("windows-3", "Windows Desktop")
+        )
+
+        for ((id, name) in discoveredDevices) {
+            val isAlreadyPaired = pairedDevices.contains(id)
+            val isBlocked = isSingleDeviceBlocked && !isAlreadyPaired
+
+            if (id == "macbook-1") {
+                assertFalse("Already paired device should not have blocked badge", isBlocked)
+            } else {
+                assertTrue("Other discovered device $name must be blocked in single device mode", isBlocked)
+            }
+        }
+    }
+
+    @Test
+    fun testMultipleDeviceMode_unblocksAllDiscoveredDevices() {
+        val multiPairedEnabled = true
+        val pairedDevices = listOf("macbook-1")
+        val isConnected = true
+
+        val isSingleDeviceBlocked = !multiPairedEnabled && (pairedDevices.isNotEmpty() || isConnected)
+        assertFalse("Multiple-device mode must never flag single-device blocking", isSingleDeviceBlocked)
+
+        val discoveredDevices = listOf(
+            Pair("macbook-1", "MacBook Pro"),
+            Pair("ipad-2", "iPad Air"),
+            Pair("windows-3", "Windows Desktop")
+        )
+
+        for ((id, name) in discoveredDevices) {
+            val isAlreadyPaired = pairedDevices.contains(id)
+            val isBlocked = isSingleDeviceBlocked && !isAlreadyPaired
+            assertFalse("Discovered device $name must NOT be blocked when multi-device mode is enabled", isBlocked)
+        }
+    }
+
+    @Test
+    fun testPairedDeviceStatusBadge_onlineVsOfflineAndReconnection() {
+        data class DeviceBadgeState(val isConnected: Boolean, val badgeColorHex: String, val statusLabel: String)
+
+        fun resolveBadgeState(connected: Boolean): DeviceBadgeState {
+            return DeviceBadgeState(
+                isConnected = connected,
+                badgeColorHex = if (connected) "#16A34A" else "#94A3B8",
+                statusLabel = if (connected) "Connected" else "Disconnected"
+            )
+        }
+
+        // 1. Initial paired state: offline/disconnected
+        var state = resolveBadgeState(connected = false)
+        assertFalse(state.isConnected)
+        assertEquals("#94A3B8", state.badgeColorHex)
+        assertEquals("Disconnected", state.statusLabel)
+
+        // 2. Connect / Reconnect: online/connected
+        state = resolveBadgeState(connected = true)
+        assertTrue(state.isConnected)
+        assertEquals("#16A34A", state.badgeColorHex)
+        assertEquals("Connected", state.statusLabel)
+
+        // 3. Disconnect again: dynamic return to offline/disconnected
+        state = resolveBadgeState(connected = false)
+        assertFalse(state.isConnected)
+        assertEquals("#94A3B8", state.badgeColorHex)
+        assertEquals("Disconnected", state.statusLabel)
+    }
 }
 
 

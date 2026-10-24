@@ -55,7 +55,7 @@ class DexoLinkSettings private constructor(context: Context) {
     private val _multiPairedDevices = MutableStateFlow(prefs.getBoolean(KEY_MULTI_PAIRED_DEVICES, false))
     val multiPairedDevices: StateFlow<Boolean> = _multiPairedDevices.asStateFlow()
 
-    // v4.0.1: Media Streaming & Remote Control (OFF by default)
+    // v4.0.2: Media Streaming & Remote Control (OFF by default)
     private val _cameraSharing = MutableStateFlow(prefs.getBoolean(KEY_CAMERA_SHARING, false))
     val cameraSharing: StateFlow<Boolean> = _cameraSharing.asStateFlow()
 
