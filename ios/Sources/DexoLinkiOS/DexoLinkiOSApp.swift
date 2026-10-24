@@ -15,9 +15,11 @@ struct DexoLinkiOSApp: App {
                     switch phase {
                     case .active:
                         // Refresh clipboard and local device discovery when app becomes active
+                        #if canImport(UIKit)
                         if appState.autoClipboardSync, let clip = UIPasteboard.general.string, !clip.isEmpty {
                             appState.pushClipboardText(clip)
                         }
+                        #endif
                     case .background:
                         print("[DexoLink iOS] App entered background")
                     default:

@@ -161,9 +161,13 @@ public class iOSAppState: ObservableObject {
             dev.id == id || dev.name.caseInsensitiveCompare(name) == .orderedSame
         }
     }
+
+    public func isDeviceAlreadyPaired(_ device: DiscoveredDevice) -> Bool {
+        return isDeviceAlreadyPaired(id: device.id, name: device.name)
+    }
     
     // Multiple Paired Devices Setting (OFF by default)
-    @Published public var isMultiplePairedDevicesEnabled: Bool {
+    @Published public var isMultiplePairedDevicesEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isMultiplePairedDevicesEnabled, forKey: "dexolink_ios_multi_paired")
             if !isMultiplePairedDevicesEnabled && pairedDevices.count > 1 {
@@ -174,24 +178,56 @@ public class iOSAppState: ObservableObject {
     }
 
     // Feature Settings
-    @Published public var autoClipboardSync: Bool {
+    @Published public var autoClipboardSync: Bool = true {
         didSet { UserDefaults.standard.set(autoClipboardSync, forKey: "dexolink_ios_auto_clip") }
     }
-    @Published public var enhancedClipboard: Bool {
+    @Published public var enhancedClipboard: Bool = true {
         didSet { UserDefaults.standard.set(enhancedClipboard, forKey: "dexolink_ios_enhanced_clip") }
     }
-    // v4.0.2: Media Streaming & Remote Control Settings (OFF by default)
-    @Published public var isCameraSharingEnabled: Bool {
+    // Media Streaming & Remote Control Settings (OFF by default)
+    @Published public var isCameraSharingEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isCameraSharingEnabled, forKey: "dexolink_ios_camera_sharing") }
     }
-    @Published public var isFrontCamera: Bool {
+    @Published public var isFrontCamera: Bool = false {
         didSet { UserDefaults.standard.set(isFrontCamera, forKey: "dexolink_ios_front_camera") }
     }
-    @Published public var isScreenSharingEnabled: Bool {
+    @Published public var isScreenSharingEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isScreenSharingEnabled, forKey: "dexolink_ios_screen_sharing") }
     }
-    @Published public var isDesktopModeEnabled: Bool {
+    @Published public var isDesktopModeEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isDesktopModeEnabled, forKey: "dexolink_ios_desktop_mode") }
+    }
+
+    public func savePairedDevices() {
+        if let data = try? JSONEncoder().encode(pairedDevices) {
+            UserDefaults.standard.set(data, forKey: "dexolink_ios_paired_devices")
+        }
+    }
+
+    public func loadPairedDevices() {
+        if let data = UserDefaults.standard.data(forKey: "dexolink_ios_paired_devices"),
+           let devices = try? JSONDecoder().decode([TrustedDevice].self, from: data) {
+            self.pairedDevices = devices
+        }
+    }
+
+    public init() {
+        let multi = UserDefaults.standard.bool(forKey: "dexolink_ios_multi_paired")
+        self.isMultiplePairedDevicesEnabled = multi
+
+        if UserDefaults.standard.object(forKey: "dexolink_ios_auto_clip") != nil {
+            self.autoClipboardSync = UserDefaults.standard.bool(forKey: "dexolink_ios_auto_clip")
+        }
+        if UserDefaults.standard.object(forKey: "dexolink_ios_enhanced_clip") != nil {
+            self.enhancedClipboard = UserDefaults.standard.bool(forKey: "dexolink_ios_enhanced_clip")
+        }
+        self.isCameraSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_camera_sharing")
+        self.isFrontCamera = UserDefaults.standard.bool(forKey: "dexolink_ios_front_camera")
+        self.isScreenSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_screen_sharing")
+        self.isDesktopModeEnabled = UserDefaults.standard.bool(forKey: "dexolink_ios_desktop_mode")
+
+        loadPairedDevices()
+        startDeviceDiscovery()
     }
 
     public func toggleCameraLens() {
