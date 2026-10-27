@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
     private val completedTransfers = mutableStateListOf<TransferItem>()
     private val receivedFiles = mutableStateListOf<File>()
     private var pendingReconnectDeviceName: String? = null
+    private var pendingReconnectDeviceId: String? = null
     private val clipboardHistory = mutableStateListOf<ClipboardHistoryItem>()
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -170,7 +171,9 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
         syncClipboardHistory()
 
         setContent {
-            DexoLinkTheme {
+            val settings = remember { DexoLinkSettings.getInstance(this@MainActivity) }
+            val themeMode by settings.appThemeMode.collectAsState()
+            DexoLinkTheme(themeMode = themeMode) {
                 val pendingTransfer by connectionManager.transferManager.pendingIncomingTransfer.collectAsState()
                 if (pendingTransfer != null) {
                     val pending = pendingTransfer!!
@@ -299,7 +302,10 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                     onConnectPaired = {
                         val paired = pairedDevice.value ?: TrustStore.getInstance(this).getPairedDevice()
                         if (paired != null) {
-                            val matchingDiscovered = discoveredDevices.firstOrNull { it.name.equals(paired.deviceName, ignoreCase = true) }
+                            val matchingDiscovered = discoveredDevices.firstOrNull {
+                                (!paired.deviceId.isNullOrBlank() && it.deviceId == paired.deviceId) ||
+                                it.name.equals(paired.deviceName, ignoreCase = true)
+                            }
                             if (matchingDiscovered != null) {
                                 connectionManager.connect(matchingDiscovered.host, matchingDiscovered.port)
                             } else {
@@ -307,7 +313,11 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
                                 val port = if (connectionManager.lastConnectedPort > 0) connectionManager.lastConnectedPort else 52840
                                 if (host.isNotBlank()) {
                                     connectionManager.connect(host, port)
+                                    pendingReconnectDeviceId = paired.deviceId
+                                    pendingReconnectDeviceName = paired.deviceName
+                                    discoveryService.startBrowsing()
                                 } else {
+                                    pendingReconnectDeviceId = paired.deviceId
                                     pendingReconnectDeviceName = paired.deviceName
                                     discoveredDevices.clear()
                                     discoveryService.stopBrowsing()
@@ -612,6 +622,9 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
             discoveryService.startAdvertising(activePort)
         }
         refreshReceivedFiles()
+        if (connectionManager.isConnected()) {
+            connectionManager.flushPendingClipboard()
+        }
         checkAndSyncClipboard("onResume")
     }
 
@@ -623,14 +636,16 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
             val text = clip.getItemAt(0)?.text?.toString() ?: return
             if (text.isEmpty()) return
 
-            if (connectionManager.clipboardManager.shouldSend(text)) {
+            if (connectionManager.clipboardManager.canSend(text)) {
                 log("[Clipboard Detect:$trigger] Found text: \"${text.take(30)}...\" (${text.length} chars)")
                 if (connectionManager.isConnected()) {
                     connectionManager.sendClipboard(text, force = true)
                     lastSyncedSnippet.value = text
                     Toast.makeText(this, "Copied text synced to Mac", Toast.LENGTH_SHORT).show()
                 } else {
-                    log("[Clipboard Stored] Mac not connected right now")
+                    val queued = connectionManager.clipboardManager.queueOutgoing(text)
+                    connectionManager.triggerAutoReconnect()
+                    log("[Clipboard Queued:$trigger] Queued for Mac: \"${text.take(30)}...\" (queued=$queued)")
                 }
             }
         } catch (e: Exception) {
@@ -695,7 +710,10 @@ class MainActivity : ComponentActivity(), ConnectionEventListener, DiscoveryList
             discoveredDevices.add(device)
             log("Discovered: ${device.name} @ ${device.host}:${device.port}")
         }
-        if (pendingReconnectDeviceName.equals(device.name, ignoreCase = true)) {
+        val matchesPending = (!pendingReconnectDeviceId.isNullOrBlank() && device.deviceId == pendingReconnectDeviceId) ||
+            (!pendingReconnectDeviceName.isNullOrBlank() && pendingReconnectDeviceName.equals(device.name, ignoreCase = true))
+        if (matchesPending && !connectionManager.isConnected()) {
+            pendingReconnectDeviceId = null
             pendingReconnectDeviceName = null
             runOnUiThread { connectionManager.connect(device.host, device.port) }
         }

@@ -89,21 +89,74 @@ import java.util.*
 
 // UI Design System & Theme
 
+val LocalIsDarkTheme = staticCompositionLocalOf { false }
+
+object DexoThemeColors {
+    val isDark: Boolean @Composable get() = LocalIsDarkTheme.current
+    val background: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF0F172A) else Color(0xFFF8FAFC)
+    val surface: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF1E293B) else Color.White
+    val cardBackground: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF1E293B) else Color.White
+    val border: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF334155) else Color(0xFFE2E8F0)
+    val textPrimary: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+    val textSecondary: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val innerContainer: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF27354A) else Color(0xFFF1F5F9)
+    val divider: Color @Composable get() = if (LocalIsDarkTheme.current) Color(0xFF334155) else Color(0xFFF1F5F9)
+}
+
 @Composable
-fun DexoLinkTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = lightColorScheme(
+fun DexoLinkTheme(
+    themeMode: com.macdroid.storage.AppThemeMode = com.macdroid.storage.AppThemeMode.SYSTEM,
+    content: @Composable () -> Unit
+) {
+    val isSystemDark = isSystemInDarkTheme()
+    val isDark = when (themeMode) {
+        com.macdroid.storage.AppThemeMode.SYSTEM -> isSystemDark
+        com.macdroid.storage.AppThemeMode.LIGHT -> false
+        com.macdroid.storage.AppThemeMode.DARK -> true
+    }
+
+    val colorScheme = if (isDark) {
+        darkColorScheme(
+            primary = Color(0xFF3B82F6),
+            onPrimary = Color.White,
+            primaryContainer = Color(0xFF1E3A8A),
+            onPrimaryContainer = Color(0xFFBFDBFE),
+            secondary = Color(0xFF38BDF8),
+            onSecondary = Color(0xFF0F172A),
+            background = Color(0xFF0F172A),
+            onBackground = Color(0xFFF8FAFC),
+            surface = Color(0xFF1E293B),
+            onSurface = Color(0xFFF8FAFC),
+            surfaceVariant = Color(0xFF27354A),
+            onSurfaceVariant = Color(0xFF94A3B8),
+            outline = Color(0xFF334155),
+            outlineVariant = Color(0xFF1E293B)
+        )
+    } else {
+        lightColorScheme(
             primary = Color(0xFF0066FF),
             onPrimary = Color.White,
+            primaryContainer = Color(0xFFEFF6FF),
+            onPrimaryContainer = Color(0xFF1D4ED8),
             secondary = Color(0xFF0284C7),
+            onSecondary = Color.White,
             background = Color(0xFFF8FAFC),
+            onBackground = Color(0xFF0F172A),
             surface = Color.White,
             onSurface = Color(0xFF0F172A),
             surfaceVariant = Color(0xFFF1F5F9),
-            outline = Color(0xFFE2E8F0)
-        ),
-        content = content
-    )
+            onSurfaceVariant = Color(0xFF64748B),
+            outline = Color(0xFFE2E8F0),
+            outlineVariant = Color(0xFFF1F5F9)
+        )
+    }
+
+    CompositionLocalProvider(LocalIsDarkTheme provides isDark) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            content = content
+        )
+    }
 }
 
 // Modifier extension for dashed border (used for dropzone/containers)
@@ -786,12 +839,18 @@ fun MainScreenRoot(
                                         MacBookGraphic(modifier = Modifier.size(width = 36.dp, height = 24.dp))
                                         Spacer(modifier = Modifier.width(10.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
                                                 Text(
-                                                    dev.name,
+                                                    text = dev.name,
                                                     fontWeight = FontWeight.Bold,
                                                     fontSize = 13.sp,
-                                                    color = if (isBlocked) Color(0xFF64748B) else Color(0xFF0F172A)
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    color = if (isBlocked) Color(0xFF64748B) else Color(0xFF0F172A),
+                                                    modifier = Modifier.weight(1f, fill = false)
                                                 )
                                                 if (isBlocked) {
                                                     Spacer(modifier = Modifier.width(6.dp))
@@ -800,18 +859,22 @@ fun MainScreenRoot(
                                                         shape = RoundedCornerShape(4.dp)
                                                     ) {
                                                         Text(
-                                                            "Blocked",
+                                                            text = "Blocked",
                                                             fontSize = 9.sp,
                                                             fontWeight = FontWeight.Bold,
                                                             color = Color(0xFFDC2626),
+                                                            maxLines = 1,
                                                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                                         )
                                                     }
                                                 }
                                             }
+                                            Spacer(modifier = Modifier.height(2.dp))
                                             Text(
-                                                if (isBlocked) "Single device mode active" else "${dev.host}:${dev.port}",
+                                                text = if (isBlocked) "Single device mode active" else "${dev.host}:${dev.port}",
                                                 fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                                 color = Color(0xFF64748B)
                                             )
                                         }
@@ -1352,9 +1415,9 @@ fun MainScreenRoot(
         topBar = {
             if (currentTab != NavTab.QR_CONNECT) {
             Surface(
-                color = Color.White,
+                color = DexoThemeColors.surface,
                 shadowElevation = 0.5.dp,
-                border = BorderStroke(0.5.dp, Color(0xFFF1F5F9))
+                border = BorderStroke(0.5.dp, DexoThemeColors.border)
             ) {
                 TopAppBar(
                     navigationIcon = {
@@ -1364,7 +1427,7 @@ fun MainScreenRoot(
                                     imageVector = DexoIcons.ArrowBack,
                                     contentDescription = "Back",
                                     modifier = Modifier.size(22.dp),
-                                    tint = Color(0xFF0F172A)
+                                    tint = DexoThemeColors.textPrimary
                                 )
                             }
                         }
@@ -1381,12 +1444,12 @@ fun MainScreenRoot(
                                     "DexoLink",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 20.sp,
-                                    color = Color(0xFF0F172A)
+                                    color = DexoThemeColors.textPrimary
                                 )
                                 Text(
                                     "$localDeviceName · Visible",
                                     fontSize = 11.sp,
-                                    color = Color(0xFF64748B),
+                                    color = DexoThemeColors.textSecondary,
                                     modifier = Modifier.clickable {
                                         renameTarget = "local"
                                         showRenameDialog = true
@@ -1401,7 +1464,7 @@ fun MainScreenRoot(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFF1F5F9))
+                                .background(DexoThemeColors.innerContainer)
                                 .clickable { showNotificationsDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1409,7 +1472,7 @@ fun MainScreenRoot(
                                 imageVector = DexoIcons.Bell,
                                 contentDescription = "Notifications",
                                 modifier = Modifier.size(18.dp),
-                                tint = Color(0xFF475569)
+                                tint = DexoThemeColors.textPrimary
                             )
                             Box(
                                 modifier = Modifier
@@ -1427,38 +1490,38 @@ fun MainScreenRoot(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFF1F5F9)),
+                                .background(DexoThemeColors.innerContainer),
                             contentAlignment = Alignment.Center
                         ) {
                             IconButton(onClick = { showOverflowMenu = true }) {
                                 DexoIcon(
                                     imageVector = DexoIcons.MoreVert,
                                     contentDescription = "More Options",
-                                    tint = Color(0xFF334155),
+                                    tint = DexoThemeColors.textPrimary,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
                             DropdownMenu(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
-                                modifier = Modifier.background(Color.White)
+                                modifier = Modifier.background(DexoThemeColors.surface)
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Clipboard History (${clipboardHistory.size})", color = Color(0xFF0F172A)) },
+                                    text = { Text("Clipboard History (${clipboardHistory.size})", color = DexoThemeColors.textPrimary) },
                                     onClick = {
                                         showOverflowMenu = false
                                         showClipboardHistorySheet = true
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Scan / Refresh Wi-Fi", color = Color(0xFF0F172A)) },
+                                    text = { Text("Scan / Refresh Wi-Fi", color = DexoThemeColors.textPrimary) },
                                     onClick = {
                                         showOverflowMenu = false
                                         onRefreshDiscovery()
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Manual IP Connection", color = Color(0xFF0F172A)) },
+                                    text = { Text("Manual IP Connection", color = DexoThemeColors.textPrimary) },
                                     onClick = {
                                         showOverflowMenu = false
                                         showManualIPDialog = true
@@ -1472,14 +1535,14 @@ fun MainScreenRoot(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Security Overview", color = Color(0xFF0F172A)) },
+                                    text = { Text("Security Overview", color = DexoThemeColors.textPrimary) },
                                     onClick = {
                                         showOverflowMenu = false
                                         showSecurityDialog = true
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Rename My Device", color = Color(0xFF0F172A)) },
+                                    text = { Text("Rename My Device", color = DexoThemeColors.textPrimary) },
                                     onClick = {
                                         showOverflowMenu = false
                                         renameTarget = "local"
@@ -1488,7 +1551,7 @@ fun MainScreenRoot(
                                 )
                                 if (pairedDevice != null) {
                                     DropdownMenuItem(
-                                        text = { Text("Rename Paired Mac", color = Color(0xFF0F172A)) },
+                                        text = { Text("Rename Paired Mac", color = DexoThemeColors.textPrimary) },
                                         onClick = {
                                             showOverflowMenu = false
                                             renameTarget = "paired"
@@ -1497,7 +1560,7 @@ fun MainScreenRoot(
                                     )
                                 }
                                 DropdownMenuItem(
-                                    text = { Text("Clear Activity Log", color = Color(0xFF0F172A)) },
+                                    text = { Text("Clear Activity Log", color = DexoThemeColors.textPrimary) },
                                     onClick = {
                                         showOverflowMenu = false
                                         onClearLogs()
@@ -1518,7 +1581,7 @@ fun MainScreenRoot(
                         Spacer(modifier = Modifier.width(6.dp))
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.White
+                        containerColor = DexoThemeColors.surface
                     )
                 )
             }
@@ -1534,7 +1597,7 @@ fun MainScreenRoot(
                 )
             }
         },
-        containerColor = Color(0xFFF8FAFC)
+        containerColor = DexoThemeColors.background
     ) { paddingValues ->
         Box(
             modifier = Modifier
@@ -2352,7 +2415,7 @@ fun HomeScreenContent(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 14.dp)
+                                        .padding(vertical = 8.dp)
                                 ) {
                                     Box(
                                         modifier = Modifier.size(34.dp),
@@ -2382,47 +2445,64 @@ fun HomeScreenContent(
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Spacer(modifier = Modifier.width(12.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            dev.name,
+                                            text = dev.name,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 15.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis,
                                             color = if (deviceIsConnected) Color(0xFF2563EB) else Color(0xFF334155)
                                         )
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            if (deviceIsConnected) (if (dev.status.isBlank() || dev.status.equals("Disconnected", ignoreCase = true)) "Connected" else dev.status) else "Disconnected",
+                                            text = if (deviceIsConnected) (if (dev.status.isBlank() || dev.status.equals("Disconnected", ignoreCase = true)) "Connected" else dev.status) else "Disconnected",
                                             fontSize = 12.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis,
                                             color = if (deviceIsConnected) Color(0xFF16A34A) else Color(0xFF94A3B8)
                                         )
                                     }
 
+                                    Spacer(modifier = Modifier.width(8.dp))
+
                                     // Keep paired devices available when disconnected.
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(20.dp))
+                                            .clip(RoundedCornerShape(16.dp))
                                             .background(if (deviceIsConnected) Color(0xFFFEE2E2) else Color(0xFFDBEAFE))
                                             .clickable { if (deviceIsConnected) onDisconnect() else onConnectPaired() }
-                                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                                            .padding(horizontal = 12.dp, vertical = 6.dp)
                                     ) {
                                         Text(
-                                            if (deviceIsConnected) "Disconnect" else "Connect",
+                                            text = if (deviceIsConnected) "Disconnect" else "Connect",
                                             color = if (deviceIsConnected) Color(0xFFDC2626) else Color(0xFF2563EB),
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
 
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
 
                                     // 3-dots Menu Button
                                     Box {
-                                        IconButton(onClick = { selectedDeviceMenu = dev }) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(30.dp)
+                                                .clip(CircleShape)
+                                                .clickable { selectedDeviceMenu = dev },
+                                            contentAlignment = Alignment.Center
+                                        ) {
                                             DexoIcon(
                                                 imageVector = DexoIcons.MoreVert,
                                                 contentDescription = "Options",
                                                 tint = Color(0xFF64748B),
-                                                modifier = Modifier.size(20.dp)
+                                                modifier = Modifier.size(18.dp)
                                             )
                                         }
 
@@ -2486,9 +2566,13 @@ fun HomeScreenContent(
                     border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                        // Filter out already connected
-                        val available = devices.filter { dev -> connectedList.none { it.name.equals(dev.name, ignoreCase = true) } }
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        // Filter out already connected, local device, and self-discoveries
+                        val available = devices.filter { dev ->
+                            connectedList.none { it.name.equals(dev.name, ignoreCase = true) } &&
+                            !dev.name.equals(localDeviceName, ignoreCase = true) &&
+                            !dev.name.startsWith("MacDroid-${android.os.Build.MODEL}", ignoreCase = true)
+                        }
 
                         if (available.isNotEmpty()) {
                             available.forEachIndexed { index, dev ->
@@ -2498,22 +2582,33 @@ fun HomeScreenContent(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 14.dp)
+                                        .padding(vertical = 12.dp)
                                 ) {
-                                    DexoIcon(
-                                        imageVector = devIcon,
-                                        contentDescription = dev.name,
-                                        tint = if (isBlocked) Color(0xFF94A3B8) else Color(0xFF2563EB),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Box(
+                                        modifier = Modifier.size(34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        DexoIcon(
+                                            imageVector = devIcon,
+                                            contentDescription = dev.name,
+                                            tint = if (isBlocked) Color(0xFF94A3B8) else Color(0xFF2563EB),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
                                             Text(
-                                                dev.name,
+                                                text = dev.name,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 15.sp,
-                                                color = if (isBlocked) Color(0xFF64748B) else Color(0xFF0F172A)
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = if (isBlocked) Color(0xFF64748B) else Color(0xFF0F172A),
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
                                             if (isBlocked) {
                                                 Spacer(modifier = Modifier.width(6.dp))
@@ -2522,21 +2617,27 @@ fun HomeScreenContent(
                                                     shape = RoundedCornerShape(4.dp)
                                                 ) {
                                                     Text(
-                                                        "Blocked",
+                                                        text = "Blocked",
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = Color(0xFFDC2626),
+                                                        maxLines = 1,
                                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                     )
                                                 }
                                             }
                                         }
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            if (isBlocked) "Single device mode active" else "Nearby",
+                                            text = if (isBlocked) "Single device mode active" else "Nearby · Ready to connect",
                                             fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                             color = Color(0xFF64748B)
                                         )
                                     }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
 
                                     // Connect Button
                                     Box(
@@ -2554,13 +2655,13 @@ fun HomeScreenContent(
                                                     onConnect(dev)
                                                 }
                                             }
-                                            .padding(horizontal = 16.dp, vertical = 7.dp)
+                                            .padding(horizontal = 14.dp, vertical = 7.dp)
                                     ) {
                                         Text(
-                                            "Connect",
+                                            text = "Connect",
                                             color = if (isBlocked) Color(0xFF94A3B8) else Color(0xFF2563EB),
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp
+                                            fontSize = 13.sp
                                         )
                                     }
                                 }
@@ -2575,21 +2676,38 @@ fun HomeScreenContent(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onOpenManualIP() }
-                                .padding(vertical = 16.dp)
+                                .padding(vertical = 12.dp)
                         ) {
+                            Box(
+                                modifier = Modifier.size(34.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Wifi,
+                                    contentDescription = "Connect by IP",
+                                    tint = Color(0xFF2563EB),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Connect by IP address",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF0F172A)
+                                )
+                                Text(
+                                    text = "Direct manual connection over LAN",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
                             DexoIcon(
-                                imageVector = DexoIcons.Wifi,
-                                contentDescription = "Connect by IP",
-                                tint = Color(0xFF2563EB),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Text(
-                                "Connect by IP address",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                color = Color(0xFF0F172A),
-                                modifier = Modifier.weight(1f)
+                                imageVector = DexoIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -2744,13 +2862,6 @@ fun CameraSharingDialog(
                                 Text("Stream Phone Camera (Android -> $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                             }
                             OutlinedButton(
-                                onClick = onRequestRemoteStream,
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("View Remote Camera ($connectedDeviceName -> Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
-                            }
-                            OutlinedButton(
                                 onClick = onStopStream,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
@@ -2853,13 +2964,6 @@ fun ScreenSharingDialog(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("Mirror Phone Screen (Android -> $connectedDeviceName)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                            }
-                            OutlinedButton(
-                                onClick = onRequestRemoteScreen,
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("View Remote Screen ($connectedDeviceName -> Android)", fontSize = 11.sp, color = Color(0xFF0F172A), fontWeight = FontWeight.SemiBold)
                             }
                             OutlinedButton(
                                 onClick = onStopMirroring,
@@ -4401,19 +4505,6 @@ fun TransfersTabContent(
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
 
-                            // Direct Delete from History Button
-                            IconButton(
-                                onClick = { onDeleteTransfer(item.id) },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                DexoIcon(
-                                    imageVector = DexoIcons.Trash,
-                                    contentDescription = "Delete",
-                                    tint = Color(0xFF64748B),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-
                             // 3-dots menu button
                             Box {
                                 IconButton(
@@ -4635,6 +4726,109 @@ fun SettingsTabContent(
             }
         }
 
+        // Section: Appearance (Light / Dark Theme Mode)
+        item(key = "section_appearance") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DexoIcon(
+                        imageVector = DexoIcons.Sparkles,
+                        contentDescription = null,
+                        tint = DexoThemeColors.textSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "APPEARANCE",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = DexoThemeColors.textSecondary,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = DexoThemeColors.cardBackground),
+                    border = BorderStroke(1.dp, DexoThemeColors.border),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF6366F1)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DexoIcon(
+                                    imageVector = DexoIcons.Sparkles,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Theme Mode",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = DexoThemeColors.textPrimary
+                                )
+                                Text(
+                                    "Choose System, Light, or Dark mode",
+                                    fontSize = 11.sp,
+                                    color = DexoThemeColors.textSecondary
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val activeThemeMode by settings.appThemeMode.collectAsState()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DexoThemeColors.innerContainer)
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            val modes = listOf(
+                                com.macdroid.storage.AppThemeMode.SYSTEM to "System",
+                                com.macdroid.storage.AppThemeMode.LIGHT to "Light",
+                                com.macdroid.storage.AppThemeMode.DARK to "Dark"
+                            )
+
+                            modes.forEach { (mode, label) ->
+                                val isSelected = activeThemeMode == mode
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSelected) DexoThemeColors.cardBackground else Color.Transparent)
+                                        .clickable { settings.setAppThemeMode(mode) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color(0xFF0066FF) else DexoThemeColors.textSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Section 1: Features (Matching Reference Design Image 2)
         item(key = "section_features") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -4642,7 +4836,7 @@ fun SettingsTabContent(
                     DexoIcon(
                         imageVector = DexoIcons.CategoryDoc,
                         contentDescription = null,
-                        tint = Color(0xFF64748B),
+                        tint = DexoThemeColors.textSecondary,
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -4650,14 +4844,14 @@ fun SettingsTabContent(
                         "FEATURES",
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        color = Color(0xFF64748B),
+                        color = DexoThemeColors.textSecondary,
                         letterSpacing = 0.5.sp
                     )
                 }
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    colors = CardDefaults.cardColors(containerColor = DexoThemeColors.cardBackground),
+                    border = BorderStroke(1.dp, DexoThemeColors.border),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -4722,12 +4916,65 @@ fun SettingsTabContent(
                             DexoIcon(
                                 imageVector = DexoIcons.ChevronRight,
                                 contentDescription = null,
-                                tint = Color(0xFF64748B),
+                                tint = DexoThemeColors.textSecondary,
                                 modifier = Modifier.size(14.dp)
                             )
                         }
 
-                        Divider(color = Color(0xFFF1F5F9), modifier = Modifier.padding(vertical = 10.dp))
+                        // Background Clipboard Sync Status & Permission helper
+                        Spacer(modifier = Modifier.height(6.dp))
+                        val isA11yRunning = com.macdroid.service.DexoLinkAccessibilityService.isServiceRunning
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(DexoThemeColors.innerContainer)
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isA11yRunning) Color(0xFF10B981) else Color(0xFFF59E0B))
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Background Sync",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DexoThemeColors.textPrimary
+                                )
+                                Text(
+                                    if (isA11yRunning) "Active • Screen locked & minimized sync enabled" else "Action needed • Tap to enable Accessibility for 24/7 sync",
+                                    fontSize = 10.sp,
+                                    color = DexoThemeColors.textSecondary
+                                )
+                            }
+                            if (!isA11yRunning) {
+                                Button(
+                                    onClick = {
+                                        try {
+                                            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Open Settings > Accessibility > DexoLink", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0066FF)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("Enable", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        Divider(color = DexoThemeColors.divider, modifier = Modifier.padding(vertical = 10.dp))
 
                         // Enhanced Clipboard - Independent ON/OFF Toggle (OFF by default)
                         Row(
@@ -5926,7 +6173,7 @@ fun SettingsTabContent(
             }
         }
 
-        // Footer (Matching Reference Design Image 2)
+        // Footer (Matching Reference Design Image 2 & Author Website)
         item(key = "footer") {
             Column(
                 modifier = Modifier
@@ -5935,10 +6182,28 @@ fun SettingsTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "Developed by Rahul Mahaseth | DexoLink v4.0.2",
+                    "Developed by Rahul Mahaseth | DexoLink v4.0.3",
                     fontSize = 11.sp,
-                    color = Color(0xFF94A3B8),
+                    color = DexoThemeColors.textSecondary,
                     textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "www.rahulmahaseth.com.np",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF0066FF),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.clickable {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.rahulmahaseth.com.np")).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            // Ignore
+                        }
+                    }
                 )
             }
         }
@@ -6186,10 +6451,10 @@ fun DexoLinkBottomNavBar(
         contentAlignment = Alignment.Center
     ) {
         Surface(
-            color = Color.White,
+            color = DexoThemeColors.surface,
             shape = RoundedCornerShape(36.dp),
             shadowElevation = 14.dp,
-            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            border = BorderStroke(1.dp, DexoThemeColors.border),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(68.dp)
@@ -6264,7 +6529,7 @@ fun FloatingNavTabItem(
     onClick: () -> Unit
 ) {
     val activeColor = Color(0xFF2563EB)
-    val inactiveColor = Color(0xFF64748B)
+    val inactiveColor = DexoThemeColors.textSecondary
     val color = if (isSelected) activeColor else inactiveColor
 
     Column(

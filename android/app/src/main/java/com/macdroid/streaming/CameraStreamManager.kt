@@ -197,17 +197,15 @@ class CameraStreamManager private constructor(private val context: Context) {
 
         val direction = req.options?.get("direction") ?: "outgoing"
         if (direction == "outgoing" || req.options?.get("sender") in listOf("mac", "windows", "ios", "android")) {
-            // Remote device wants to stream ITS camera TO Android
-            val senderName = req.options?.get("senderName") ?: "Remote Device"
-            startViewingRemoteCamera(req.streamId, senderName)
+            // Remote device wants to stream ITS camera TO Android - Mobile does not view remote camera
             val response = StreamResponseMessage(
                 streamId = req.streamId,
                 streamType = req.streamType,
-                accepted = true,
-                reason = null
+                accepted = false,
+                reason = "Remote camera viewing on Android mobile is not supported"
             )
             MacDroidApplication.connectionManager.sendMessage(response)
-            Log.d(TAG, "Accepted inbound camera stream from $senderName")
+            Log.d(TAG, "Rejected inbound camera stream request to Android mobile")
             return
         }
 

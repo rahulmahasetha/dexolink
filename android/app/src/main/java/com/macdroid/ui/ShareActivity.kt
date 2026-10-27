@@ -82,7 +82,9 @@ class ShareActivity : ComponentActivity(), ConnectionEventListener, TransferEven
         parseSharedIntent(intent)
 
         setContent {
-            DexoLinkTheme {
+            val settings = remember { com.macdroid.storage.DexoLinkSettings.getInstance(this@ShareActivity) }
+            val themeMode by settings.appThemeMode.collectAsState()
+            DexoLinkTheme(themeMode = themeMode) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -196,6 +198,24 @@ class ShareActivity : ComponentActivity(), ConnectionEventListener, TransferEven
     }
 
     private fun startSending() {
+        // 1. If plain text or URL is shared without files
+        val text = sharedText.value
+        if (!text.isNullOrBlank() && sharedUris.isEmpty()) {
+            val peer = pairedDevice.value?.deviceName ?: "Mac"
+            if (connectionManager.isConnected()) {
+                connectionManager.sendClipboard(text, force = true)
+                Toast.makeText(this, "Text sent to $peer", Toast.LENGTH_SHORT).show()
+            } else {
+                connectionManager.clipboardManager.queueOutgoing(text)
+                connectionManager.triggerAutoReconnect()
+                Toast.makeText(this, "Queued for $peer (will sync upon connect)", Toast.LENGTH_SHORT).show()
+            }
+            transferComplete.value = true
+            isTransferring.value = false
+            window.decorView.postDelayed({ finish() }, 1200)
+            return
+        }
+
         if (!connectionManager.isConnected()) {
             Toast.makeText(this, "Device is disconnected. Reconnecting...", Toast.LENGTH_SHORT).show()
             reconnectToPaired()
@@ -205,17 +225,6 @@ class ShareActivity : ComponentActivity(), ConnectionEventListener, TransferEven
         isTransferring.value = true
         transferComplete.value = false
         transferError.value = null
-
-        // 1. If plain text or URL is shared without files
-        val text = sharedText.value
-        if (!text.isNullOrBlank() && sharedUris.isEmpty()) {
-            connectionManager.sendClipboard(text, force = true)
-            transferComplete.value = true
-            isTransferring.value = false
-            Toast.makeText(this, "Text sent to ${pairedDevice.value?.deviceName ?: "Mac"}", Toast.LENGTH_SHORT).show()
-            window.decorView.postDelayed({ finish() }, 1200)
-            return
-        }
 
         // 2. If files are shared
         if (sharedUris.isNotEmpty()) {

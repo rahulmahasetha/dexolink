@@ -209,17 +209,15 @@ class ScreenStreamManager private constructor(private val context: Context) {
 
         val direction = req.options?.get("direction") ?: "outgoing"
         if (direction == "outgoing" || req.options?.get("sender") in listOf("mac", "windows", "ios", "android")) {
-            // Remote device wants to mirror ITS screen TO Android
-            val senderName = req.options?.get("senderName") ?: "Remote Device"
-            startViewingRemoteScreen(req.streamId, senderName)
+            // Remote device wants to mirror ITS screen TO Android - Mobile does not view remote screen
             val response = StreamResponseMessage(
                 streamId = req.streamId,
                 streamType = req.streamType,
-                accepted = true,
-                reason = null
+                accepted = false,
+                reason = "Remote screen viewing on Android mobile is not supported"
             )
             MacDroidApplication.connectionManager.sendMessage(response)
-            Log.d(TAG, "Accepted inbound screen stream from $senderName")
+            Log.d(TAG, "Rejected inbound screen mirror request to Android mobile")
             return
         }
 

@@ -6,6 +6,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+enum class AppThemeMode(val id: String, val title: String) {
+    SYSTEM("system", "System"),
+    LIGHT("light", "Light"),
+    DARK("dark", "Dark");
+
+    companion object {
+        fun fromId(id: String?): AppThemeMode {
+            return entries.find { it.id == id } ?: SYSTEM
+        }
+    }
+}
+
 /**
  * Centralized, reactive persistent settings store for DexoLink on Android.
  * All settings are backed by SharedPreferences and exposed as StateFlow
@@ -14,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class DexoLinkSettings private constructor(context: Context) {
     companion object {
         private const val PREFS_NAME = "dexolink_app_settings"
+        private const val KEY_APP_THEME_MODE = "app_theme_mode"
         private const val KEY_AUTO_DISCOVERY = "auto_device_discovery"
         private const val KEY_AUTO_ACCEPT_PAIRED = "auto_accept_paired"
         private const val KEY_QUICK_FILE_SHARING = "quick_file_sharing"
@@ -36,6 +49,11 @@ class DexoLinkSettings private constructor(context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val _appThemeMode = MutableStateFlow(
+        AppThemeMode.fromId(prefs.getString(KEY_APP_THEME_MODE, AppThemeMode.SYSTEM.id))
+    )
+    val appThemeMode: StateFlow<AppThemeMode> = _appThemeMode.asStateFlow()
 
     private val _autoDeviceDiscovery = MutableStateFlow(prefs.getBoolean(KEY_AUTO_DISCOVERY, true))
     val autoDeviceDiscovery: StateFlow<Boolean> = _autoDeviceDiscovery.asStateFlow()
@@ -108,5 +126,10 @@ class DexoLinkSettings private constructor(context: Context) {
     fun setDesktopMode(enabled: Boolean) {
         _desktopMode.value = enabled
         prefs.edit().putBoolean(KEY_DESKTOP_MODE, enabled).apply()
+    }
+
+    fun setAppThemeMode(mode: AppThemeMode) {
+        _appThemeMode.value = mode
+        prefs.edit().putString(KEY_APP_THEME_MODE, mode.id).apply()
     }
 }

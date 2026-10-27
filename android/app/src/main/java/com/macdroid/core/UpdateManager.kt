@@ -53,6 +53,27 @@ class UpdateManager(private val context: Context) {
                 instance ?: UpdateManager(context.applicationContext).also { instance = it }
             }
         }
+        fun parseVersion(v: String): Triple<Int, Int, Int> {
+            val clean = v.trim().removePrefix("v").removePrefix("V")
+            val parts = clean.split(".").mapNotNull { part ->
+                part.takeWhile { it.isDigit() }.toIntOrNull()
+            }
+            return Triple(
+                parts.getOrElse(0) { 0 },
+                parts.getOrElse(1) { 0 },
+                parts.getOrElse(2) { 0 }
+            )
+        }
+
+        fun isNewerVersion(latest: String, current: String): Boolean {
+            val (lMajor, lMinor, lPatch) = parseVersion(latest)
+            val (cMajor, cMinor, cPatch) = parseVersion(current)
+            if (lMajor > cMajor) return true
+            if (lMajor < cMajor) return false
+            if (lMinor > cMinor) return true
+            if (lMinor < cMinor) return false
+            return lPatch > cPatch
+        }
     }
 
     private val _status = MutableStateFlow<UpdateStatus>(UpdateStatus.Idle)
@@ -61,31 +82,14 @@ class UpdateManager(private val context: Context) {
     fun getCurrentVersion(): String {
         return try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            pInfo.versionName ?: "4.0.2"
+            pInfo.versionName ?: "4.0.3"
         } catch (e: Exception) {
-            "4.0.2"
+            "4.0.3"
         }
     }
 
-    private fun parseVersion(v: String): Triple<Int, Int, Int> {
-        val clean = v.trim().removePrefix("v").removePrefix("V")
-        val parts = clean.split(".").mapNotNull { it.toIntOrNull() }
-        return Triple(
-            parts.getOrElse(0) { 0 },
-            parts.getOrElse(1) { 0 },
-            parts.getOrElse(2) { 0 }
-        )
-    }
-
-    fun isNewerVersion(latest: String, current: String): Boolean {
-        val (lMajor, lMinor, lPatch) = parseVersion(latest)
-        val (cMajor, cMinor, cPatch) = parseVersion(current)
-        if (lMajor > cMajor) return true
-        if (lMajor < cMajor) return false
-        if (lMinor > cMinor) return true
-        if (lMinor < cMinor) return false
-        return lPatch > cPatch
-    }
+    fun parseVersion(v: String): Triple<Int, Int, Int> = Companion.parseVersion(v)
+    fun isNewerVersion(latest: String, current: String): Boolean = Companion.isNewerVersion(latest, current)
 
     suspend fun checkForUpdates(): UpdateStatus = withContext(Dispatchers.IO) {
         _status.value = UpdateStatus.Checking
@@ -110,7 +114,7 @@ class UpdateManager(private val context: Context) {
 
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(body)
-            val tagName = json.optString("tag_name", "").removePrefix("v")
+            val tagName = json.optString("tag_name", "").removePrefix("v").removePrefix("V")
             val releaseName = json.optString("name", "DexoLink v$tagName")
             val releaseNotes = json.optString("body", "Bug fixes and performance improvements.")
             val assets = json.optJSONArray("assets")
@@ -123,10 +127,18 @@ class UpdateManager(private val context: Context) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
                     if (name.endsWith(".apk", ignoreCase = true)) {
-                        apkUrl = asset.optString("browser_download_url", "")
-                        apkSize = asset.optLong("size", 0L)
-                        if (name.contains("DexoLink", ignoreCase = true)) {
+                        val downloadUrl = asset.optString("browser_download_url", "")
+                        val size = asset.optLong("size", 0L)
+                        if (name.contains(tagName, ignoreCase = true) || name.contains("v$tagName", ignoreCase = true)) {
+                            apkUrl = downloadUrl
+                            apkSize = size
                             break
+                        } else if (name.equals("DexoLink-Android.apk", ignoreCase = true)) {
+                            apkUrl = downloadUrl
+                            apkSize = size
+                        } else if (apkUrl.isBlank() && name.contains("DexoLink", ignoreCase = true)) {
+                            apkUrl = downloadUrl
+                            apkSize = size
                         }
                     }
                 }

@@ -69,12 +69,19 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
 
         // Create the popover that shows our SwiftUI view
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 360, height: 520)
+        popover.contentSize = NSSize(width: 580, height: 580)
         popover.behavior = .transient
         popover.delegate = self
+        popover.appearance = appState.appearanceMode.nsAppearance
         popover.contentViewController = NSHostingController(
             rootView: MenuBarView(appState: appState)
         )
+
+        appState.onAppearanceChanged = { [weak self] mode in
+            DispatchQueue.main.async {
+                self?.popover?.appearance = mode.nsAppearance
+            }
+        }
 
         print("MacDroid is running in the menu bar!")
         print("   Click the antenna icon in your menu bar to open.")
@@ -385,6 +392,30 @@ class MacDroidAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCe
     }
 }
 
+public enum AppAppearanceMode: String, CaseIterable, Identifiable {
+    case system = "System"
+    case light = "Light"
+    case dark = "Dark"
+
+    public var id: String { rawValue }
+
+    public var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+
+    public var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 public struct PairingRequestInfo: Equatable {
     public let peerName: String
     public let publicKey: String
@@ -400,6 +431,27 @@ class AppState: ObservableObject {
     let pairingManager = PairingManager()
     let continuityManager = ContinuityManager.shared
     let streamManager = StreamManager.shared
+    let updateManager = MacUpdateManager.shared
+
+    var onAppearanceChanged: ((AppAppearanceMode) -> Void)?
+
+    @Published var appearanceMode: AppAppearanceMode = .system {
+        didSet {
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: "dexolink_appearance_mode")
+            onAppearanceChanged?(appearanceMode)
+        }
+    }
+
+    var isDarkTheme: Bool {
+        switch appearanceMode {
+        case .system:
+            return NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        case .light:
+            return false
+        case .dark:
+            return true
+        }
+    }
 
     @Published var isEnabled: Bool
     @Published var isDiscovering = false
@@ -462,6 +514,10 @@ class AppState: ObservableObject {
         self.isScreenSharingEnabled = UserDefaults.standard.bool(forKey: "dexolink_screen_sharing_enabled")
         self.isDesktopModeEnabled = UserDefaults.standard.bool(forKey: "dexolink_desktop_mode_enabled")
         TrustStore.shared.isMultiplePairedDevicesEnabled = self.isMultiplePairedDevicesEnabled
+        if let savedAppearance = UserDefaults.standard.string(forKey: "dexolink_appearance_mode"),
+           let mode = AppAppearanceMode(rawValue: savedAppearance) {
+            self.appearanceMode = mode
+        }
 
         // Wire up delegates
         discoveryService.delegate = self
@@ -768,8 +824,8 @@ class AppState: ObservableObject {
             return
         }
         if self.connectionState.isConnected {
-            print("Already connected, skipping connect to \(device.name)")
-            return
+            print("Resetting previous connection before connecting to \(device.name)...")
+            self.connectionManager.disconnect()
         }
         userExplicitlyDisconnected = false
         print("Connecting to \(device.name)...")
@@ -782,6 +838,24 @@ class AppState: ObservableObject {
             let sName = device.serviceName ?? device.name
             let ep = NWEndpoint.service(name: sName, type: "_macdroid._tcp", domain: "local.", interface: nil)
             connectionManager.connect(to: ep)
+        }
+    }
+
+    func connectToPairedDevice(deviceId: String) {
+        guard isEnabled else { return }
+        userExplicitlyDisconnected = false
+        let trustedList = TrustStore.shared.getTrustedDevices()
+        let trustedDev = trustedList.first(where: { $0.deviceId == deviceId })
+
+        if let matched = discoveredDevices.first(where: {
+            $0.id == deviceId ||
+            (trustedDev != nil && $0.name.caseInsensitiveCompare(trustedDev!.deviceName) == .orderedSame)
+        }) {
+            connect(to: matched)
+        } else {
+            statusMessage = "Searching for \(trustedDev?.deviceName ?? "device") on Wi-Fi..."
+            discoveryService.startBrowsing()
+            UDPBeaconService.shared.resumeBroadcasting(activeBurst: true)
         }
     }
 
@@ -1180,16 +1254,8 @@ extension AppState: DiscoveryServiceDelegate {
             connection.cancel()
             return
         }
-        if self.userExplicitlyDisconnected {
-            print("Rejecting incoming connection because user explicitly disconnected")
-            connection.cancel()
-            return
-        }
-        if self.connectionState.isConnected {
-            print("Ignoring redundant incoming connection from \(connection.endpoint) because active session is already connected")
-            connection.cancel()
-            return
-        }
+        // Peer is intentionally initiating connection: reset userExplicitlyDisconnected
+        self.userExplicitlyDisconnected = false
         print("Accepting incoming connection from: \(connection.endpoint)")
         connectionManager.accept(connection: connection)
     }

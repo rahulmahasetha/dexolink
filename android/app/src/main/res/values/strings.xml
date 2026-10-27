@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">DexoLink</string>
+    <string name="accessibility_service_description">Enables automatic background clipboard synchronization between your Android device and Mac.</string>
 </resources>

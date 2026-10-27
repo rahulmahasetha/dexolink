@@ -188,9 +188,11 @@ class DiscoveryService(private val context: Context) {
 
             override fun onServiceFound(service: NsdServiceInfo) {
                 Log.d(TAG, "Service found: ${service.serviceName}")
-                // Filter out self
+                // Filter out self and duplicate device registrations of this phone
+                val selfPrefix = "MacDroid-${Build.MODEL}"
                 if (service.serviceName.startsWith("MacDroid-Android") ||
-                    service.serviceName == DEFAULT_SERVICE_NAME) {
+                    service.serviceName == DEFAULT_SERVICE_NAME ||
+                    service.serviceName.startsWith(selfPrefix)) {
                     return
                 }
                 // Resolve service
@@ -243,6 +245,12 @@ class DiscoveryService(private val context: Context) {
                     val rawDeviceId = try {
                         serviceInfo.attributes["deviceId"]?.let { String(it, Charsets.UTF_8) }
                     } catch (e: Exception) { null }
+
+                    // Ignore self resolution if deviceId matches this local device
+                    if (!rawDeviceId.isNullOrBlank() && rawDeviceId == cryptoService.deviceId) {
+                        Log.d(TAG, "Ignoring self-discovered device: $rawDeviceId (${serviceInfo.serviceName})")
+                        return
+                    }
 
                     val isTrusted = if (!rawDeviceId.isNullOrBlank()) {
                         trustStore.isTrusted(rawDeviceId)

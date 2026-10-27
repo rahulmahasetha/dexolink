@@ -5,9 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
@@ -176,6 +178,27 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         onPrimaryClipChanged()
     }
 
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "Screen OFF -> Maintaining locks and persistent background connection")
+                    acquireLocks()
+                }
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                    Log.d(TAG, "Screen ON / Unlocked -> Checking pending clipboard queue")
+                    if (connectionManager.isConnected() && connectionManager.clipboardManager.hasPendingClips()) {
+                        val pending = connectionManager.clipboardManager.getPendingQueue()
+                        for (clip in pending) {
+                            connectionManager.sendClipboard(clip, force = false)
+                        }
+                    }
+                    DexoLinkAccessibilityService.instance?.syncClipboardSafely()
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -219,6 +242,19 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         }
 
         registerNetworkMonitoring()
+
+        try {
+            val screenFilter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            registerReceiver(screenStateReceiver, screenFilter)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register screenStateReceiver: ${e.message}")
+        }
+
+        acquireLocks()
 
         // Auto-reconnect to last known Mac if available
         val lastHost = connectionManager.lastConnectedHost
@@ -326,6 +362,11 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         notificationManager?.cancelAll()
 
         unregisterNetworkMonitoring()
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (e: Exception) {
+            // Ignore
+        }
         connectionManager.clipboardManager.removeClipChangedListener(clipListener)
         connectionManager.transferManager.removeListener(this)
         connectionManager.removeListener(this)
@@ -365,11 +406,62 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
     // --- Clipboard Handling ---
 
     private fun onPrimaryClipChanged() {
-        if (!connectionManager.isConnected() || connectionManager.userExplicitlyDisconnected) return
-        val currentText = connectionManager.clipboardManager.getCurrentClipText() ?: return
-        if (currentText.isNotBlank() && connectionManager.clipboardManager.shouldSend(currentText)) {
-            Log.d(TAG, "Local clipboard changed, auto-syncing to Mac (${currentText.take(30)}...)")
-            connectionManager.sendClipboard(currentText, force = true)
+        if (connectionManager.clipboardManager.syncMode == com.macdroid.core.ClipboardSyncMode.DISABLED ||
+            connectionManager.clipboardManager.syncMode == com.macdroid.core.ClipboardSyncMode.MAC_TO_ANDROID) {
+            return
+        }
+        var currentText = connectionManager.clipboardManager.getCurrentClipText()
+        if (currentText.isNullOrBlank()) {
+            currentText = DexoLinkAccessibilityService.instance?.readClipboardText()
+        }
+        if (!currentText.isNullOrBlank()) {
+            if (connectionManager.clipboardManager.canSend(currentText)) {
+                if (connectionManager.isConnected()) {
+                    Log.d(TAG, "Local clipboard changed, auto-syncing to Mac (${currentText.take(30)}...)")
+                    connectionManager.sendClipboard(currentText, force = false)
+                } else {
+                    Log.d(TAG, "Local clipboard changed while disconnected, queueing for Mac (${currentText.take(30)}...)")
+                    connectionManager.clipboardManager.queueOutgoing(currentText)
+                    connectionManager.triggerAutoReconnect()
+                    syncTransferNotification()
+                }
+            }
+        } else {
+            // Android 10+ background restriction: background service cannot read primaryClip directly.
+            // If DexoLink Accessibility Service is not running, prompt user to 1-tap sync or enable
+            if (!DexoLinkAccessibilityService.isServiceRunning) {
+                Log.d(TAG, "Background clip change event detected (Accessibility Service not enabled)")
+                promptBackgroundClipboardSync()
+            }
+        }
+    }
+
+    private fun promptBackgroundClipboardSync() {
+        if (!connectionManager.trustStore.hasPairedDevice() && !connectionManager.isConnected()) return
+        val peer = connectionManager.currentPeerName ?: connectionManager.trustStore.getPairedDevice()?.deviceName ?: "Mac"
+        val syncClipIntent = Intent(this, com.macdroid.ui.ClipboardSyncActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val syncClipPendingIntent = PendingIntent.getActivity(
+            this,
+            101,
+            syncClipIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("DexoLink Clipboard")
+            .setContentText("New copied text detected • Tap to sync to $peer")
+            .setSmallIcon(R.drawable.ic_qs_dexolink)
+            .setContentIntent(syncClipPendingIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .addAction(android.R.drawable.ic_menu_send, "Sync to $peer", syncClipPendingIntent)
+            .build()
+        try {
+            notificationManager?.notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to update notification: ${e.message}")
         }
     }
 
@@ -381,15 +473,17 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
 
         when (state) {
             is ConnectionState.Authenticated -> {
-                acquireWifiLock()
+                acquireLocks()
                 discoveryService.pauseForActiveConnection()
                 syncTransferNotification()
+                connectionManager.flushPendingClipboard()
                 NotificationHelper.showConnectedNotification(this, state.peerName)
             }
             is ConnectionState.Connected -> {
-                acquireWifiLock()
+                acquireLocks()
                 discoveryService.pauseForActiveConnection()
                 syncTransferNotification()
+                connectionManager.flushPendingClipboard()
                 NotificationHelper.showConnectedNotification(this, state.peerName)
             }
             is ConnectionState.Disconnected, is ConnectionState.Failed -> {
@@ -484,7 +578,24 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         networkCallback = null
     }
 
-    // --- Locks ---
+    // --- Locks & Background Persistence ---
+
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val powerManager = applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DexoLink:BackgroundSyncWakeLock")?.apply {
+                setReferenceCounted(false)
+            }
+        }
+        try {
+            if (wakeLock?.isHeld == false) {
+                wakeLock?.acquire() // Continuous hold for foreground service lifecycle
+                Log.d(TAG, "Acquired Partial WakeLock for continuous background sync")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire WakeLock: ${e.message}")
+        }
+    }
 
     private fun acquireWifiLock() {
         if (wifiLock == null) {
@@ -502,10 +613,16 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         try {
             if (wifiLock?.isHeld == false) {
                 wifiLock?.acquire()
+                Log.d(TAG, "Acquired WifiLock for low latency background connection")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to acquire WifiLock: ${e.message}")
         }
+    }
+
+    private fun acquireLocks() {
+        acquireWakeLock()
+        acquireWifiLock()
     }
 
     private fun releaseLocks() {
@@ -519,6 +636,13 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         } catch (e: Exception) {
             // Ignore
         }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.d(TAG, "onTaskRemoved: App task swiped away from Recents, ensuring background sync remains active")
+        acquireLocks()
+        updateForegroundNotification()
     }
 
     // --- Notification Handling ---
@@ -584,19 +708,26 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
         )
 
         val isCameraActive = com.macdroid.storage.DexoLinkSettings.getInstance(this).cameraSharing.value
+        val hasPending = connectionManager.clipboardManager.hasPendingClips()
+        val isConnected = connectionManager.isConnected()
+        val peer = connectionManager.currentPeerName ?: connectionManager.trustStore.getPairedDevice()?.deviceName ?: "Mac"
+
         val statusText = when {
             isMediaProjectionActive -> "Active Screen Sharing • DexoLink"
             isCameraActive -> "Active Camera Sharing • DexoLink"
+            hasPending && isConnected -> "Syncing queued clipboard with $peer..."
+            hasPending -> "Clipboard queued • Reconnecting to $peer..."
+            isConnected -> "Connected to $peer • Background sync active"
             else -> "DexoLink is active"
         }
 
-        val priority = if (isMediaProjectionActive || isCameraActive) {
+        val priority = if (isMediaProjectionActive || isCameraActive || hasPending) {
             NotificationCompat.PRIORITY_HIGH
         } else {
             NotificationCompat.PRIORITY_LOW
         }
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("DexoLink")
             .setContentText(statusText)
             .setSmallIcon(R.drawable.ic_qs_dexolink)
@@ -605,7 +736,27 @@ class MacDroidService : Service(), ConnectionEventListener, DiscoveryListener, T
             .setOnlyAlertOnce(true)
             .setPriority(priority)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
+
+        // Always show the quick clipboard sync action if paired or connected
+        if (isConnected || connectionManager.trustStore.hasPairedDevice()) {
+            val syncClipIntent = Intent(this, com.macdroid.ui.ClipboardSyncActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val syncClipPendingIntent = PendingIntent.getActivity(
+                this,
+                101,
+                syncClipIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val actionLabel = if (hasPending) "Sync Queued Clip" else "Sync Clipboard"
+            builder.addAction(
+                android.R.drawable.ic_menu_send,
+                actionLabel,
+                syncClipPendingIntent
+            )
+        }
+
+        return builder.build()
     }
 
     private fun buildPairingNotification(state: ConnectionState.Pairing): Notification {

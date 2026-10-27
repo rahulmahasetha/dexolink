@@ -217,20 +217,7 @@ class ConnectionManager(private val context: Context) {
     }
 
     private suspend fun handleNewSocket(socket: Socket, isIncoming: Boolean) {
-        if (isIncoming && userExplicitlyDisconnected) {
-            log("Rejecting incoming connection from ${socket.inetAddress?.hostAddress}: User explicitly disconnected")
-            try { socket.close() } catch (e: Exception) {}
-            return
-        }
-        val settings = DexoLinkSettings.getInstance(context)
-        if (!settings.multiPairedDevices.value && isIncoming && isConnected() && state is ConnectionState.Authenticated) {
-            log("Ignoring incoming connection from ${socket.inetAddress?.hostAddress}: Already active and authenticated with ${currentPeerName ?: "Mac"}")
-            try { socket.close() } catch (e: Exception) {}
-            return
-        }
-        if (!isIncoming) {
-            userExplicitlyDisconnected = false
-        }
+        userExplicitlyDisconnected = false
         isIncomingConnection = isIncoming
         reconnectJob?.cancel()
 
@@ -442,6 +429,7 @@ class ConnectionManager(private val context: Context) {
                     )
                     sendMessage(ack)
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
+                    flushPendingClipboard()
                 } else {
                     log("Device ${message.deviceName} (${message.deviceId}) is not paired. HelloAck(paired: false)")
                     val peerAddr = activeSocket?.inetAddress?.hostAddress ?: "Unknown"
@@ -475,6 +463,7 @@ class ConnectionManager(private val context: Context) {
                     }
                     sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
                     log("[Mode Sync] Synced mode '${clipboardManager.syncMode.id}' with ${message.deviceName}")
+                    flushPendingClipboard()
                 } else {
                     if (!isIncomingConnection) {
                         val settings = DexoLinkSettings.getInstance(context)
@@ -712,6 +701,7 @@ class ConnectionManager(private val context: Context) {
             NotificationHelper.showPairedNotification(context, currentState.peerName)
             sendMessage(ClipboardModeMessage(clipboardManager.syncMode.id))
             log("Pairing confirmed by user for ${currentState.peerName} (${currentState.peerId})")
+            flushPendingClipboard()
             try {
                 MacDroidApplication.discoveryService.stopBrowsing()
                 log("Pairing confirmed — stopped Wi-Fi discovery scanning")
@@ -806,15 +796,58 @@ class ConnectionManager(private val context: Context) {
         }
     }
 
-    fun sendClipboard(text: String, force: Boolean = false) {
-        if (!force && !clipboardManager.shouldSend(text)) {
+    fun sendClipboard(text: String, force: Boolean = false): Boolean {
+        if (!force && !clipboardManager.canSend(text)) {
             log("[Clipboard Skip] Text unchanged, echo, or blocked by mode: ${clipboardManager.syncMode.title}")
-            return
+            return false
         }
-        clipboardManager.markSent(text)
-        log("[Clipboard Transmit] Sending to Mac: \"${text.take(30)}...\" (${text.length} chars) [Mode: ${clipboardManager.syncMode.title}]")
-        val seq = (System.currentTimeMillis() % 100000).toInt()
-        sendMessage(ClipboardPushMessage(seq, text))
+        if (isConnected()) {
+            clipboardManager.markSent(text)
+            log("[Clipboard Transmit] Sending to Mac: \"${text.take(30)}...\" (${text.length} chars) [Mode: ${clipboardManager.syncMode.title}]")
+            val seq = (System.currentTimeMillis() % 100000).toInt()
+            sendMessage(ClipboardPushMessage(seq, text))
+            return true
+        } else {
+            val queued = clipboardManager.queueOutgoing(text)
+            log("[Clipboard Queued] Device disconnected. Queued clipboard update for Mac (${text.take(30)}...) [Queued: $queued]")
+            triggerAutoReconnect()
+            return queued
+        }
+    }
+
+    fun flushPendingClipboard() {
+        if (!isConnected()) return
+        val pending = clipboardManager.getPendingQueue()
+        if (pending.isEmpty()) return
+        log("[Clipboard Flush] Flushing ${pending.size} pending clipboard update(s) to Mac...")
+        for (clipText in pending) {
+            if (clipboardManager.canSend(clipText)) {
+                clipboardManager.markSent(clipText)
+                val seq = (System.currentTimeMillis() % 100000).toInt()
+                sendMessage(ClipboardPushMessage(seq, clipText))
+                log("[Clipboard Flush] Transmitted queued clip to Mac: \"${clipText.take(30)}...\"")
+            }
+        }
+        clipboardManager.clearPendingQueue()
+    }
+
+    fun triggerAutoReconnect() {
+        if (userExplicitlyDisconnected || !autoReconnect) return
+        if (isConnected() || state is ConnectionState.Connecting) return
+
+        val host = lastConnectedHost
+        val port = lastConnectedPort
+        if (!host.isNullOrBlank() && port > 0) {
+            log("Triggering auto-reconnect to $host:$port (pending clip or user action)")
+            reconnectJob?.cancel()
+            connect(host, port)
+        } else {
+            try {
+                MacDroidApplication.discoveryService.restartBrowsing()
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
     }
 
     fun sendFile(uri: Uri) {

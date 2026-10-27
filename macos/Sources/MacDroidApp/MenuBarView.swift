@@ -4,8 +4,273 @@ import Crypto
 import Core
 import CoreImage.CIFilterBuiltins
 
+// MARK: - DexoTheme (Adaptive Native macOS Light/Dark Aesthetic)
+public struct DexoTheme {
+    private static func dynamic(light: (CGFloat, CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat, CGFloat)) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let match = appearance.bestMatch(from: [.darkAqua, .aqua])
+            let isDark = match == .darkAqua
+            let c = isDark ? dark : light
+            return NSColor(calibratedRed: c.0, green: c.1, blue: c.2, alpha: c.3)
+        })
+    }
+
+    // Windows & Containers
+    // Light: Clean, soft, eye-friendly light off-white #F6F8FA. Dark: Refined macOS slate #16181D
+    public static let background = dynamic(
+        light: (0.965, 0.973, 0.980, 1.0),
+        dark:  (0.086, 0.094, 0.114, 1.0)
+    )
+
+    // Card surfaces
+    // Light: Pure crisp white #FFFFFF. Dark: Elevated card surface #1F232B
+    public static let cardBackground = dynamic(
+        light: (1.0, 1.0, 1.0, 1.0),
+        dark:  (0.122, 0.137, 0.169, 1.0)
+    )
+
+    // Inner containers, search bars, pill backgrounds
+    // Light: Soft subtle container grey #EEF2F6. Dark: Container #272C37
+    public static let innerBackground = dynamic(
+        light: (0.933, 0.949, 0.965, 1.0),
+        dark:  (0.153, 0.173, 0.216, 1.0)
+    )
+
+    // Sidebar
+    // Light: Soft clean sidebar #EFF2F6. Dark: Dark sidebar #181B22
+    public static let sidebarBackground = dynamic(
+        light: (0.937, 0.949, 0.965, 1.0),
+        dark:  (0.094, 0.106, 0.133, 1.0)
+    )
+
+    // Borders
+    // Light: Soft crisp border #E2E8F0. Dark: Crisp border #2F3644
+    public static let border = dynamic(
+        light: (0.886, 0.910, 0.941, 1.0),
+        dark:  (0.184, 0.212, 0.267, 1.0)
+    )
+    public static let borderSubtle = dynamic(
+        light: (0.922, 0.941, 0.961, 1.0),
+        dark:  (0.145, 0.165, 0.212, 1.0)
+    )
+
+    // Accents
+    public static let blue = Color(red: 0.145, green: 0.388, blue: 0.922)           // #2563EB
+    public static let blueSubtle = dynamic(
+        light: (0.859, 0.918, 0.996, 1.0), // #DBEAFE
+        dark:  (0.145, 0.388, 0.922, 0.18)
+    )
+    public static let green = dynamic(
+        light: (0.086, 0.639, 0.290, 1.0), // #16A34A (high contrast green in light mode)
+        dark:  (0.133, 0.773, 0.369, 1.0)  // #22C55E
+    )
+    public static let greenSubtle = dynamic(
+        light: (0.863, 0.969, 0.902, 1.0), // #DCFCE7
+        dark:  (0.133, 0.773, 0.369, 0.18)
+    )
+    public static let red = Color(red: 0.937, green: 0.267, blue: 0.267)            // #EF4444 (Disconnect Red)
+    public static let redSubtle = dynamic(
+        light: (0.996, 0.886, 0.886, 1.0), // #FEE2E2
+        dark:  (0.937, 0.267, 0.267, 0.18)
+    )
+    public static let orange = dynamic(
+        light: (0.851, 0.467, 0.024, 1.0), // #D97706
+        dark:  (0.961, 0.620, 0.043, 1.0)  // #F59E0B
+    )
+    public static let purple = dynamic(
+        light: (0.486, 0.227, 0.929, 1.0), // #7C3AED
+        dark:  (0.659, 0.333, 0.969, 1.0)  // #A855F7
+    )
+
+    // Typography
+    // Light: Deep slate navy #0F172A. Dark: Pure crisp white #F8FAFC
+    public static let textPrimary = dynamic(
+        light: (0.059, 0.090, 0.165, 1.0), // #0F172A
+        dark:  (0.973, 0.980, 0.988, 1.0)  // #F8FAFC
+    )
+    // Light: Cool slate #475569. Dark: Muted silver slate #94A3B8
+    public static let textSecondary = dynamic(
+        light: (0.278, 0.333, 0.412, 1.0), // #475569
+        dark:  (0.580, 0.639, 0.722, 1.0)  // #94A3B8
+    )
+    // Light: Light slate #64748B. Dark: Medium muted #64748B
+    public static let textMuted = dynamic(
+        light: (0.392, 0.455, 0.545, 1.0), // #64748B
+        dark:  (0.392, 0.455, 0.545, 1.0)
+    )
+}
+
+// MARK: - Navigation Screens & Tabs
+enum AppScreen {
+    case main
+    case settings
+}
+
+public enum SettingsTab: String, CaseIterable, Identifiable {
+    case general = "General"
+    case devices = "Devices"
+    case fileSharing = "File Sharing"
+    case clipboard = "Clipboard"
+    case network = "Network"
+    case storage = "Storage"
+    case advanced = "Advanced"
+    case about = "About"
+
+    public var id: String { rawValue }
+
+    public var iconName: String {
+        switch self {
+        case .general: return "gearshape.fill"
+        case .devices: return "laptopcomputer.and.iphone"
+        case .fileSharing: return "folder.fill"
+        case .clipboard: return "doc.on.clipboard.fill"
+        case .network: return "network"
+        case .storage: return "internaldrive.fill"
+        case .advanced: return "slider.horizontal.3"
+        case .about: return "info.circle.fill"
+        }
+    }
+}
+
+// MARK: - Native Traffic Lights Component
+struct TrafficLightsView: View {
+    var onClose: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Button(action: {
+                if let onClose = onClose {
+                    onClose()
+                } else {
+                    NSApplication.shared.keyWindow?.performClose(nil)
+                }
+            }) {
+                Circle()
+                    .fill(Color(red: 254/255.0, green: 95/255.0, blue: 86/255.0)) // #FE5F56
+                    .frame(width: 11, height: 11)
+            }
+            .buttonStyle(.plain)
+
+            Circle()
+                .fill(Color(red: 255/255.0, green: 189/255.0, blue: 45/255.0)) // #FFBD2D
+                .frame(width: 11, height: 11)
+
+            Circle()
+                .fill(Color(red: 38/255.0, green: 201/255.0, blue: 64/255.0)) // #26C940
+                .frame(width: 11, height: 11)
+        }
+    }
+}
+
+// MARK: - Helper Formatting Functions
+func fileTypeIcon(for name: String) -> String {
+    let ext = (name as NSString).pathExtension.lowercased()
+    switch ext {
+    case "pdf": return "doc.text.fill"
+    case "png", "jpg", "jpeg", "heic", "webp", "gif": return "photo.fill"
+    case "csv", "xlsx", "xls", "numbers": return "tablecells.fill"
+    case "zip", "tar", "gz", "rar", "7z": return "archivebox.fill"
+    case "mp4", "mov", "m4v", "avi", "mkv": return "film.fill"
+    case "mp3", "m4a", "wav", "aac", "flac": return "music.note"
+    case "swift", "kt", "go", "py", "js", "ts", "html", "css", "json": return "chevron.left.forwardslash.chevron.right"
+    default: return "doc.fill"
+    }
+}
+
+func fileTypeColor(for name: String) -> Color {
+    let ext = (name as NSString).pathExtension.lowercased()
+    switch ext {
+    case "pdf": return DexoTheme.red
+    case "png", "jpg", "jpeg", "heic", "webp", "gif": return DexoTheme.purple
+    case "csv", "xlsx", "xls", "numbers": return DexoTheme.green
+    case "zip", "tar", "gz", "rar", "7z": return DexoTheme.orange
+    case "mp4", "mov", "m4v", "avi", "mkv": return Color.pink
+    case "mp3", "m4a", "wav", "aac", "flac": return Color.cyan
+    default: return DexoTheme.blue
+    }
+}
+
+func formattedTimeAgo(from date: Date) -> String {
+    let seconds = Int(-date.timeIntervalSinceNow)
+    if seconds < 60 {
+        return "Just now"
+    } else if seconds < 3600 {
+        return "\(seconds / 60)m ago"
+    } else if seconds < 86400 {
+        return "\(seconds / 3600)h ago"
+    } else {
+        return "\(seconds / 86400)d ago"
+    }
+}
+
+// MARK: - Recent Transfer Row
+struct RecentTransferRow: View {
+    let item: TransferItem
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(fileTypeColor(for: item.name).opacity(0.2))
+                    .frame(width: 28, height: 28)
+                Image(systemName: fileTypeIcon(for: item.name))
+                    .font(.system(size: 12))
+                    .foregroundColor(fileTypeColor(for: item.name))
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DexoTheme.textPrimary)
+                    .lineLimit(1)
+                Text(subtitleText)
+                    .font(.system(size: 9))
+                    .foregroundColor(DexoTheme.textSecondary)
+            }
+
+            Spacer()
+
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(DexoTheme.green)
+                .font(.system(size: 12))
+
+            Menu {
+                if let url = item.localURL {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                }
+                Button("Delete from History") {
+                    appState.deleteTransferHistoryItem(id: item.id)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DexoTheme.textSecondary)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 16)
+        }
+        .padding(8)
+        .background(DexoTheme.innerBackground.opacity(0.6))
+        .cornerRadius(8)
+    }
+
+    private var subtitleText: String {
+        let sizeStr = ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file)
+        let dirStr = item.isOutgoing ? "Sent" : "Received"
+        let timeStr = formattedTimeAgo(from: item.startTime)
+        return "\(sizeStr) • \(dirStr) • \(timeStr)"
+    }
+}
+
+// MARK: - MenuBarView
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
+    @State private var currentScreen: AppScreen = .main
+    @State private var selectedSettingsTab: SettingsTab = .general
+
     @State private var showManualIPSheet = false
     @State private var showHistorySheet = false
     @State private var historyInitialTab = 0
@@ -16,753 +281,62 @@ struct MenuBarView: View {
     @State private var showSettingsSheet = false
     @State private var showQRCodeSheet = false
     @State private var connectionQRCode: NSImage?
+    @AppStorage("autoReconnect") private var autoReconnect = true
+    @AppStorage("launchAtLogin") private var launchAtLogin = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // MARK: - Header
-            HStack(spacing: 8) {
-                Image(systemName: "link.circle.fill")
-                    .foregroundColor(.cyan)
-                    .font(.title3)
+        ZStack {
+            DexoTheme.background.ignoresSafeArea()
 
-                Text("DexoLink")
-                    .font(.headline)
-                    .fontWeight(.bold)
-
-                Spacer()
-
-                Button {
-                    generateConnectionQRCode()
-                    showQRCodeSheet = true
-                } label: {
-                    Image(systemName: "qrcode")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Show a QR code for mobile devices to scan")
-
-                Button(action: {
-                    showSettingsSheet.toggle()
-                }) {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Settings & All Feature Controls")
-
-                Button(action: {
-                    historyInitialTab = 0
-                    showHistorySheet.toggle()
-                }) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Transfer & Clipboard History")
-
-                Button(action: {
-                    showManualIPSheet.toggle()
-                }) {
-                    Image(systemName: "link")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Direct IP Connection (Optional Fallback)")
-
-                Button(action: {
-                    NSApplication.shared.terminate(nil)
-                }) {
-                    Image(systemName: "power")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Quit DexoLink")
+            if currentScreen == .main {
+                mainDashboardView
+            } else {
+                SettingsDetailView(
+                    appState: appState,
+                    selectedTab: $selectedSettingsTab,
+                    onClose: {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            currentScreen = .main
+                        }
+                    }
+                )
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color(nsColor: .windowBackgroundColor))
-
-            .sheet(isPresented: $showQRCodeSheet) {
-                VStack(spacing: 14) {
-                    Text("Connect a Mobile Device")
-                        .font(.headline)
-                    Text("Scan this code with DexoLink on Android or iPhone.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    if let connectionQRCode {
-                        Image(nsImage: connectionQRCode)
-                            .interpolation(.none)
-                            .resizable()
-                            .frame(width: 240, height: 240)
-                            .padding(12)
-                            .background(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        ShareLink(item: Image(nsImage: connectionQRCode), preview: SharePreview("DexoLink Connection QR")) {
-                            Label("Share QR Image", systemImage: "square.and.arrow.up")
-                        }
-                    } else {
-                        Text("Connect this Mac to a network and try again.")
-                            .foregroundColor(.secondary)
-                    }
-                    Button("Close") { showQRCodeSheet = false }
-                        .keyboardShortcut(.cancelAction)
-                }
-                .padding(24)
-                .frame(minWidth: 320, minHeight: 360)
-            }
-
-            Divider()
-
-            // MARK: - Master Quick Settings ON/OFF Card
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(appState.isEnabled ? Color.blue.opacity(0.16) : Color.secondary.opacity(0.12))
-                        .frame(width: 36, height: 36)
-                    Image(systemName: appState.isEnabled ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(appState.isEnabled ? .blue : .secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("DexoLink")
-                            .font(.system(size: 13, weight: .bold))
-
-                        Text(appState.isEnabled ? "ON" : "OFF")
-                            .font(.system(size: 9, weight: .heavy))
-                            .foregroundColor(appState.isEnabled ? .blue : .secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(
-                                Capsule()
-                                    .fill(appState.isEnabled ? Color.blue.opacity(0.15) : Color.secondary.opacity(0.12))
-                            )
-                    }
-
-                    Text(masterSubtitleText)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: Binding(
-                    get: { appState.isEnabled },
-                    set: { appState.setMasterEnabled($0) }
-                ))
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .scaleEffect(0.85)
-                .help(appState.isEnabled ? "Turn Off DexoLink (0% CPU & Battery)" : "Turn On DexoLink")
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-
-            Divider()
-
-            ScrollView {
-                VStack(spacing: 10) {
-                    if !appState.isEnabled {
-                        // DexoLink Turned Off State Banner
-                        VStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.secondary.opacity(0.1))
-                                    .frame(width: 58, height: 58)
-                                Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                                    .font(.system(size: 26))
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.top, 24)
-
-                            VStack(spacing: 4) {
-                                Text("DexoLink is Turned Off")
-                                    .font(.system(size: 14, weight: .bold))
-
-                                Text("All background listeners, discovery broadcasts, and socket connections are stopped to ensure 0% CPU and battery usage.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 24)
-                            }
-
-                            if let paired = TrustStore.shared.getPairedDevice() {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "lock.shield.fill")
-                                        .foregroundColor(.cyan)
-                                        .font(.caption)
-                                    Text("Paired device saved: \(paired.deviceName)")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color.cyan.opacity(0.1))
-                                .cornerRadius(6)
-                            }
-
-                            Button(action: {
-                                appState.setMasterEnabled(true)
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "bolt.fill")
-                                    Text("Turn On DexoLink")
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.blue)
-                            .controlSize(.regular)
-                            .padding(.top, 4)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 20)
-                    } else {
-                        // MARK: - Incoming Pairing Request Card
-                    if let req = appState.incomingPairingRequest {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "lock.shield.fill")
-                                    .foregroundColor(.purple)
-                                    .font(.title3)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Pairing Request")
-                                        .font(.subheadline)
-                                        .fontWeight(.bold)
-                                    Text("\(req.peerName) wants to pair with this Mac")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
-
-                            if !req.pin.isEmpty {
-                                HStack {
-                                    Text("Code: \(req.pin)")
-                                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                        .padding(.vertical, 3)
-                                        .padding(.horizontal, 8)
-                                        .background(Color.purple.opacity(0.12))
-                                        .cornerRadius(6)
-                                    Spacer()
-                                }
-                            }
-
-                            HStack(spacing: 10) {
-                                Button("Reject") {
-                                    appState.rejectIncomingPairing()
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .foregroundColor(.red)
-
-                                Spacer()
-
-                                Button("Accept") {
-                                    appState.acceptIncomingPairing()
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                                .tint(.green)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color.purple.opacity(0.08))
-                        .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.purple.opacity(0.3), lineWidth: 1)
-                        )
-                    }
-
-                    // MARK: - DexoLink Continuity (Handoff) Incoming Card
-                    if let incoming = appState.continuityManager.incomingActivity {
-                        ContinuityIncomingCard(
-                            activity: incoming,
-                            onContinue: {
-                                _ = appState.continuityManager.continueIncomingActivity()
-                            },
-                            onDismiss: {
-                                appState.continuityManager.dismissIncomingActivity()
-                            }
-                        )
-                    }
-
-                    // MARK: - Paired Devices Status Cards
-                    let trustedDevices = TrustStore.shared.getTrustedDevices()
-                    if !trustedDevices.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            if appState.isMultiplePairedDevicesEnabled && trustedDevices.count > 1 {
-                                Text("Paired Devices (\(trustedDevices.count))")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                            }
-                            ForEach(trustedDevices, id: \.deviceId) { paired in
-                                let isThisConnected = isConnected && (appState.connectedDeviceId == paired.deviceId || appState.connectedDeviceName == paired.deviceName)
-                                HStack(spacing: 8) {
-                                    Image(systemName: isThisConnected ? "checkmark.seal.fill" : "lock.shield.fill")
-                                        .foregroundColor(isThisConnected ? .green : .blue)
-                                        .font(.title2)
-
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack(spacing: 6) {
-                                            Text(paired.deviceName)
-                                                .font(.subheadline)
-                                                .fontWeight(.bold)
-                                                .lineLimit(1)
-                                                .truncationMode(.tail)
-                                            Text(isThisConnected ? "Connected" : "Paired")
-                                                .font(.system(size: 9, weight: .bold))
-                                                .foregroundColor(isThisConnected ? .green : .cyan)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background((isThisConnected ? Color.green : Color.cyan).opacity(0.18))
-                                                .cornerRadius(4)
-                                                .lineLimit(1)
-                                                .fixedSize(horizontal: true, vertical: true)
-                                        }
-                                        Text(appState.isMultiplePairedDevicesEnabled ? "Multi-Device Mode • Keychain Protected" : "Strict 1-Device Policy • Keychain Protected")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(1)
-                                    }
-
-                                    Spacer(minLength: 4)
-
-                                    HStack(spacing: 6) {
-                                        if isThisConnected {
-                                            Button("Disconnect") {
-                                                appState.disconnect()
-                                            }
-                                            .buttonStyle(.bordered)
-                                            .controlSize(.small)
-                                            .tint(.orange)
-                                            .help("Disconnect active session while preserving pairing")
-                                        }
-
-                                        Button("Unpair") {
-                                            appState.unpair(deviceId: paired.deviceId)
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                        .tint(.red)
-                                        .help("Unpair this specific device")
-                                    }
-                                }
-                                .padding(10)
-                                .background(Color.green.opacity(0.08))
-                                .cornerRadius(10)
-                            }
-                        }
-                    }
-
-                    // MARK: - Pairing PIN Banner if Active
-                    if let pin = appState.pairingPin {
-                        HStack(spacing: 10) {
-                            Image(systemName: "key.fill")
-                                .foregroundColor(.purple)
-                                .font(.title3)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Pairing PIN: \(pin)")
-                                    .font(.subheadline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.purple)
-                                Text("Confirm this 6-digit code on the requesting device")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color.purple.opacity(0.12))
-                        .cornerRadius(10)
-                    }
-
-                    // MARK: - Quick File Sharing Card
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "folder.fill.badge.gearshape")
-                                .foregroundColor(.orange)
-                            Text("Quick File Sharing")
-                                .font(.subheadline)
-                                .fontWeight(.bold)
-                            Spacer()
-
-                            Button(action: {
-                                NSWorkspace.shared.open(appState.transferManager.downloadDirectory)
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.down.circle")
-                                    Text("Downloads")
-                                }
-                                .font(.caption2)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                            .help("Open DexoLink Downloads folder in Finder")
-                        }
-
-                        // Drag & Drop / Select Box
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(isTargetedForDrop ? Color.accentColor : Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
-                                .background(Color.accentColor.opacity(isTargetedForDrop ? 0.12 : 0.04))
-                                .cornerRadius(10)
-
-                            VStack(spacing: 6) {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.system(size: 26))
-                                    .foregroundColor(.accentColor)
-
-                                Text(isConnected ? "Drop files here or click to send" : "Connect a device to send files")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-
-                                Text("Photos • PDFs • Documents • Downloads • Any file")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
-
-                                HStack(spacing: 8) {
-                                    if isConnected {
-                                        let targetLabel = appState.connectedDeviceName.map { "Send to \($0)" } ?? "Send Files"
-                                        Button(targetLabel) {
-                                            selectAndSendFile()
-                                        }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                    }
-
-                                    Button("All Share Options...") {
-                                        selectAndShareWithSystem()
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                                .padding(.top, 2)
-                            }
-                            .padding(.vertical, 12)
-                        }
-                        .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
-                            handleFileDrop(providers: providers)
-                        }
-
-                        // Active Transfer Progress (with Pause / Resume & Cancel)
-                        if let transfer = appState.activeTransfer {
-                            let isPaused: Bool = {
-                                if case .paused = transfer.state { return true }
-                                return false
-                            }()
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Image(systemName: transfer.isOutgoing ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                                        .foregroundColor(transfer.isOutgoing ? .cyan : .green)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(transfer.name)
-                                            .font(.caption)
-                                            .fontWeight(.semibold)
-                                            .lineLimit(1)
-                                        Text(isPaused ? "Paused" : (transfer.isOutgoing ? "Uploading to phone..." : "Downloading from phone..."))
-                                            .font(.system(size: 9))
-                                            .foregroundColor(isPaused ? .orange : .secondary)
-                                    }
-
-                                    Spacer()
-
-                                    // Pause / Resume Button
-                                    Button(action: {
-                                        if isPaused {
-                                            appState.unpauseTransfer(id: transfer.id)
-                                        } else {
-                                            appState.pauseTransfer(id: transfer.id)
-                                        }
-                                    }) {
-                                        Image(systemName: isPaused ? "play.circle.fill" : "pause.circle.fill")
-                                            .foregroundColor(isPaused ? .green : .orange)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help(isPaused ? "Resume transfer" : "Pause transfer")
-
-                                    // Cancel Button
-                                    Button(action: {
-                                        appState.cancelTransfer(id: transfer.id)
-                                    }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.red.opacity(0.8))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Cancel file sharing")
-                                }
-
-                                ProgressView(value: transfer.progress)
-                                    .progressViewStyle(.linear)
-
-                                HStack {
-                                    Text("\(formatBytes(transfer.bytesTransferred)) of \(formatBytes(transfer.size))")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                    if transfer.speedBytesPerSec > 0 && !isPaused {
-                                        Text("\(formatBytes(Int64(transfer.speedBytesPerSec)))/s")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Text("•")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Text("ETA: \(formatETA(transfer.etaSeconds))")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Text("\(Int(transfer.progress * 100))%")
-                                        .font(.caption2)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(isPaused ? .orange : .primary)
-                                }
-                            }
-                            .padding(8)
-                            .background((isPaused ? Color.orange : Color.secondary).opacity(0.10))
-                            .cornerRadius(8)
-                        }
-
-                        // Recent Completed Transfers (with Manage History & Single Delete)
-                        if !appState.recentTransfers.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("Recent Transfers")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundColor(.secondary)
-
-                                    Spacer()
-
-                                    Button("Manage (\(appState.recentTransfers.count))") {
-                                        historyInitialTab = 0
-                                        showHistorySheet = true
-                                    }
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(.accentColor)
-                                }
-
-                                ForEach(appState.recentTransfers.prefix(3)) { item in
-                                    HStack(spacing: 6) {
-                                        Image(systemName: item.state == .completed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                            .foregroundColor(item.state == .completed ? .green : .red)
-                                            .font(.caption)
-                                        Text(item.name)
-                                            .font(.caption2)
-                                            .lineLimit(1)
-                                        Spacer()
-                                        Text(formatBytes(item.size))
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        if item.state != .completed && item.isOutgoing && item.localURL != nil {
-                                            Button("Resume") {
-                                                appState.resumeTransfer(id: item.id)
-                                            }
-                                            .buttonStyle(.borderedProminent)
-                                            .controlSize(.mini)
-                                            .font(.caption2)
-                                        } else if let url = item.localURL {
-                                            Button("Show") {
-                                                NSWorkspace.shared.activateFileViewerSelecting([url])
-                                            }
-                                            .buttonStyle(.borderless)
-                                            .font(.caption2)
-                                        }
-
-                                        // Individual Delete from history (safe: file preserved)
-                                        Button(action: {
-                                            appState.deleteTransferHistoryItem(id: item.id)
-                                        }) {
-                                            Image(systemName: "trash")
-                                                .font(.system(size: 9))
-                                                .foregroundColor(.secondary.opacity(0.7))
-                                        }
-                                        .buttonStyle(.plain)
-                                        .help("Remove from history (preserves original file on Mac)")
-                                    }
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
-                    }
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                    .cornerRadius(10)
-
-                    // MARK: - Feature Controls Card (Matching Reference Design)
-                    HStack(spacing: 10) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(red: 0.12, green: 0.23, blue: 0.54).opacity(0.4))
-                                .frame(width: 32, height: 32)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                                )
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(Color(red: 0.38, green: 0.65, blue: 0.98))
-                        }
-
-                        HStack(spacing: 6) {
-                            Text("Feature Controls")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.primary)
-
-                            Text("\(appState.activeFeaturesCount) ACTIVE")
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundColor(Color(red: 0.29, green: 0.87, blue: 0.50))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(Color(red: 0.08, green: 0.33, blue: 0.18).opacity(0.9)))
-                        }
-
-                        Spacer()
-
-                        Button(action: {
-                            showSettingsSheet = true
-                        }) {
-                            Text("Configure")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color(red: 0.15, green: 0.39, blue: 0.92))
-                                .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open dedicated Settings view containing all feature controls")
-                    }
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                    .cornerRadius(10)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                    )
-
-                    // MARK: - Nearby Discovered Devices
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Nearby Devices (Wi-Fi)")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.secondary)
-
-                            if appState.isActivelyScanning {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                            }
-
-                            Spacer()
-
-                            // Start / Stop Discovery Control
-                            Button(action: {
-                                appState.setDiscoveryEnabled(!appState.discoveryEnabled)
-                            }) {
-                                HStack(spacing: 3) {
-                                    Circle()
-                                        .fill(appState.discoveryEnabled ? Color.green : Color.red)
-                                        .frame(width: 6, height: 6)
-                                    Text(appState.discoveryEnabled ? "Stop" : "Start")
-                                        .font(.system(size: 10, weight: .bold))
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                            .help(appState.discoveryEnabled ? "Stop discovery & suppress pairing notifications" : "Start discovery & enable pairing notifications")
-
-                            // Manual Rescan Button
-                            Button(action: {
-                                appState.refreshDiscovery()
-                            }) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(appState.discoveryEnabled ? .accentColor : .secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(!appState.discoveryEnabled)
-                            .help("Rescan nearby devices now")
-                        }
-
-                        if appState.discoveredDevices.isEmpty {
-                            VStack(spacing: 6) {
-                                Image(systemName: appState.discoveryEnabled ? "antenna.radiowaves.left.and.right" : "eye.slash")
-                                    .font(.title3)
-                                    .foregroundColor(.secondary)
-                                Text(appState.discoveryEnabled ? (appState.isActivelyScanning ? "Searching on local Wi-Fi..." : "No devices found nearby") : "Discovery paused")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text(appState.discoveryEnabled ? "Open DexoLink on your iPhone or Android phone on the same Wi-Fi." : "Click 'Start' above to resume Wi-Fi discovery & pairing.")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary.opacity(0.8))
-                                    .multilineTextAlignment(.center)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                        } else {
-                            VStack(spacing: 4) {
-                                ForEach(appState.discoveredDevices) { device in
-                                    DeviceRow(device: device, appState: appState)
-                                }
-                            }
-                        }
-                    }
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.4))
-                    .cornerRadius(10)
-                    }
-                }
-                .padding(10)
-            }
-
-            Divider()
-
-            // MARK: - Footer
-            HStack {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-
-                Text(footerStatusText)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-
-                Spacer()
-
-                Button("Refresh") {
-                    appState.refreshDiscovery()
-                }
-                .buttonStyle(.plain)
-                .font(.caption2)
-                .foregroundColor(.accentColor)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-
-            // MARK: - Developer Attribution Footer
-            HStack {
-                Spacer()
-                Text("Developed by Rahul Mahaseth | DexoLink v4.0.2")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.8))
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(width: 360, height: 520)
+        .frame(width: 580, height: 580)
+        .preferredColorScheme(appState.appearanceMode.colorScheme)
+        .sheet(isPresented: $showQRCodeSheet) {
+            VStack(spacing: 14) {
+                Text("Connect a Mobile Device")
+                    .font(.headline)
+                    .foregroundColor(DexoTheme.textPrimary)
+                Text("Scan this code with DexoLink on Android or iPhone.")
+                    .font(.caption)
+                    .foregroundColor(DexoTheme.textSecondary)
+                if let connectionQRCode {
+                    Image(nsImage: connectionQRCode)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 240, height: 240)
+                        .padding(12)
+                        .background(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    ShareLink(item: Image(nsImage: connectionQRCode), preview: SharePreview("DexoLink Connection QR")) {
+                        Label("Share QR Image", systemImage: "square.and.arrow.up")
+                    }
+                } else {
+                    Text("Connect this Mac to a network and try again.")
+                        .foregroundColor(DexoTheme.textSecondary)
+                }
+                Button("Close") { showQRCodeSheet = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(24)
+            .frame(minWidth: 320, minHeight: 360)
+            .background(DexoTheme.background)
+        }
         .sheet(isPresented: $showManualIPSheet) {
             ManualIPSheet(
+                appState: appState,
                 isPresented: $showManualIPSheet,
                 ip: $manualIP,
                 port: $manualPort,
@@ -789,6 +363,724 @@ struct MenuBarView: View {
                 appState: appState,
                 isPresented: $showSettingsSheet
             )
+        }
+    }
+
+    // MARK: - Main Dashboard View (Matching Image 2 Left Window)
+    private var mainDashboardView: some View {
+        VStack(spacing: 0) {
+            // MARK: Top Bar
+            HStack(spacing: 10) {
+                TrafficLightsView(onClose: {
+                    NSApplication.shared.keyWindow?.performClose(nil)
+                })
+
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            .fill(DexoTheme.blue)
+                            .frame(width: 22, height: 22)
+                        Image(systemName: "link")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+
+                    Text("DexoLink")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(DexoTheme.textPrimary)
+                }
+
+                Spacer()
+
+                HStack(spacing: 12) {
+                    Button {
+                        generateConnectionQRCode()
+                        showQRCodeSheet = true
+                    } label: {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 13))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show Connection QR Code")
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            currentScreen = .settings
+                        }
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 13))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Settings & Preferences")
+
+                    Button {
+                        historyInitialTab = 0
+                        showHistorySheet = true
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 13))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Transfer History")
+
+                    Button {
+                        showManualIPSheet = true
+                    } label: {
+                        Image(systemName: "link")
+                            .font(.system(size: 13))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Direct IP Connection")
+
+                    Button {
+                        NSApplication.shared.terminate(nil)
+                    } label: {
+                        Image(systemName: "power")
+                            .font(.system(size: 13))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Quit DexoLink")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(DexoTheme.background)
+
+            Divider()
+                .background(DexoTheme.border)
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 14) {
+                    // MARK: Master Switch Card
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(appState.isEnabled ? DexoTheme.blue.opacity(0.18) : DexoTheme.innerBackground)
+                                .frame(width: 38, height: 38)
+                            Image(systemName: appState.isEnabled ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(appState.isEnabled ? DexoTheme.blue : DexoTheme.textSecondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text("DexoLink")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(DexoTheme.textPrimary)
+
+                                Text(appState.isEnabled ? "ON" : "OFF")
+                                    .font(.system(size: 9, weight: .heavy))
+                                    .foregroundColor(appState.isEnabled ? .white : DexoTheme.textSecondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(appState.isEnabled ? DexoTheme.blue : DexoTheme.innerBackground)
+                                    )
+                            }
+
+                            Text(masterSubtitleText)
+                                .font(.caption2)
+                                .foregroundColor(DexoTheme.textSecondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { appState.isEnabled },
+                            set: { appState.setMasterEnabled($0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .scaleEffect(0.85)
+                    }
+                    .padding(12)
+                    .background(DexoTheme.cardBackground)
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(DexoTheme.border, lineWidth: 1)
+                    )
+
+                    if !appState.isEnabled {
+                        // DexoLink Off Banner
+                        VStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(DexoTheme.innerBackground)
+                                    .frame(width: 54, height: 54)
+                                Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(DexoTheme.textSecondary)
+                            }
+                            .padding(.top, 16)
+
+                            VStack(spacing: 4) {
+                                Text("DexoLink is Turned Off")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(DexoTheme.textPrimary)
+
+                                Text("All background discovery, sockets, and sync are paused to ensure 0% CPU and battery usage.")
+                                    .font(.caption)
+                                    .foregroundColor(DexoTheme.textSecondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 20)
+                            }
+
+                            Button(action: {
+                                appState.setMasterEnabled(true)
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "bolt.fill")
+                                    Text("Turn On DexoLink")
+                                }
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(DexoTheme.blue)
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 4)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                    } else {
+                        // MARK: Incoming Pairing Request
+                        if let req = appState.incomingPairingRequest {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "lock.shield.fill")
+                                        .foregroundColor(DexoTheme.purple)
+                                        .font(.title3)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Pairing Request")
+                                            .font(.subheadline)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(DexoTheme.textPrimary)
+                                        Text("\(req.peerName) wants to pair with this Mac")
+                                            .font(.caption2)
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                    }
+                                    Spacer()
+                                }
+
+                                if !req.pin.isEmpty {
+                                    HStack {
+                                        Text("Code: \(req.pin)")
+                                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                            .padding(.vertical, 3)
+                                            .padding(.horizontal, 8)
+                                            .background(DexoTheme.purple.opacity(0.18))
+                                            .foregroundColor(.white)
+                                            .cornerRadius(6)
+                                        Spacer()
+                                    }
+                                }
+
+                                HStack(spacing: 10) {
+                                    Button("Reject") {
+                                        appState.rejectIncomingPairing()
+                                    }
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 5)
+                                    .background(DexoTheme.red)
+                                    .cornerRadius(6)
+                                    .buttonStyle(.plain)
+
+                                    Spacer()
+
+                                    Button("Accept") {
+                                        appState.acceptIncomingPairing()
+                                    }
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 5)
+                                    .background(DexoTheme.green)
+                                    .cornerRadius(6)
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(12)
+                            .background(DexoTheme.cardBackground)
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(DexoTheme.purple.opacity(0.5), lineWidth: 1)
+                            )
+                        }
+
+                        // MARK: Continuity Activity
+                        if let incoming = appState.continuityManager.incomingActivity {
+                            ContinuityIncomingCard(
+                                activity: incoming,
+                                onContinue: {
+                                    _ = appState.continuityManager.continueIncomingActivity()
+                                },
+                                onDismiss: {
+                                    appState.continuityManager.dismissIncomingActivity()
+                                }
+                            )
+                        }
+
+                        // MARK: - PAIRED DEVICE Section
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("PAIRED DEVICE")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(DexoTheme.textSecondary)
+
+                            let trustedDevices = TrustStore.shared.getTrustedDevices()
+                            if !trustedDevices.isEmpty {
+                                ForEach(trustedDevices, id: \.deviceId) { paired in
+                                    let isThisConnected = isConnected && (appState.connectedDeviceId == paired.deviceId || appState.connectedDeviceName == paired.deviceName)
+
+                                    HStack(spacing: 10) {
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(DexoTheme.innerBackground)
+                                                .frame(width: 36, height: 36)
+                                            Image(systemName: deviceSystemIcon(for: paired.deviceName))
+                                                .font(.system(size: 15))
+                                                .foregroundColor(isThisConnected ? DexoTheme.blue : DexoTheme.textSecondary)
+                                        }
+
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(spacing: 6) {
+                                                Text(paired.deviceName)
+                                                    .font(.system(size: 13, weight: .semibold))
+                                                    .foregroundColor(DexoTheme.textPrimary)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.tail)
+
+                                                Circle()
+                                                    .fill(isThisConnected ? DexoTheme.green : DexoTheme.textSecondary.opacity(0.5))
+                                                    .frame(width: 6, height: 6)
+
+                                                Text(isThisConnected ? "Online" : "Offline")
+                                                    .font(.system(size: 10, weight: .medium))
+                                                    .foregroundColor(isThisConnected ? DexoTheme.green : DexoTheme.textSecondary)
+                                                    .lineLimit(1)
+                                                    .fixedSize(horizontal: true, vertical: false)
+                                            }
+
+                                            Text(isThisConnected ? "Paired • Last seen: Just now" : "Paired • Disconnected")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(DexoTheme.textSecondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                        }
+
+                                        Spacer(minLength: 4)
+
+                                        HStack(spacing: 6) {
+                                            if isThisConnected {
+                                                Button(action: {
+                                                    appState.disconnect()
+                                                }) {
+                                                    Text("Disconnect")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                        .foregroundColor(.white)
+                                                        .lineLimit(1)
+                                                        .fixedSize(horizontal: true, vertical: false)
+                                                        .padding(.horizontal, 10)
+                                                        .padding(.vertical, 5)
+                                                        .background(DexoTheme.red)
+                                                        .cornerRadius(6)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .help("Disconnect active session while preserving pairing")
+                                            } else {
+                                                Button(action: {
+                                                    appState.connectToPairedDevice(deviceId: paired.deviceId)
+                                                }) {
+                                                    Text("Connect")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                        .foregroundColor(.white)
+                                                        .lineLimit(1)
+                                                        .fixedSize(horizontal: true, vertical: false)
+                                                        .padding(.horizontal, 10)
+                                                        .padding(.vertical, 5)
+                                                        .background(DexoTheme.blue)
+                                                        .cornerRadius(6)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .help("Reconnect to this paired device immediately")
+                                            }
+
+                                            Button(action: {
+                                                appState.unpair(deviceId: paired.deviceId)
+                                            }) {
+                                                Text("Unpair")
+                                                    .font(.system(size: 11, weight: .medium))
+                                                    .foregroundColor(DexoTheme.textSecondary)
+                                                    .lineLimit(1)
+                                                    .fixedSize(horizontal: true, vertical: false)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 5)
+                                                    .background(DexoTheme.innerBackground)
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 6)
+                                                            .stroke(DexoTheme.border, lineWidth: 1)
+                                                    )
+                                                    .cornerRadius(6)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .help("Unpair this specific device")
+
+                                            Button(action: {
+                                                selectedSettingsTab = .devices
+                                                withAnimation(.easeInOut(duration: 0.18)) {
+                                                    currentScreen = .settings
+                                                }
+                                            }) {
+                                                Image(systemName: "chevron.right")
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                    .foregroundColor(DexoTheme.textSecondary)
+                                                    .padding(4)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                    .padding(10)
+                                    .background(DexoTheme.cardBackground)
+                                    .cornerRadius(10)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(DexoTheme.border, lineWidth: 1)
+                                    )
+                                }
+                            } else {
+                                HStack {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(DexoTheme.innerBackground)
+                                            .frame(width: 36, height: 36)
+                                        Image(systemName: "laptopcomputer.and.iphone")
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("No paired device")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(DexoTheme.textPrimary)
+                                        Text("Discover devices on Wi-Fi below or scan QR code")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                    }
+
+                                    Spacer()
+
+                                    Button("Scan QR") {
+                                        generateConnectionQRCode()
+                                        showQRCodeSheet = true
+                                    }
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(DexoTheme.blue)
+                                    .cornerRadius(6)
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(10)
+                                .background(DexoTheme.cardBackground)
+                                .cornerRadius(10)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(DexoTheme.border, lineWidth: 1)
+                                )
+                            }
+                        }
+
+                        // MARK: - NEARBY DEVICES Section
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("NEARBY DEVICES")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(DexoTheme.textSecondary)
+
+                                Spacer()
+
+                                Button("Refresh") {
+                                    appState.refreshDiscovery()
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DexoTheme.blue)
+                                .buttonStyle(.plain)
+                            }
+
+                            VStack(spacing: 6) {
+                                if !appState.discoveredDevices.isEmpty {
+                                    ForEach(appState.discoveredDevices) { device in
+                                        DeviceRow(device: device, appState: appState)
+                                    }
+                                } else {
+                                    HStack(spacing: 8) {
+                                        if appState.isActivelyScanning {
+                                            ProgressView()
+                                                .scaleEffect(0.6)
+                                                .frame(width: 16, height: 16)
+                                        }
+                                        Text(appState.isActivelyScanning ? "Searching on local Wi-Fi..." : "No other devices found nearby")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 6)
+                                }
+
+                                // Local device row
+                                HStack(spacing: 10) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(DexoTheme.innerBackground)
+                                            .frame(width: 32, height: 32)
+                                        Image(systemName: "laptopcomputer")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(Host.current().localizedName ?? "Rahul's MacBook")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(DexoTheme.textPrimary)
+                                        Text("Offline • This device")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                    }
+
+                                    Spacer()
+
+                                    Text("Local")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(DexoTheme.textSecondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(DexoTheme.innerBackground)
+                                        .cornerRadius(4)
+                                }
+                                .padding(8)
+                                .background(DexoTheme.innerBackground.opacity(0.5))
+                                .cornerRadius(8)
+                            }
+                            .padding(8)
+                            .background(DexoTheme.cardBackground)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(DexoTheme.border, lineWidth: 1)
+                            )
+                        }
+
+                        // MARK: - SEND FILES Section
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("SEND FILES")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(DexoTheme.textSecondary)
+
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(isTargetedForDrop ? DexoTheme.blue : DexoTheme.border, style: StrokeStyle(lineWidth: 1.5, dash: [4]))
+                                    .background(isTargetedForDrop ? DexoTheme.blueSubtle : DexoTheme.cardBackground)
+                                    .cornerRadius(10)
+
+                                VStack(spacing: 8) {
+                                    Image(systemName: "folder.fill")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(DexoTheme.blue)
+
+                                    VStack(spacing: 2) {
+                                        Text(isConnected ? "Drag files here to send" : "Connect a device to send files")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(DexoTheme.textPrimary)
+
+                                        Text("Photos • PDFs • Documents • Downloads • Any file")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                    }
+
+                                    Button(action: {
+                                        selectAndSendFile()
+                                    }) {
+                                        Text("Choose Files")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 6)
+                                            .background(DexoTheme.blue)
+                                            .cornerRadius(14)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.vertical, 16)
+                            }
+                            .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
+                                handleFileDrop(providers: providers)
+                            }
+
+                            // Active Transfer Display
+                            if let transfer = appState.activeTransfer {
+                                let isPaused: Bool = {
+                                    if case .paused = transfer.state { return true }
+                                    return false
+                                }()
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Image(systemName: transfer.isOutgoing ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                            .foregroundColor(transfer.isOutgoing ? DexoTheme.blue : DexoTheme.green)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(transfer.name)
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(DexoTheme.textPrimary)
+                                                .lineLimit(1)
+                                            Text(isPaused ? "Paused" : (transfer.isOutgoing ? "Uploading to phone..." : "Downloading from phone..."))
+                                                .font(.system(size: 9))
+                                                .foregroundColor(isPaused ? DexoTheme.orange : DexoTheme.textSecondary)
+                                        }
+
+                                        Spacer()
+
+                                        Button(action: {
+                                            if isPaused {
+                                                appState.unpauseTransfer(id: transfer.id)
+                                            } else {
+                                                appState.pauseTransfer(id: transfer.id)
+                                            }
+                                        }) {
+                                            Image(systemName: isPaused ? "play.circle.fill" : "pause.circle.fill")
+                                                .foregroundColor(isPaused ? DexoTheme.green : DexoTheme.orange)
+                                        }
+                                        .buttonStyle(.plain)
+
+                                        Button(action: {
+                                            appState.cancelTransfer(id: transfer.id)
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundColor(DexoTheme.red)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+
+                                    ProgressView(value: transfer.progress)
+                                        .progressViewStyle(.linear)
+
+                                    HStack {
+                                        Text("\(formatBytes(transfer.bytesTransferred)) of \(formatBytes(transfer.size))")
+                                            .font(.caption2)
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                        Spacer()
+                                        if transfer.speedBytesPerSec > 0 && !isPaused {
+                                            Text("\(formatBytes(Int64(transfer.speedBytesPerSec)))/s")
+                                                .font(.caption2)
+                                                .foregroundColor(DexoTheme.textSecondary)
+                                        }
+                                        Text("\(Int(transfer.progress * 100))%")
+                                            .font(.caption2)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(isPaused ? DexoTheme.orange : .white)
+                                    }
+                                }
+                                .padding(8)
+                                .background(DexoTheme.innerBackground)
+                                .cornerRadius(8)
+                            }
+                        }
+
+                        // MARK: - RECENT TRANSFERS Section
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("RECENT TRANSFERS")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(DexoTheme.textSecondary)
+
+                                Spacer()
+
+                                Button("See All") {
+                                    historyInitialTab = 0
+                                    showHistorySheet = true
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DexoTheme.blue)
+                                .buttonStyle(.plain)
+                            }
+
+                            VStack(spacing: 4) {
+                                if !appState.recentTransfers.isEmpty {
+                                    ForEach(appState.recentTransfers.prefix(3)) { item in
+                                        RecentTransferRow(item: item, appState: appState)
+                                    }
+                                } else {
+                                    HStack {
+                                        Text("No recent transfers • Sent and received files will appear here.")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(DexoTheme.textSecondary)
+                                        Spacer()
+                                    }
+                                    .padding(8)
+                                }
+                            }
+                            .padding(8)
+                            .background(DexoTheme.cardBackground)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(DexoTheme.border, lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+                .padding(14)
+            }
+
+            Divider()
+                .background(DexoTheme.border)
+
+            // MARK: Bottom Status Bar Footer
+            HStack {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+
+                Text(footerStatusText)
+                    .font(.system(size: 11))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                Spacer()
+
+                Text("v4.0.3 • By Rahul Mahaseth")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DexoTheme.textMuted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(DexoTheme.sidebarBackground)
+        }
+    }
+
+    private func deviceSystemIcon(for name: String) -> String {
+        let lower = name.lowercased()
+        if lower.contains("ipad") || lower.contains("tablet") {
+            return "ipad"
+        } else if lower.contains("mac") || lower.contains("book") {
+            return "laptopcomputer"
+        } else if lower.contains("pc") || lower.contains("windows") {
+            return "desktopcomputer"
+        } else {
+            return "iphone"
         }
     }
 
@@ -846,17 +1138,17 @@ struct MenuBarView: View {
 
     private var statusColor: Color {
         guard appState.isEnabled else {
-            return .gray
+            return DexoTheme.textSecondary
         }
         switch appState.connectionState {
         case .connected, .authenticated, .transferring:
-            return .green
+            return DexoTheme.green
         case .connecting:
-            return .orange
+            return DexoTheme.orange
         case .disconnected:
-            return .gray
+            return DexoTheme.textSecondary
         case .failed:
-            return .red
+            return DexoTheme.red
         }
     }
 
@@ -955,12 +1247,12 @@ struct DeviceRow: View {
             // Device Icon (iPhone, iPad, Mac, Android)
             ZStack(alignment: .bottomTrailing) {
                 Image(systemName: deviceIconName)
-                    .foregroundColor(device.isOnline ? .accentColor : .secondary)
+                    .foregroundColor(device.isOnline ? DexoTheme.blue : DexoTheme.textSecondary)
                     .font(.body)
 
                 // Online/Offline status dot
                 Circle()
-                    .fill(device.isOnline ? Color.green : Color.secondary.opacity(0.5))
+                    .fill(device.isOnline ? DexoTheme.green : DexoTheme.textSecondary.opacity(0.5))
                     .frame(width: 6, height: 6)
                     .offset(x: 2, y: 2)
             }
@@ -970,53 +1262,39 @@ struct DeviceRow: View {
                     Text(device.name)
                         .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundColor(device.isOnline ? .primary : .secondary)
+                        .foregroundColor(device.isOnline ? .white : DexoTheme.textSecondary)
 
                     if isCurrentConnected {
-                        Text("Paired")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.green.opacity(0.18))
-                            .cornerRadius(4)
                         Text("Connected")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.green)
+                            .foregroundColor(DexoTheme.green)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
-                            .background(Color.green.opacity(0.18))
+                            .background(DexoTheme.greenSubtle)
                             .cornerRadius(4)
                     } else if isPaired {
                         Text("Paired")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.cyan)
+                            .foregroundColor(DexoTheme.blue)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
-                            .background(Color.cyan.opacity(0.18))
-                            .cornerRadius(4)
-                        Text(device.isOnline ? "Online" : "Offline")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(device.isOnline ? .green : .secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background((device.isOnline ? Color.green : Color.secondary).opacity(0.15))
+                            .background(DexoTheme.blueSubtle)
                             .cornerRadius(4)
                     } else if anotherDevicePaired {
                         Text("Blocked")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.orange)
+                            .foregroundColor(DexoTheme.orange)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
-                            .background(Color.orange.opacity(0.18))
+                            .background(DexoTheme.orange.opacity(0.18))
                             .cornerRadius(4)
                     } else {
                         Text(device.isOnline ? "Available" : "Offline")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(device.isOnline ? .blue : .secondary)
+                            .foregroundColor(device.isOnline ? DexoTheme.blue : DexoTheme.textSecondary)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
-                            .background((device.isOnline ? Color.blue : Color.secondary).opacity(0.15))
+                            .background((device.isOnline ? DexoTheme.blueSubtle : DexoTheme.innerBackground))
                             .cornerRadius(4)
                     }
                 }
@@ -1024,7 +1302,7 @@ struct DeviceRow: View {
                 // Subtitle
                 Text(subtitleText(isPaired: isPaired, isConnected: isCurrentConnected, anotherPaired: anotherDevicePaired))
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DexoTheme.textSecondary)
             }
 
             Spacer()
@@ -1040,10 +1318,13 @@ struct DeviceRow: View {
                                 Text("Camera")
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                        .tint(.teal)
-                        .help("View live camera feed from this device")
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Color.teal)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.teal.opacity(0.15))
+                        .cornerRadius(4)
                     }
 
                     if appState.isScreenSharingEnabled {
@@ -1055,69 +1336,91 @@ struct DeviceRow: View {
                                 Text("Screen")
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                        .tint(.orange)
-                        .help("View live screen mirror from this device")
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DexoTheme.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(DexoTheme.orange.opacity(0.15))
+                        .cornerRadius(4)
                     }
 
                     Button("Disconnect") {
                         appState.disconnect()
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .tint(.red)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DexoTheme.red)
+                    .cornerRadius(4)
                 }
             } else if isPaired {
                 Button("Connect") {
                     appState.connect(to: device)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.mini)
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(DexoTheme.blue)
+                .cornerRadius(4)
             } else if anotherDevicePaired {
                 let firstPairedName = TrustStore.shared.getPairedDevice()?.deviceName ?? "Current Device"
                 HStack(spacing: 4) {
                     Button("Unpair Current") {
                         appState.statusMessage = "Strict 1-Device Policy: Unpair '\(firstPairedName)' first to pair with '\(device.name)'."
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .help("Unpair '\(firstPairedName)' above first to connect this device")
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundColor(DexoTheme.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(DexoTheme.innerBackground)
+                    .cornerRadius(4)
 
                     Button(action: {
                         appState.removeDiscoveredDevice(id: device.id)
                     }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 9))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(DexoTheme.textSecondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Dismiss from nearby list")
                 }
             } else {
                 HStack(spacing: 4) {
                     Button("Pair Device") {
                         appState.connect(to: device)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .tint(.purple)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DexoTheme.blue)
+                    .cornerRadius(4)
 
                     Button(action: {
                         appState.removeDiscoveredDevice(id: device.id)
                     }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 9))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(DexoTheme.textSecondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Dismiss from nearby list")
                 }
             }
         }
         .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(DexoTheme.innerBackground)
         .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DexoTheme.border, lineWidth: 1)
+        )
     }
 
     private var deviceIconName: String {
@@ -1169,6 +1472,7 @@ struct DeviceRow: View {
 
 // MARK: - Manual IP Sheet (Optional Fallback)
 struct ManualIPSheet: View {
+    @ObservedObject var appState: AppState
     @Binding var isPresented: Bool
     @Binding var ip: String
     @Binding var port: String
@@ -1178,10 +1482,12 @@ struct ManualIPSheet: View {
         VStack(spacing: 12) {
             Text("Remote Online / IP Connection")
                 .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(DexoTheme.textPrimary)
 
             Text("Connect directly to a phone, Mac, or PC across local Wi-Fi, VPN, or the Internet with WebRTC STUN/TURN live streaming:")
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(DexoTheme.textSecondary)
                 .multilineTextAlignment(.center)
 
             TextField("Host or IP (e.g. 192.168.1.10, remote.net)", text: $ip)
@@ -1195,6 +1501,7 @@ struct ManualIPSheet: View {
                     isPresented = false
                 }
                 .buttonStyle(.plain)
+                .foregroundColor(DexoTheme.textSecondary)
 
                 Spacer()
 
@@ -1208,8 +1515,10 @@ struct ManualIPSheet: View {
             }
             .padding(.top, 8)
         }
-        .padding(16)
-        .frame(width: 280)
+        .padding(18)
+        .frame(width: 320)
+        .background(DexoTheme.background)
+        .preferredColorScheme(appState.appearanceMode.colorScheme)
     }
 }
 
@@ -1236,12 +1545,13 @@ struct HistorySheetView: View {
             // Header
             HStack {
                 Image(systemName: "clock.arrow.circlepath")
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(DexoTheme.blue)
                     .font(.title3)
 
                 Text("Activity & History")
                     .font(.headline)
                     .fontWeight(.bold)
+                    .foregroundColor(DexoTheme.textPrimary)
 
                 Spacer()
 
@@ -1253,9 +1563,10 @@ struct HistorySheetView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(DexoTheme.background)
 
             Divider()
+                .background(DexoTheme.border)
 
             // Segmented Tab Picker
             Picker("", selection: $selectedTab) {
@@ -1274,22 +1585,25 @@ struct HistorySheetView: View {
             }
 
             Divider()
+                .background(DexoTheme.border)
 
             // Safe footnote
             HStack {
                 Image(systemName: "shield.fill")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DexoTheme.textSecondary)
                 Text("Deleting history preserves original files on disk and keeps paired connections active.")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DexoTheme.textSecondary)
                 Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(DexoTheme.cardBackground)
         }
         .frame(width: 480, height: 460)
+        .background(DexoTheme.background)
+        .preferredColorScheme(appState.appearanceMode.colorScheme)
         // Confirmation Alerts
         .alert("Delete Selected Transfers?", isPresented: $showDeleteSelectedTransfersAlert) {
             Button("Delete (\(selectedTransferIds.count))", role: .destructive) {
@@ -1416,7 +1730,7 @@ struct HistorySheetView: View {
                                     }
                                 }) {
                                     Image(systemName: selectedTransferIds.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(selectedTransferIds.contains(item.id) ? .accentColor : .secondary)
+                                        .foregroundColor(selectedTransferIds.contains(item.id) ? DexoTheme.blue : DexoTheme.textSecondary)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -1429,16 +1743,17 @@ struct HistorySheetView: View {
                                 Text(item.name)
                                     .font(.subheadline)
                                     .fontWeight(.medium)
+                                    .foregroundColor(DexoTheme.textPrimary)
                                     .lineLimit(1)
 
                                 HStack(spacing: 6) {
                                     Text(formatBytes(item.size))
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(DexoTheme.textSecondary)
 
                                     Text("•")
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(DexoTheme.textSecondary)
 
                                     Text(item.isOutgoing ? "Sent" : "Received")
                                         .font(.caption2)
@@ -1446,11 +1761,11 @@ struct HistorySheetView: View {
 
                                     Text("•")
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(DexoTheme.textSecondary)
 
                                     Text(formattedDate(item.startTime))
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(DexoTheme.textSecondary)
                                 }
                             }
 
@@ -1468,7 +1783,7 @@ struct HistorySheetView: View {
                                 appState.deleteTransferHistoryItem(id: item.id)
                             }) {
                                 Image(systemName: "trash")
-                                    .foregroundColor(.secondary.opacity(0.8))
+                                    .foregroundColor(DexoTheme.textSecondary.opacity(0.8))
                             }
                             .buttonStyle(.plain)
                             .help("Remove from history")
@@ -1477,6 +1792,8 @@ struct HistorySheetView: View {
                     }
                 }
                 .listStyle(.inset)
+                .scrollContentBackground(.hidden)
+                .background(DexoTheme.background)
             }
         }
     }
@@ -1564,7 +1881,7 @@ struct HistorySheetView: View {
                                     }
                                 }) {
                                     Image(systemName: selectedClipboardIds.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(selectedClipboardIds.contains(item.id) ? .accentColor : .secondary)
+                                        .foregroundColor(selectedClipboardIds.contains(item.id) ? DexoTheme.blue : DexoTheme.textSecondary)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -1576,6 +1893,7 @@ struct HistorySheetView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.text)
                                     .font(.subheadline)
+                                    .foregroundColor(DexoTheme.textPrimary)
                                     .lineLimit(2)
 
                                 HStack(spacing: 6) {
@@ -1585,11 +1903,11 @@ struct HistorySheetView: View {
 
                                     Text("•")
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(DexoTheme.textSecondary)
 
                                     Text(formattedDate(item.timestamp))
                                         .font(.caption2)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(DexoTheme.textSecondary)
                                 }
                             }
 
@@ -1617,7 +1935,7 @@ struct HistorySheetView: View {
                                 appState.deleteClipboardHistoryItem(id: item.id)
                             }) {
                                 Image(systemName: "trash")
-                                    .foregroundColor(.secondary.opacity(0.8))
+                                    .foregroundColor(DexoTheme.textSecondary.opacity(0.8))
                             }
                             .buttonStyle(.plain)
                             .help("Remove from history")
@@ -1626,6 +1944,8 @@ struct HistorySheetView: View {
                     }
                 }
                 .listStyle(.inset)
+                .scrollContentBackground(.hidden)
+                .background(DexoTheme.background)
             }
         }
     }
@@ -1937,12 +2257,17 @@ struct CompactFeatureControl: View {
                 HStack(spacing: 4) {
                     Text(title)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.primary)
+                        .foregroundColor(DexoTheme.textPrimary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
 
                     if let badge = badgeText {
                         Text(badge)
                             .font(.system(size: 7, weight: .heavy))
                             .foregroundColor(tintColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                             .padding(.horizontal, 3)
                             .padding(.vertical, 0.5)
                             .background(
@@ -1952,19 +2277,22 @@ struct CompactFeatureControl: View {
 
                     Text(isEnabled ? "ON" : "OFF")
                         .font(.system(size: 8, weight: .heavy))
-                        .foregroundColor(isEnabled ? tintColor : .secondary)
+                        .foregroundColor(isEnabled ? tintColor : DexoTheme.textSecondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(
-                            Capsule().fill((isEnabled ? tintColor : Color.secondary).opacity(0.12))
+                            Capsule().fill((isEnabled ? tintColor : DexoTheme.textSecondary).opacity(0.12))
                         )
                 }
 
                 if let sub = subtitle {
                     Text(sub)
                         .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DexoTheme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
 
@@ -1980,6 +2308,7 @@ struct CompactFeatureControl: View {
                         }
                         Text(secTitle)
                             .font(.system(size: 9, weight: .semibold))
+                            .lineLimit(1)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -1997,6 +2326,7 @@ struct CompactFeatureControl: View {
                         }
                         Text(actTitle)
                             .font(.system(size: 9, weight: .medium))
+                            .lineLimit(1)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -2012,6 +2342,7 @@ struct CompactFeatureControl: View {
             .labelsHidden()
             .scaleEffect(0.68)
         }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
@@ -2025,444 +2356,309 @@ struct CompactFeatureControl: View {
     }
 }
 
-// MARK: - Dedicated Settings & Feature Controls Sheet
-struct SettingsSheetView: View {
+
+
+// MARK: - Software Update Section View
+struct SoftwareUpdateSectionView: View {
+    @ObservedObject var updateManager: MacUpdateManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundColor(DexoTheme.blue)
+                    .font(.caption)
+                Text("Software Update")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DexoTheme.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                // App row
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(DexoTheme.blueSubtle)
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(DexoTheme.blue)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("DexoLink for macOS")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(DexoTheme.textPrimary)
+                        Text("Installed: v\(updateManager.currentVersion)")
+                            .font(.system(size: 10))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    statusBadge
+                }
+                .padding(.bottom, 8)
+
+                // Release notes if update available
+                if case .available(let info) = updateManager.status {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(info.releaseTitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DexoTheme.textPrimary)
+                        let notes = info.releaseNotes
+                        let snippet = notes.prefix(200)
+                        Text(snippet + (notes.count > 200 ? "..." : ""))
+                            .font(.system(size: 10))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DexoTheme.blueSubtle)
+                    .cornerRadius(6)
+                    .padding(.bottom, 8)
+                }
+
+                // Action buttons
+                HStack(spacing: 8) {
+                    Button(action: {
+                        Task { await updateManager.checkForUpdates() }
+                    }) {
+                        Text(updateManager.status == .checking ? "Checking..." : "Check for Updates")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(updateManager.status == .checking)
+
+                    if updateManager.isUpdateAvailable, let info = updateManager.availableUpdateInfo, let url = URL(string: info.downloadUrl), !info.downloadUrl.isEmpty {
+                        Button(action: {
+                            NSWorkspace.shared.open(url)
+                        }) {
+                            Text("Download")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(DexoTheme.blue)
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding(10)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        switch updateManager.status {
+        case .idle:
+            EmptyView()
+        case .checking:
+            HStack(spacing: 4) {
+                ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+                Text("Checking...")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DexoTheme.textSecondary)
+            }
+        case .upToDate:
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(DexoTheme.green)
+                    .font(.system(size: 9))
+                Text("Up to date")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(DexoTheme.green)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(DexoTheme.greenSubtle))
+        case .available:
+            HStack(spacing: 3) {
+                Image(systemName: "sparkles")
+                    .foregroundColor(DexoTheme.blue)
+                    .font(.system(size: 9))
+                Text("New Version")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(DexoTheme.blue)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(DexoTheme.blueSubtle))
+        case .downloading(let fraction, _, _):
+            HStack(spacing: 4) {
+                ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+                Text("\(Int(fraction * 100))%")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DexoTheme.blue)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(DexoTheme.blueSubtle))
+        case .error(let msg):
+            Text("Check Failed")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(DexoTheme.red)
+                .help(msg)
+        }
+    }
+}
+
+// MARK: - Settings Detail View (Matching Image 2 Right Window)
+struct SettingsDetailView: View {
     @ObservedObject var appState: AppState
-    @Binding var isPresented: Bool
+    @Binding var selectedTab: SettingsTab
+    var onClose: () -> Void
+
+    @AppStorage("autoReconnect") private var autoReconnect = true
+    @AppStorage("launchAtLogin") private var launchAtLogin = false
     @State private var showHandoffSheet = false
     @State private var showHistorySheet = false
     @State private var historyInitialTab = 1
+    @State private var showManualIPSheet = false
+    @State private var showQRCodeSheet = false
+    @State private var connectionQRCode: NSImage?
+    @State private var manualIP = ""
+    @State private var manualPort = "52840"
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 8) {
-                Image(systemName: "gearshape.fill")
-                    .foregroundColor(.cyan)
-                    .font(.title3)
+            // Header: Traffic lights + Back Button + Close
+            HStack(spacing: 12) {
+                TrafficLightsView(onClose: onClose)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Settings")
-                        .font(.headline)
-                        .fontWeight(.bold)
-                    Text("Feature Controls & System Preferences")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                Button(action: onClose) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("Settings")
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    .foregroundColor(DexoTheme.textPrimary)
                 }
+                .buttonStyle(.plain)
 
                 Spacer()
 
-                Button("Done") {
-                    isPresented = false
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(DexoTheme.textSecondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.plain)
+                .help("Close Settings")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(DexoTheme.background)
 
             Divider()
+                .background(DexoTheme.border)
 
-            ScrollView {
-                VStack(spacing: 14) {
-                    // Section 1: Core Feature Controls
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "switch.2")
-                                .foregroundColor(.cyan)
-                                .font(.caption)
-                            Text("Core Feature Controls")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
-
-                        VStack(spacing: 8) {
-                            // 1. Continuity (Handoff)
-                            CompactFeatureControl(
-                                title: "Continuity (Handoff)",
-                                subtitle: appState.continuityManager.incomingActivity != nil ? "Incoming activity ready to open" : "Continue reading PDFs, docs & web across devices",
-                                icon: "arrow.triangle.2.circlepath.circle.fill",
-                                tintColor: .cyan,
-                                isEnabled: appState.continuityManager.isEnabled,
-                                onToggle: {
-                                    appState.continuityManager.isEnabled.toggle()
-                                },
-                                actionTitle: "Send...",
-                                actionIcon: "paperplane.fill",
-                                onAction: {
-                                    showHandoffSheet = true
-                                }
-                            )
-
-                            // 2. Auto Clipboard Sync
-                            CompactFeatureControl(
-                                title: "Auto Clipboard Sync",
-                                subtitle: appState.lastSyncedClipboardSnippet.map { "Synced: \"\($0.prefix(22))...\"" } ?? "Bidirectional text & links synchronization",
-                                icon: "doc.on.clipboard.fill",
-                                tintColor: .green,
-                                isEnabled: appState.isClipboardSyncEnabled,
-                                onToggle: {
-                                    appState.toggleClipboardSync()
-                                },
-                                actionTitle: "History",
-                                actionIcon: "clock.arrow.circlepath",
-                                onAction: {
-                                    historyInitialTab = 1
-                                    showHistorySheet = true
-                                },
-                                secondaryActionTitle: appState.lastPingLatencyMs != nil ? "\(appState.lastPingLatencyMs!)ms" : "Ping",
-                                secondaryActionIcon: "bolt.fill",
-                                onSecondaryAction: {
-                                    appState.sendPing()
-                                }
-                            )
-
-                            // 3. Enhanced Clipboard
-                            CompactFeatureControl(
-                                title: "Enhanced Clipboard",
-                                subtitle: "Rich HTML & multi-MIME paste compatibility across restricted apps",
-                                icon: "sparkles",
-                                tintColor: .purple,
-                                badgeText: "BETA",
-                                isEnabled: appState.isEnhancedClipboardEnabled,
-                                onToggle: {
-                                    appState.setEnhancedClipboardEnabled(!appState.isEnhancedClipboardEnabled)
-                                }
-                            )
-
-                            // 4. Multiple Paired Devices
-                            CompactFeatureControl(
-                                title: "Multiple Paired Devices",
-                                subtitle: appState.isMultiplePairedDevicesEnabled ? "Connect multiple devices simultaneously" : "Single device mode (Strict 1-device policy - OFF by default)",
-                                icon: "person.2.badge.key.fill",
-                                tintColor: .indigo,
-                                isEnabled: appState.isMultiplePairedDevicesEnabled,
-                                onToggle: {
-                                    appState.toggleMultiplePairedDevices()
-                                }
-                            )
-                        }
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                        .cornerRadius(10)
-                    }
-
-                    // Section 2: Remote Viewing & Media Streaming (v4.0.2)
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "video.fill")
-                                .foregroundColor(.teal)
-                                .font(.caption)
-                            Text("Media Streaming & Remote Control")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
-
-                        VStack(spacing: 8) {
-                            // 1. Camera Sharing
-                            CompactFeatureControl(
-                                title: "Camera Sharing",
-                                subtitle: appState.isCameraSharingEnabled ? "Streaming active or ready for camera requests" : "Stream camera feed securely over local Wi-Fi (OFF by default)",
-                                icon: "camera.fill",
-                                tintColor: .teal,
-                                isEnabled: appState.isCameraSharingEnabled,
-                                onToggle: {
-                                    appState.setCameraSharingEnabled(!appState.isCameraSharingEnabled)
-                                }
-                            )
-
-                            if appState.isCameraSharingEnabled {
-                                if appState.connectionState.isConnected, let remoteName = appState.connectedDeviceName {
-                                    let devType = appState.connectedDeviceType ?? appState.inferDeviceType(from: remoteName)
-                                    let typeDisplay: String = {
-                                        switch devType.lowercased() {
-                                        case "iphone": return "iPhone"
-                                        case "ipad": return "iPad"
-                                        case "windows": return "Windows PC"
-                                        case "mac": return "macOS"
-                                        default: return "Android"
-                                        }
-                                    }()
-
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(spacing: 4) {
-                                            Circle().fill(Color.green).frame(width: 6, height: 6)
-                                            Text("Verified Connected Device: \(remoteName) (\(typeDisplay))")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundColor(.primary)
-                                        }
-                                        .padding(.horizontal, 4)
-
-                                        HStack(spacing: 6) {
-                                            Button(action: {
-                                                appState.requestRemoteCameraStream()
-                                            }) {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "video.fill")
-                                                    Text("View Remote Camera (\(remoteName) -> Mac)")
-                                                        .font(.system(size: 11, weight: .semibold))
-                                                }
-                                                .frame(maxWidth: .infinity)
-                                                .padding(.vertical, 6)
-                                                .background(Color.teal.opacity(0.18))
-                                                .foregroundColor(.teal)
-                                                .cornerRadius(6)
-                                            }
-                                            .buttonStyle(.plain)
-
-                                            Button(action: {
-                                                appState.startSharingMacCameraToRemote()
-                                            }) {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "arrow.up.right.video.fill")
-                                                    Text("Stream Mac Camera (Mac -> \(remoteName))")
-                                                        .font(.system(size: 11, weight: .semibold))
-                                                }
-                                                .frame(maxWidth: .infinity)
-                                                .padding(.vertical, 6)
-                                                .background(Color.teal.opacity(0.12))
-                                                .foregroundColor(.teal)
-                                                .cornerRadius(6)
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
-                                        .padding(.horizontal, 4)
-                                    }
-                                    .padding(.vertical, 4)
-                                } else {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .foregroundColor(.orange)
-                                            .font(.caption)
-                                        Text("No verified device connected. Connect & pair with Android, Windows, iPhone, or Mac over Wi-Fi to start camera sharing.")
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .padding(8)
-                                    .background(Color.orange.opacity(0.08))
-                                    .cornerRadius(6)
-                                    .padding(.horizontal, 4)
-                                }
-                            }
-
-                            // 2. Screen Sharing
-                            CompactFeatureControl(
-                                title: "Screen Sharing",
-                                subtitle: appState.isScreenSharingEnabled ? "Display mirroring active or ready" : "Mirror device display in real-time over local network (OFF by default)",
-                                icon: "display.2",
-                                tintColor: .orange,
-                                isEnabled: appState.isScreenSharingEnabled,
-                                onToggle: {
-                                    appState.setScreenSharingEnabled(!appState.isScreenSharingEnabled)
-                                }
-                            )
-
-                            if appState.isScreenSharingEnabled {
-                                if appState.connectionState.isConnected, let remoteName = appState.connectedDeviceName {
-                                    let devType = appState.connectedDeviceType ?? appState.inferDeviceType(from: remoteName)
-                                    let typeDisplay: String = {
-                                        switch devType.lowercased() {
-                                        case "iphone": return "iPhone"
-                                        case "ipad": return "iPad"
-                                        case "windows": return "Windows PC"
-                                        case "mac": return "macOS"
-                                        default: return "Android"
-                                        }
-                                    }()
-
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(spacing: 4) {
-                                            Circle().fill(Color.green).frame(width: 6, height: 6)
-                                            Text("Verified Connected Device: \(remoteName) (\(typeDisplay))")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundColor(.primary)
-                                        }
-                                        .padding(.horizontal, 4)
-
-                                        HStack(spacing: 6) {
-                                            Button(action: {
-                                                appState.requestRemoteScreenStream()
-                                            }) {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "display")
-                                                    Text("View Remote Screen (\(remoteName) -> Mac)")
-                                                        .font(.system(size: 11, weight: .semibold))
-                                                }
-                                                .frame(maxWidth: .infinity)
-                                                .padding(.vertical, 6)
-                                                .background(Color.orange.opacity(0.18))
-                                                .foregroundColor(.orange)
-                                                .cornerRadius(6)
-                                            }
-                                            .buttonStyle(.plain)
-
-                                            Button(action: {
-                                                appState.startSharingMacScreenToRemote()
-                                            }) {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "arrow.up.right.square")
-                                                    Text("Mirror Mac Screen (Mac -> \(remoteName))")
-                                                        .font(.system(size: 11, weight: .semibold))
-                                                }
-                                                .frame(maxWidth: .infinity)
-                                                .padding(.vertical, 6)
-                                                .background(Color.orange.opacity(0.12))
-                                                .foregroundColor(.orange)
-                                                .cornerRadius(6)
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
-                                        .padding(.horizontal, 4)
-                                    }
-                                    .padding(.vertical, 4)
-                                } else {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .foregroundColor(.orange)
-                                            .font(.caption)
-                                        Text("No verified device connected. Connect & pair with Android, Windows, iPhone, or Mac over Wi-Fi to start screen mirroring.")
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .padding(8)
-                                    .background(Color.orange.opacity(0.08))
-                                    .cornerRadius(6)
-                                    .padding(.horizontal, 4)
-                                }
-                            }
-
-                            // 3. Desktop Mode (beta)
-                            CompactFeatureControl(
-                                title: "Desktop Mode",
-                                subtitle: appState.isDesktopModeEnabled ? "Remote viewing and input control enabled" : "Remote desktop viewing & input control where supported (OFF by default)",
-                                icon: "desktopcomputer",
-                                tintColor: .purple,
-                                badgeText: "BETA",
-                                isEnabled: appState.isDesktopModeEnabled,
-                                onToggle: {
-                                    appState.setDesktopModeEnabled(!appState.isDesktopModeEnabled)
-                                }
-                            )
-                        }
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                        .cornerRadius(10)
-                    }
-
-                    // Section 3: Wi-Fi Discovery & Network Preferences
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "network")
-                                .foregroundColor(.blue)
-                                .font(.caption)
-                            Text("Discovery & Network")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
-
-                        VStack(spacing: 8) {
-                            CompactFeatureControl(
-                                title: "Auto Wi-Fi Discovery",
-                                subtitle: appState.discoveryEnabled ? "Broadcasting and listening on local subnet" : "Discovery paused to conserve battery",
-                                icon: "antenna.radiowaves.left.and.right",
-                                tintColor: .blue,
-                                isEnabled: appState.discoveryEnabled,
-                                onToggle: {
-                                    appState.setDiscoveryEnabled(!appState.discoveryEnabled)
-                                }
-                            )
-                        }
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                        .cornerRadius(10)
-                    }
-
-                    // Section 3: File Storage Preferences
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "folder.fill")
-                                .foregroundColor(.orange)
-                                .font(.caption)
-                            Text("Received Files Storage")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
-
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Downloads Directory")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text(appState.transferManager.downloadDirectory.path)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
+            // Two-Pane Split View
+            HStack(spacing: 0) {
+                // Left Sidebar
+                VStack(spacing: 3) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        Button(action: {
+                            selectedTab = tab
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: tab.iconName)
+                                    .font(.system(size: 12))
+                                    .frame(width: 16)
+                                Text(tab.rawValue)
+                                    .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .regular))
                                     .lineLimit(1)
-                                    .truncationMode(.middle)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                Spacer()
                             }
-                            Spacer()
-                            Button("Show in Finder") {
-                                NSWorkspace.shared.open(appState.transferManager.downloadDirectory)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .foregroundColor(selectedTab == tab ? .white : DexoTheme.textSecondary)
+                            .background(selectedTab == tab ? DexoTheme.blue : Color.clear)
+                            .cornerRadius(6)
                         }
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                        .cornerRadius(10)
+                        .buttonStyle(.plain)
                     }
-
-                    // Section 4: Extensible Architecture for Future Feature Toggles
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundColor(.secondary)
-                                .font(.caption)
-                            Text("Extensible Architecture")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        }
-
-                        HStack {
-                            Text("All future toggles and capability flags dynamically mount in this central settings view.")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
-                        .cornerRadius(10)
-                    }
-
-                    // Section 5: About & System Info
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("About DexoLink")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("v4.0.2")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.cyan)
-                        }
-
-                        HStack {
-                            Text("Port 52840 (TCP) • Port 52841 (UDP Beacon)")
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("Developed by Rahul Mahaseth")
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
-                    .cornerRadius(10)
+                    Spacer()
                 }
-                .padding(12)
+                .padding(10)
+                .frame(width: 150)
+                .background(DexoTheme.sidebarBackground)
+
+                Rectangle()
+                    .fill(DexoTheme.border)
+                    .frame(width: 1)
+
+                // Right Content Area
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        switch selectedTab {
+                        case .general:
+                            generalSettingsTab
+                        case .devices:
+                            devicesSettingsTab
+                        case .fileSharing:
+                            fileSharingSettingsTab
+                        case .clipboard:
+                            clipboardSettingsTab
+                        case .network:
+                            networkSettingsTab
+                        case .storage:
+                            storageSettingsTab
+                        case .advanced:
+                            advancedSettingsTab
+                        case .about:
+                            aboutSettingsTab
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DexoTheme.background)
             }
         }
-        .frame(width: 360, height: 500)
+        .sheet(isPresented: $showQRCodeSheet) {
+            VStack(spacing: 14) {
+                Text("Connect a Mobile Device")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Text("Scan this code with DexoLink on Android or iPhone.")
+                    .font(.caption)
+                    .foregroundColor(DexoTheme.textSecondary)
+                if let connectionQRCode {
+                    Image(nsImage: connectionQRCode)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 240, height: 240)
+                        .padding(12)
+                        .background(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                Button("Close") { showQRCodeSheet = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(24)
+            .frame(minWidth: 320, minHeight: 360)
+            .background(DexoTheme.background)
+        }
+        .sheet(isPresented: $showManualIPSheet) {
+            ManualIPSheet(
+                appState: appState,
+                isPresented: $showManualIPSheet,
+                ip: $manualIP,
+                port: $manualPort,
+                onConnect: { host, port in
+                    appState.connectDirect(host: host, port: port)
+                }
+            )
+        }
         .sheet(isPresented: $showHandoffSheet) {
             HandoffSheetView(appState: appState, isPresented: $showHandoffSheet)
         }
@@ -2470,7 +2666,838 @@ struct SettingsSheetView: View {
             HistorySheetView(appState: appState, isPresented: $showHistorySheet, selectedTab: historyInitialTab)
         }
     }
+
+    // MARK: - Tab: General
+    private var generalSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Appearance Mode (System / Light / Dark)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("APPEARANCE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                HStack(spacing: 8) {
+                    ForEach(AppAppearanceMode.allCases) { mode in
+                        Button(action: {
+                            appState.appearanceMode = mode
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: mode == .system ? "circle.righthalf.filled" : (mode == .light ? "sun.max.fill" : "moon.fill"))
+                                    .font(.system(size: 11))
+                                Text(mode.rawValue)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                            .foregroundColor(appState.appearanceMode == mode ? .white : DexoTheme.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .padding(.horizontal, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(appState.appearanceMode == mode ? DexoTheme.blue : DexoTheme.innerBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(appState.appearanceMode == mode ? DexoTheme.blue : DexoTheme.border, lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+
+            // App (Launch at Login)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("APP")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Launch at Login")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(DexoTheme.textPrimary)
+                        Text("Automatically start DexoLink in the background when your Mac boots")
+                            .font(.system(size: 9))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $launchAtLogin)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .scaleEffect(0.8)
+                }
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+
+            // Device Pairing (Radio Options matching Image 2)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("DEVICE PAIRING")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                VStack(spacing: 8) {
+                    Button(action: {
+                        if appState.isMultiplePairedDevicesEnabled {
+                            appState.toggleMultiplePairedDevices()
+                        }
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: !appState.isMultiplePairedDevicesEnabled ? "largecircle.fill.circle" : "circle")
+                                .foregroundColor(!appState.isMultiplePairedDevicesEnabled ? DexoTheme.blue : DexoTheme.textSecondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Single Device Pairing")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(DexoTheme.textPrimary)
+                                Text("Strict 1-device policy, keychain protected")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(DexoTheme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Divider().background(DexoTheme.borderSubtle)
+
+                    Button(action: {
+                        if !appState.isMultiplePairedDevicesEnabled {
+                            appState.toggleMultiplePairedDevices()
+                        }
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: appState.isMultiplePairedDevicesEnabled ? "largecircle.fill.circle" : "circle")
+                                .foregroundColor(appState.isMultiplePairedDevicesEnabled ? DexoTheme.blue : DexoTheme.textSecondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Multiple Device Pairing")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(DexoTheme.textPrimary)
+                                Text("Allow connecting multiple devices simultaneously")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(DexoTheme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+
+            // Quick Controls
+            VStack(alignment: .leading, spacing: 6) {
+                Text("QUICK CONTROLS")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                VStack(spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Auto Wi-Fi Discovery")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(DexoTheme.textPrimary)
+                            Text("Broadcast & listen on local subnet")
+                                .font(.system(size: 9))
+                                .foregroundColor(DexoTheme.textSecondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { appState.discoveryEnabled },
+                            set: { appState.setDiscoveryEnabled($0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .scaleEffect(0.8)
+                    }
+
+                    Divider().background(DexoTheme.borderSubtle)
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Auto Reconnect")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(DexoTheme.textPrimary)
+                            Text("Automatically reconnect to paired devices when online")
+                                .font(.system(size: 9))
+                                .foregroundColor(DexoTheme.textSecondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $autoReconnect)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .scaleEffect(0.8)
+                    }
+                }
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+
+            // Received Files Storage
+            VStack(alignment: .leading, spacing: 6) {
+                Text("RECEIVED FILES")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Downloads Directory")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DexoTheme.textPrimary)
+                    Text(appState.transferManager.downloadDirectory.path)
+                        .font(.system(size: 9))
+                        .foregroundColor(DexoTheme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    HStack(spacing: 8) {
+                        Button("Show in Finder") {
+                            NSWorkspace.shared.open(appState.transferManager.downloadDirectory)
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(DexoTheme.blue)
+                        .cornerRadius(6)
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+
+            // Software Update Card
+            VStack(alignment: .leading, spacing: 6) {
+                Text("SOFTWARE UPDATE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(DexoTheme.blueSubtle)
+                            .frame(width: 30, height: 30)
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(DexoTheme.blue)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Current Version")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text("v\(appState.updateManager.currentVersion)")
+                            .font(.system(size: 10))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Text(appState.updateManager.isUpdateAvailable ? "Update Available" : "Up to date")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(appState.updateManager.isUpdateAvailable ? DexoTheme.blue : DexoTheme.green)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(appState.updateManager.isUpdateAvailable ? DexoTheme.blueSubtle : DexoTheme.greenSubtle)
+                        )
+
+                    Button(action: {
+                        Task { await appState.updateManager.checkForUpdates() }
+                    }) {
+                        Text(appState.updateManager.status == .checking ? "Checking..." : "Check Now")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(DexoTheme.blue)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(appState.updateManager.status == .checking)
+                }
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+
+            // About Card
+            Button(action: {
+                selectedTab = .about
+            }) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(DexoTheme.blueSubtle)
+                            .frame(width: 28, height: 28)
+                        Image(systemName: "link")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(DexoTheme.blue)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("DexoLink")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(DexoTheme.textPrimary)
+                        Text("v4.0.3 • By Rahul Mahaseth")
+                            .font(.system(size: 9))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11))
+                        .foregroundColor(DexoTheme.textSecondary)
+                }
+                .padding(10)
+                .background(DexoTheme.cardBackground)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Tab: Devices
+    private var devicesSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("DEVICE MANAGEMENT")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            let trusted = TrustStore.shared.getTrustedDevices()
+            if !trusted.isEmpty {
+                ForEach(trusted, id: \.deviceId) { paired in
+                    let isThisConnected = appState.connectionState.isConnected && (appState.connectedDeviceId == paired.deviceId || appState.connectedDeviceName == paired.deviceName)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "laptopcomputer.and.iphone")
+                            .foregroundColor(isThisConnected ? DexoTheme.green : DexoTheme.blue)
+                            .font(.title3)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(paired.deviceName)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(DexoTheme.textPrimary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Text(isThisConnected ? "Active Session • Connected" : "Paired Device Saved")
+                                .font(.system(size: 9))
+                                .foregroundColor(DexoTheme.textSecondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        if isThisConnected {
+                            Button("Disconnect") {
+                                appState.disconnect()
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(DexoTheme.red)
+                            .cornerRadius(4)
+                            .buttonStyle(.plain)
+                        } else {
+                            Button("Connect") {
+                                appState.connectToPairedDevice(deviceId: paired.deviceId)
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(DexoTheme.blue)
+                            .cornerRadius(4)
+                            .buttonStyle(.plain)
+                        }
+
+                        Button("Unpair") {
+                            appState.unpair(deviceId: paired.deviceId)
+                        }
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DexoTheme.textSecondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(DexoTheme.innerBackground)
+                        .cornerRadius(4)
+                        .buttonStyle(.plain)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(DexoTheme.cardBackground)
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+                }
+            } else {
+                Text("No paired devices saved.")
+                    .font(.caption)
+                    .foregroundColor(DexoTheme.textSecondary)
+            }
+
+            HStack(spacing: 10) {
+                Button("Direct IP Connection") {
+                    showManualIPSheet = true
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(DexoTheme.innerBackground)
+                .cornerRadius(6)
+                .buttonStyle(.plain)
+
+                Button("Show Pairing QR") {
+                    generateQRCode()
+                    showQRCodeSheet = true
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(DexoTheme.blue)
+                .cornerRadius(6)
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    // MARK: - Tab: File Sharing
+    private var fileSharingSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("FILE SHARING PREFERENCES")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Downloads Destination")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DexoTheme.textPrimary)
+                Text(appState.transferManager.downloadDirectory.path)
+                    .font(.system(size: 9))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                HStack(spacing: 8) {
+                    Button("Open in Finder") {
+                        NSWorkspace.shared.open(appState.transferManager.downloadDirectory)
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DexoTheme.blue)
+                    .cornerRadius(6)
+                    .buttonStyle(.plain)
+
+                    Button("Clear Transfer History") {
+                        appState.clearTransferHistory()
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DexoTheme.red)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(DexoTheme.innerBackground)
+                    .cornerRadius(6)
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Tab: Clipboard
+    private var clipboardSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("CLIPBOARD SYNC")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            VStack(spacing: 10) {
+                CompactFeatureControl(
+                    title: "Auto Clipboard Sync",
+                    subtitle: appState.lastSyncedClipboardSnippet.map { "Synced: \"\($0.prefix(22))...\"" } ?? "Bidirectional text & links synchronization",
+                    icon: "doc.on.clipboard.fill",
+                    tintColor: DexoTheme.green,
+                    isEnabled: appState.isClipboardSyncEnabled,
+                    onToggle: {
+                        appState.toggleClipboardSync()
+                    },
+                    actionTitle: "History",
+                    actionIcon: "clock.arrow.circlepath",
+                    onAction: {
+                        historyInitialTab = 1
+                        showHistorySheet = true
+                    },
+                    secondaryActionTitle: appState.lastPingLatencyMs != nil ? "\(appState.lastPingLatencyMs!)ms" : "Ping",
+                    secondaryActionIcon: "bolt.fill",
+                    onSecondaryAction: {
+                        appState.sendPing()
+                    }
+                )
+
+                Divider().background(DexoTheme.borderSubtle)
+
+                CompactFeatureControl(
+                    title: "Enhanced Clipboard",
+                    subtitle: "Rich HTML & multi-MIME paste compatibility across restricted apps",
+                    icon: "sparkles",
+                    tintColor: DexoTheme.purple,
+                    badgeText: "BETA",
+                    isEnabled: appState.isEnhancedClipboardEnabled,
+                    onToggle: {
+                        appState.setEnhancedClipboardEnabled(!appState.isEnhancedClipboardEnabled)
+                    }
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Tab: Network
+    private var networkSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("NETWORK & DISCOVERY")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            VStack(spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Local IP Address")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DexoTheme.textPrimary)
+                        Text(appState.localIP)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(DexoTheme.blue)
+                    }
+                    Spacer()
+                    Button("Rescan Wi-Fi") {
+                        appState.refreshDiscovery()
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DexoTheme.blue)
+                    .buttonStyle(.plain)
+                }
+
+                Divider().background(DexoTheme.borderSubtle)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Ports")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DexoTheme.textPrimary)
+                        Text("TCP: 52840 • UDP Beacon: 52841")
+                            .font(.system(size: 9))
+                            .foregroundColor(DexoTheme.textSecondary)
+                    }
+                    Spacer()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Tab: Storage
+    private var storageSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("STORAGE")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Received Files Directory")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DexoTheme.textPrimary)
+                Text(appState.transferManager.downloadDirectory.path)
+                    .font(.system(size: 9))
+                    .foregroundColor(DexoTheme.textSecondary)
+
+                Button("Open Directory in Finder") {
+                    NSWorkspace.shared.open(appState.transferManager.downloadDirectory)
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(DexoTheme.blue)
+                .cornerRadius(6)
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Tab: Advanced (Media Streaming & Remote Control)
+    private var advancedSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("MEDIA STREAMING & REMOTE CONTROL")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            VStack(spacing: 10) {
+                // Camera Sharing
+                CompactFeatureControl(
+                    title: "Camera Sharing",
+                    subtitle: appState.isCameraSharingEnabled ? "Streaming active or ready for camera requests" : "Stream camera feed securely over local Wi-Fi",
+                    icon: "camera.fill",
+                    tintColor: Color.teal,
+                    isEnabled: appState.isCameraSharingEnabled,
+                    onToggle: {
+                        appState.setCameraSharingEnabled(!appState.isCameraSharingEnabled)
+                    }
+                )
+
+                if appState.isCameraSharingEnabled && appState.connectionState.isConnected, appState.connectedDeviceName != nil {
+                    HStack(spacing: 6) {
+                        Button("View Remote Camera") {
+                            appState.requestRemoteCameraStream()
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color.teal)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.teal.opacity(0.18))
+                        .cornerRadius(6)
+                        .buttonStyle(.plain)
+
+                        Button("Stream Mac Camera") {
+                            appState.startSharingMacCameraToRemote()
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color.teal)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.teal.opacity(0.12))
+                        .cornerRadius(6)
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Divider().background(DexoTheme.borderSubtle)
+
+                // Screen Sharing
+                CompactFeatureControl(
+                    title: "Screen Sharing",
+                    subtitle: appState.isScreenSharingEnabled ? "Display mirroring active or ready" : "Mirror device display in real-time over local network",
+                    icon: "display.2",
+                    tintColor: DexoTheme.orange,
+                    isEnabled: appState.isScreenSharingEnabled,
+                    onToggle: {
+                        appState.setScreenSharingEnabled(!appState.isScreenSharingEnabled)
+                    }
+                )
+
+                if appState.isScreenSharingEnabled && appState.connectionState.isConnected, appState.connectedDeviceName != nil {
+                    HStack(spacing: 6) {
+                        Button("View Remote Screen") {
+                            appState.requestRemoteScreenStream()
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DexoTheme.orange)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(DexoTheme.orange.opacity(0.18))
+                        .cornerRadius(6)
+                        .buttonStyle(.plain)
+
+                        Button("Mirror Mac Screen") {
+                            appState.startSharingMacScreenToRemote()
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DexoTheme.orange)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(DexoTheme.orange.opacity(0.12))
+                        .cornerRadius(6)
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Divider().background(DexoTheme.borderSubtle)
+
+                // Desktop Mode
+                CompactFeatureControl(
+                    title: "Desktop Mode",
+                    subtitle: appState.isDesktopModeEnabled ? "Remote viewing and input control enabled" : "Remote desktop viewing & input control where supported",
+                    icon: "desktopcomputer",
+                    tintColor: DexoTheme.purple,
+                    badgeText: "BETA",
+                    isEnabled: appState.isDesktopModeEnabled,
+                    onToggle: {
+                        appState.setDesktopModeEnabled(!appState.isDesktopModeEnabled)
+                    }
+                )
+
+                Divider().background(DexoTheme.borderSubtle)
+
+                // Continuity
+                CompactFeatureControl(
+                    title: "Continuity (Handoff)",
+                    subtitle: "Continue reading PDFs, docs & web across devices",
+                    icon: "arrow.triangle.2.circlepath.circle.fill",
+                    tintColor: DexoTheme.blue,
+                    isEnabled: appState.continuityManager.isEnabled,
+                    onToggle: {
+                        appState.continuityManager.isEnabled.toggle()
+                    },
+                    actionTitle: "Send Activity",
+                    actionIcon: "paperplane.fill",
+                    onAction: {
+                        showHandoffSheet = true
+                    }
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(DexoTheme.border, lineWidth: 1))
+        }
+    }
+
+    // MARK: - Tab: About
+    private var aboutSettingsTab: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("ABOUT DEXOLINK")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DexoTheme.textSecondary)
+
+            VStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(DexoTheme.blueSubtle)
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "link")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(DexoTheme.blue)
+                }
+
+                VStack(spacing: 3) {
+                    Text("DexoLink for macOS")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(DexoTheme.textPrimary)
+                    Text("Version 4.0.3")
+                        .font(.system(size: 11))
+                        .foregroundColor(DexoTheme.textSecondary)
+                    Text("Seamless Cross-Platform Connectivity across Android, iOS, Windows & Mac")
+                        .font(.system(size: 10))
+                        .foregroundColor(DexoTheme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 2)
+                }
+
+                Divider().background(DexoTheme.borderSubtle)
+
+                VStack(spacing: 4) {
+                    Text("Developed with ❤️ by Rahul Mahaseth")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DexoTheme.textPrimary)
+                    Link("Website: www.rahulmahaseth.com.np", destination: URL(string: "https://www.rahulmahaseth.com.np")!)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DexoTheme.blue)
+                    Text("GitHub: github.com/rahulmahasetha/dexolink")
+                        .font(.system(size: 9))
+                        .foregroundColor(DexoTheme.textSecondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(DexoTheme.cardBackground)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DexoTheme.border, lineWidth: 1))
+
+            SoftwareUpdateSectionView(updateManager: appState.updateManager)
+        }
+    }
+
+    private func generateQRCode() {
+        guard appState.localIP != "Unavailable", !appState.localIP.isEmpty else {
+            connectionQRCode = nil
+            return
+        }
+        var components = URLComponents()
+        components.scheme = "dexolink"
+        components.host = "connect"
+        components.queryItems = [
+            URLQueryItem(name: "host", value: appState.localIP),
+            URLQueryItem(name: "port", value: String(appState.discoveryService.listeningPort)),
+            URLQueryItem(name: "name", value: Host.current().localizedName ?? "Mac")
+        ]
+        guard let payload = components.string else {
+            connectionQRCode = nil
+            return
+        }
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else {
+            connectionQRCode = nil
+            return
+        }
+        let representation = NSCIImageRep(ciImage: output)
+        let image = NSImage(size: representation.size)
+        image.addRepresentation(representation)
+        connectionQRCode = image
+    }
 }
 
+// MARK: - SettingsSheetView
+struct SettingsSheetView: View {
+    @ObservedObject var appState: AppState
+    @Binding var isPresented: Bool
+    @State private var selectedTab: SettingsTab = .general
 
-
+    var body: some View {
+        SettingsDetailView(
+            appState: appState,
+            selectedTab: $selectedTab,
+            onClose: { isPresented = false }
+        )
+        .frame(width: 660, height: 640)
+        .background(DexoTheme.background)
+        .preferredColorScheme(appState.appearanceMode.colorScheme)
+    }
+}

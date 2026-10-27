@@ -23,6 +23,8 @@ build/
 local.properties
 *.keystore
 *.jks
+!android/app/dexolink-original.keystore
+!android/app/dexolink-release.jks
 *.key
 *.pem
 *.p12
