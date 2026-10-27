@@ -116,6 +116,15 @@ esac
 
 
 
+if "$darwin" ; then
+    if [ -x "/usr/libexec/java_home" ]; then
+        MAC_JAVA_21="$(/usr/libexec/java_home -v 21 2>/dev/null || /usr/libexec/java_home -v 17 2>/dev/null || true)"
+        if [ -n "$MAC_JAVA_21" ]; then
+            JAVA_HOME="$MAC_JAVA_21"
+        fi
+    fi
+fi
+
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
